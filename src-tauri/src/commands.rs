@@ -485,7 +485,132 @@ pub async fn run_analysis(state: State<'_, AppState>, case_id: String) -> Result
     Ok(total_findings)
 }
 
-/// Update finding status (review workflow)
+/// Get target profile data for a case
+#[tauri::command]
+pub async fn target_profile(state: State<'_, AppState>, case_id: String) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    // Get case info
+    let case: (String, Option<String>, Option<String>, Option<String>) = db.conn.query_row(
+        "SELECT title, target_email, target_name, target_organization FROM cases WHERE id=?1",
+        [&case_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    ).map_err(|e| e.to_string())?;
+    
+    let (case_title, target_email, target_name, target_organization) = case;
+    
+    // If no target email, return basic info
+    let email = target_email.clone().unwrap_or_default();
+    
+    // Count emails where target is sender
+    let sent_count: i64 = if email.is_empty() { 0 } else {
+        db.conn.query_row(
+            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND from_addr LIKE ?2",
+            rusqlite::params![&case_id, format!("%{}%", email)],
+            |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    
+    // Count emails where target is recipient
+    let received_count: i64 = if email.is_empty() { 0 } else {
+        db.conn.query_row(
+            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
+            rusqlite::params![&case_id, format!("%{}%", email)],
+            |r| r.get(0),
+        ).unwrap_or(0)
+    };
+    
+    // Get first and last seen dates
+    let first_seen: Option<String> = if email.is_empty() { None } else {
+        db.conn.query_row(
+            "SELECT MIN(date_sent_utc) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
+            rusqlite::params![&case_id, format!("%{}%", email)],
+            |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten()
+    };
+    
+    let last_seen: Option<String> = if email.is_empty() { None } else {
+        db.conn.query_row(
+            "SELECT MAX(date_sent_utc) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
+            rusqlite::params![&case_id, format!("%{}%", email)],
+            |r| r.get::<_, Option<String>>(0),
+        ).ok().flatten()
+    };
+    
+    // Get top correspondents (who target emails most)
+    let top_correspondents: Vec<(String, i64)> = if email.is_empty() { vec![] } else {
+        let mut stmt = db.conn.prepare(
+            "SELECT from_addr, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2) GROUP BY from_addr ORDER BY cnt DESC LIMIT 10"
+        ).ok();
+        
+        match stmt {
+            Some(mut s) => {
+                s.query_map(rusqlite::params![&case_id, format!("%{}%", email)], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                }).ok().map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default()
+            }
+            None => vec![]
+        }
+    };
+    
+    // Get top subjects
+    let top_subjects: Vec<(String, i64)> = if email.is_empty() { vec![] } else {
+        let mut stmt = db.conn.prepare(
+            "SELECT subject, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2) AND subject IS NOT NULL GROUP BY subject ORDER BY cnt DESC LIMIT 10"
+        ).ok();
+        
+        match stmt {
+            Some(mut s) => {
+                s.query_map(rusqlite::params![&case_id, format!("%{}%", email)], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                }).ok().map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default()
+            }
+            None => vec![]
+        }
+    };
+    
+    // Get risk score (average of emails involving target)
+    let avg_risk: f64 = if email.is_empty() { 0.0 } else {
+        db.conn.query_row(
+            "SELECT AVG(risk_score) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
+            rusqlite::params![&case_id, format!("%{}%", email)],
+            |r| r.get::<_, f64>(0),
+        ).unwrap_or(0.0)
+    };
+    
+    // Get all display names used by target
+    let display_names: Vec<String> = if email.is_empty() { vec![] } else {
+        let mut stmt = db.conn.prepare(
+            "SELECT DISTINCT from_display FROM emails WHERE case_id=?1 AND from_addr LIKE ?2 AND from_display IS NOT NULL AND from_display != ''"
+        ).ok();
+        
+        match stmt {
+            Some(mut s) => {
+                s.query_map(rusqlite::params![&case_id, format!("%{}%", email)], |row| {
+                    Ok(row.get::<_, String>(0)?)
+                }).ok().map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default()
+            }
+            None => vec![]
+        }
+    };
+    
+    Ok(serde_json::json!({
+        "case_id": case_id,
+        "case_title": case_title,
+        "target_email": target_email,
+        "target_name": target_name,
+        "target_organization": target_organization,
+        "sent_count": sent_count,
+        "received_count": received_count,
+        "total_emails": sent_count + received_count,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "top_correspondents": top_correspondents,
+        "top_subjects": top_subjects,
+        "risk_score": avg_risk.round() as i64,
+        "display_names": display_names,
+    }))
+}
 #[tauri::command]
 pub async fn update_finding_status(
     state: State<'_, AppState>,

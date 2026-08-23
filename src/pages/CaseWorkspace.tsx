@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { EmailListView } from "../views/EmailListView";
 import { FindingsView } from "../views/FindingsView";
+import { TargetProfileView } from "../views/TargetProfileView";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
 interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
 
-type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody";
+type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target";
 type FolderFilter = "all" | "inbox" | "sent" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other";
 
 export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () => void }) {
@@ -93,13 +94,32 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
       </header>
 
       <div className="body">
-        {/* Case Navigator Sidebar */}
-        <nav className="sidebar" style={{ width: sidebarCollapsed ? 50 : 220, minWidth: sidebarCollapsed ? 50 : 220 }}>
-          <div className="sb-section">
-            <button className="sb-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
-              {sidebarCollapsed ? "→" : "←"}
-            </button>
-          </div>
+         {/* Case Navigator Sidebar */}
+         <nav className="sidebar" style={{ width: sidebarCollapsed ? 50 : 220, minWidth: sidebarCollapsed ? 50 : 220 }}>
+           <div className="sb-section">
+             <button className="sb-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+               {sidebarCollapsed ? "→" : "←"}
+             </button>
+           </div>
+
+           {/* Case Dashboard - Always at top */}
+           {!sidebarCollapsed && (
+             <div className="sb-folder" style={{ marginBottom: 8 }}>
+               <button className={`sb-item ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")} style={{ fontWeight: 600 }}>
+                 <span className="sb-icon">◫</span> Case Dashboard
+               </button>
+             </div>
+           )}
+
+           {/* Target Profile */}
+           {!sidebarCollapsed && caseData?.target_email && (
+             <div className="sb-folder" style={{ marginBottom: 8 }}>
+               <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")} style={{ fontWeight: 500 }}>
+                 <span className="sb-icon">👤</span> Target Profile
+                 <span className="sb-count" style={{ background: "var(--danger)" }}>!</span>
+               </button>
+             </div>
+           )}
 
           {/* Email Folders - Collapsible */}
           <div className="sb-folder">
@@ -234,6 +254,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
           {view === "graph" && <div className="card"><div className="empty">Communication graph — Phase 4</div></div>}
           {view === "entities" && <div className="card"><div className="empty">Entity profiles — Phase 4</div></div>}
           {view === "findings" && <FindingsView caseId={caseId} />}
+          {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
           {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
         </main>
       </div>
