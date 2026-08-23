@@ -1184,7 +1184,7 @@ pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     
     let mut stmt2 = db.conn.prepare("
-        SELECT e1.email_addr as src, e2.email_addr as tgt, COUNT(*) as w
+        SELECT e1.email_address as src, e2.email_address as tgt, COUNT(*) as w
         FROM emails em, entities e1, entities e2
         WHERE em.case_id=?1 AND e1.case_id=?1 AND e2.case_id=?1
           AND em.from_addr = e1.email_address
