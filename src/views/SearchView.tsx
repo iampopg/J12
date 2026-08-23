@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Email {
@@ -16,18 +16,15 @@ interface Email {
 interface Props {
   caseId: string;
   onSelectEmail?: (email: Email) => void;
+  onViewEntity?: (email: string) => void;
 }
 
-export function SearchView({ caseId, onSelectEmail }: Props) {
+export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Email[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
 
   const doSearch = async () => {
     if (!query.trim()) return;
@@ -54,9 +51,15 @@ export function SearchView({ caseId, onSelectEmail }: Props) {
     { op: "subject:", desc: "Subject contains" },
     { op: "body:", desc: "Body contains" },
     { op: "domain:", desc: "Domain in any address" },
-    { op: "after:", desc: "Sent after date (YYYY-MM-DD)" },
-    { op: "before:", desc: "Sent before date (YYYY-MM-DD)" },
-    { op: "risk:>50", desc: "Risk score above 50" },
+    { op: "after:2001-06-01", desc: "Sent after date" },
+    { op: "before:2002-01-01", desc: "Sent before date" },
+    { op: "risk:>50", desc: "Risk score above N" },
+    { op: "has:attachment", desc: "Has attachments" },
+    { op: "has:url", desc: "Contains URLs" },
+    { op: "ip:192.168", desc: "IP in headers" },
+    { op: "hash:abc123", desc: "Attachment hash" },
+    { op: "filename:report", desc: "Attachment name" },
+    { op: "folder:sent", desc: "In sent folder" },
   ];
 
   return (
@@ -75,7 +78,7 @@ export function SearchView({ caseId, onSelectEmail }: Props) {
             ref={inputRef}
             className="input"
             style={{ flex: 1, fontSize: 16, padding: "12px 16px" }}
-            placeholder='Search... e.g. from:enron.com subject:urgent risk:>50'
+            placeholder='Search... e.g. from:enron.com subject:urgent has:attachment'
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -87,16 +90,16 @@ export function SearchView({ caseId, onSelectEmail }: Props) {
 
         {/* Operator Hints */}
         <div style={{ marginTop: 16 }}>
-          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 8 }}>SEARCH OPERATORS</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 8 }}>SEARCH OPERATORS (click to add)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
             {operators.map((op) => (
               <div
                 key={op.op}
-                style={{ padding: "6px 10px", background: "var(--bg-3)", borderRadius: "var(--r-sm)", cursor: "pointer" }}
+                style={{ padding: "6px 10px", background: "var(--bg-3)", borderRadius: "var(--r-sm)", cursor: "pointer", fontSize: 12 }}
                 onClick={() => setQuery(prev => prev + (prev.endsWith(" ") || prev === "" ? "" : " ") + op.op)}
               >
-                <code style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>{op.op}</code>
-                <span style={{ fontSize: 11, color: "var(--text-3)", marginLeft: 8 }}>{op.desc}</span>
+                <code style={{ color: "var(--accent)", fontFamily: "var(--mono)" }}>{op.op}</code>
+                <span style={{ color: "var(--text-3)", marginLeft: 8, fontSize: 11 }}>{op.desc}</span>
               </div>
             ))}
           </div>
@@ -114,23 +117,28 @@ export function SearchView({ caseId, onSelectEmail }: Props) {
         <div>
           <div className="row between mb-4">
             <span className="muted">{results.length} result{results.length !== 1 ? "s" : ""}</span>
+            <span className="muted text-sm">Click row to view · Click email to see person</span>
           </div>
           <div className="card">
             <table>
               <thead>
                 <tr>
                   <th className="th">From</th>
+                  <th className="th">To</th>
                   <th className="th">Subject</th>
-                  <th className="th" style={{ width: 100 }}>Date</th>
-                  <th className="th" style={{ width: 60 }}>Risk</th>
-                  <th className="th" style={{ width: 80 }}>Folder</th>
+                  <th className="th" style={{ width: 90 }}>Date</th>
+                  <th className="th" style={{ width: 50 }}>Risk</th>
+                  <th className="th" style={{ width: 60 }}>Attach</th>
                 </tr>
               </thead>
               <tbody>
                 {results.map((e) => (
                   <tr key={e.id} className="tr-click" onClick={() => onSelectEmail?.(e)}>
                     <td className="td">
-                      <span style={{ color: "var(--text-1)" }}>{e.from_display || e.from_addr}</span>
+                      <ClickableEmail addr={e.from_addr} name={e.from_display} onView={onViewEntity} />
+                    </td>
+                    <td className="td" style={{ fontSize: 11, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {(JSON.parse(e.to_addrs || "[]")[0] || "").slice(0, 25)}
                     </td>
                     <td className="td">
                       {e.subject || <span className="muted">(no subject)</span>}
@@ -144,7 +152,7 @@ export function SearchView({ caseId, onSelectEmail }: Props) {
                       </span>
                     </td>
                     <td className="td">
-                      <span className="badge badge-gray">{e.folder_category}</span>
+                      <HasAttachments emailId={e.id} />
                     </td>
                   </tr>
                 ))}
@@ -155,4 +163,29 @@ export function SearchView({ caseId, onSelectEmail }: Props) {
       )}
     </div>
   );
+}
+
+function ClickableEmail({ addr, name, onView }: { addr: string; name: string | null; onView?: (email: string) => void }) {
+  return (
+    <span
+      style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
+      onClick={(e) => { e.stopPropagation(); onView?.(addr); }}
+      title="Click to view person profile"
+    >
+      {name || addr}
+    </span>
+  );
+}
+
+function HasAttachments({ emailId }: { emailId: string }) {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    invoke<any[]>("email_attachments", { emailId })
+      .then(a => setCount(a.length))
+      .catch(() => setCount(0));
+  }, [emailId]);
+
+  if (count === 0) return <span className="muted">—</span>;
+  return <span className="badge badge-blue">📎 {count}</span>;
 }

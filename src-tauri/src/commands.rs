@@ -757,6 +757,36 @@ pub async fn advanced_search(state: State<'_, AppState>, input: SearchInput) -> 
                             params.push(Box::new(threshold));
                         }
                     }
+                    "has" => {
+                        match value.to_lowercase().as_str() {
+                            "attachment" | "attachments" => {
+                                sql.push_str(" AND id IN (SELECT email_id FROM attachments)");
+                            }
+                            "url" | "urls" => {
+                                sql.push_str(" AND (body_text LIKE '%http%' OR body_html LIKE '%http%')");
+                            }
+                            "ip" | "ips" => {
+                                sql.push_str(" AND headers_raw LIKE '%[0-9]%'");
+                            }
+                            _ => {}
+                        }
+                    }
+                    "ip" => {
+                        sql.push_str(" AND headers_raw LIKE ?");
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "hash" => {
+                        sql.push_str(" AND id IN (SELECT email_id FROM attachments WHERE sha256 LIKE ?)");
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "filename" => {
+                        sql.push_str(" AND id IN (SELECT email_id FROM attachments WHERE filename LIKE ?)");
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "folder" => {
+                        sql.push_str(" AND folder_category = ?");
+                        params.push(Box::new(value.to_lowercase()));
+                    }
                     _ => {}
                 }
             }
@@ -999,7 +1029,33 @@ pub async fn timeline_data(state: State<'_, AppState>, input: EmptyInput) -> Res
     }))
 }
 
-/// Get communication graph data (nodes and edges)
+/// Get communication heatmap data for an entity
+#[tauri::command]
+pub async fn entity_heatmap(state: State<'_, AppState>, input: EntityInput) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    // Get daily email count involving this entity
+    let mut stmt = db.conn.prepare("
+        SELECT date(date_sent_utc) as day, COUNT(*) as cnt
+        FROM emails
+        WHERE case_id=?1 AND (from_addr=?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3)
+          AND date_sent_utc IS NOT NULL
+        GROUP BY day
+        ORDER BY day ASC
+    ").map_err(|e| e.to_string())?;
+    
+    let data: Vec<serde_json::Value> = stmt.query_map(
+        rusqlite::params![&input.case_id, &input.email_address, format!("%{}%", input.email_address)],
+        |row| {
+            Ok(serde_json::json!({
+                "date": row.get::<_, String>(0)?,
+                "count": row.get::<_, i64>(1)?,
+            }))
+        }
+    ).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    Ok(serde_json::json!({ "data": data }))
+}
 #[tauri::command]
 pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;

@@ -26,7 +26,7 @@ interface Evidence { id: string; filename: string; }
 type SortField = "date" | "from" | "subject";
 type SortDir = "asc" | "desc";
 
-export function EmailListView({ caseId, filter }: { caseId: string; filter?: string }) {
+export function EmailListView({ caseId, filter, onViewEntity }: { caseId: string; filter?: string; onViewEntity?: (email: string) => void }) {
   const [emails, setEmails] = useState<Email[]>([]);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [loading, setLoading] = useState(true);
@@ -158,14 +158,14 @@ export function EmailListView({ caseId, filter }: { caseId: string; filter?: str
 
           <input className="input mb-4" placeholder="Search subject, sender, body..." value={q} onChange={(e) => setQ(e.target.value)} />
 
-          <VirtualEmailList emails={filtered} onSelect={setSelected} />
+          <VirtualEmailList emails={filtered} onSelect={setSelected} onViewEntity={onViewEntity} />
         </>
       )}
     </div>
   );
 }
 
-function VirtualEmailList({ emails, onSelect }: { emails: Email[]; onSelect: (e: Email) => void }) {
+function VirtualEmailList({ emails, onSelect, onViewEntity }: { emails: Email[]; onSelect: (e: Email) => void; onViewEntity?: (email: string) => void }) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const rowHeight = 41;
@@ -222,9 +222,15 @@ function VirtualEmailList({ emails, onSelect }: { emails: Email[]; onSelect: (e:
                   style={{ position: "absolute", top: (startIdx + i) * rowHeight, width: "100%" }}
                   onClick={() => onSelect(e)}
                 >
-                  <td className="td" style={{ width: 200 }}>
-                    <span style={{ color: "var(--text-1)" }}>{e.from_display || e.from_addr}</span>
-                  </td>
+                   <td className="td" style={{ width: 200 }}>
+                     <span
+                       style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
+                        onClick={(evt) => { evt.stopPropagation(); onViewEntity?.(e.from_addr); }}
+                       title="View person profile"
+                     >
+                       {e.from_display || e.from_addr}
+                     </span>
+                   </td>
                   <td className="td subject-cell">
                     {e.subject || <span className="muted">(no subject)</span>}
                   </td>

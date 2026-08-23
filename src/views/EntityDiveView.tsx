@@ -204,21 +204,74 @@ export function EntityDiveView({ caseId }: Props) {
                   ) : <div className="muted text-sm">No data</div>}
                 </div>
 
-                <div>
-                  <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Top Received From</h4>
-                  {selectedEntity.received_from.length > 0 ? (
-                    selectedEntity.received_from.map(([email, count], i) => (
-                      <div key={i} className="row between" style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                        <span style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--text-1)" }}>{email}</span>
-                        <span className="badge badge-gray">{count}</span>
-                      </div>
-                    ))
-                  ) : <div className="muted text-sm">No data</div>}
-                </div>
-              </div>
-            </div>
-          )}
+                 <div>
+                   <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Top Received From</h4>
+                   {selectedEntity.received_from.length > 0 ? (
+                     selectedEntity.received_from.map(([email, count], i) => (
+                       <div key={i} className="row between" style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                         <span style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--text-1)" }}>{email}</span>
+                         <span className="badge badge-gray">{count}</span>
+                       </div>
+                     ))
+                   ) : <div className="muted text-sm">No data</div>}
+                 </div>
+
+                 {/* Communication Heatmap */}
+                 <CommunicationHeatmap email={selectedEntity.email} />
+               </div>
+             </div>
+           )}
+         </div>
+       </div>
+    </div>
+  );
+}
+
+function CommunicationHeatmap({ email }: { email: string }) {
+  const [data, setData] = useState<{ date: string; count: number }[]>([]);
+
+  useEffect(() => {
+    invoke<any>("entity_heatmap", { input: { email_address: email } })
+      .then(d => setData(d.data || []))
+      .catch(() => setData([]));
+  }, [email]);
+
+  if (data.length === 0) return null;
+
+  const maxCount = Math.max(...data.map(d => d.count), 1);
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Activity Heatmap</h4>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 2 }}>
+        {data.map((d, i) => {
+          const intensity = d.count / maxCount;
+          const bg = d.count === 0 ? "var(--bg-3)" : `rgba(59, 130, 246, ${0.2 + intensity * 0.8})`;
+          return (
+            <div
+              key={i}
+              title={`${d.date}: ${d.count} emails`}
+              style={{
+                width: 12,
+                height: 12,
+                borderRadius: 2,
+                background: bg,
+                cursor: "pointer",
+              }}
+            />
+          );
+        })}
+      </div>
+      <div className="row between" style={{ marginTop: 8 }}>
+        <span style={{ fontSize: 10, color: "var(--text-3)" }}>{data[0]?.date}</span>
+        <span style={{ fontSize: 10, color: "var(--text-3)" }}>Less</span>
+        <div style={{ display: "flex", gap: 2 }}>
+          {[0.2, 0.4, 0.6, 0.8, 1.0].map((v, i) => (
+            <div key={i} style={{ width: 10, height: 10, borderRadius: 2, background: `rgba(59, 130, 246, ${v})` }} />
+          ))}
         </div>
+        <span style={{ fontSize: 10, color: "var(--text-3)" }}>More</span>
+        <span style={{ fontSize: 10, color: "var(--text-3)" }}>{data[data.length - 1]?.date}</span>
       </div>
     </div>
   );

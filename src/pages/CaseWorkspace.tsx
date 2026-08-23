@@ -247,23 +247,22 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
         <main className="content">
           {view === "dashboard" && dashboard && <DashboardView data={dashboard} evidence={evidence} caseData={caseData} />}
           {view === "evidence" && <EvidenceView evidence={evidence} caseId={caseId} onRefresh={loadAll} />}
-          {view === "emails" && <EmailListView caseId={caseId} filter="all" />}
-          {view === "sent" && <EmailListView caseId={caseId} filter="sent" />}
-          {view === "inbox" && <EmailListView caseId={caseId} filter="inbox" />}
-          {view === "drafts" && <EmailListView caseId={caseId} filter="drafts" />}
-          {view === "soft_deleted" && <EmailListView caseId={caseId} filter="soft_deleted" />}
-          {view === "hard_deleted" && <EmailListView caseId={caseId} filter="hard_deleted" />}
-          {view === "recoverable" && <EmailListView caseId={caseId} filter="recoverable" />}
-          {view === "spam" && <EmailListView caseId={caseId} filter="spam" />}
-          {view === "other" && <EmailListView caseId={caseId} filter="other" />}
-          {view === "search" && <SearchView caseId={caseId} />}
+           {view === "emails" && <EmailListView caseId={caseId} filter="all" onViewEntity={(email) => setView("entities")} />}
+           {view === "sent" && <EmailListView caseId={caseId} filter="sent" onViewEntity={(email) => setView("entities")} />}
+           {view === "inbox" && <EmailListView caseId={caseId} filter="inbox" onViewEntity={(email) => setView("entities")} />}
+           {view === "drafts" && <EmailListView caseId={caseId} filter="drafts" onViewEntity={(email) => setView("entities")} />}
+           {view === "soft_deleted" && <EmailListView caseId={caseId} filter="soft_deleted" onViewEntity={(email) => setView("entities")} />}
+           {view === "hard_deleted" && <EmailListView caseId={caseId} filter="hard_deleted" onViewEntity={(email) => setView("entities")} />}
+           {view === "recoverable" && <EmailListView caseId={caseId} filter="recoverable" onViewEntity={(email) => setView("entities")} />}
+           {view === "spam" && <EmailListView caseId={caseId} filter="spam" onViewEntity={(email) => setView("entities")} />}
+            {view === "other" && <EmailListView caseId={caseId} filter="other" onViewEntity={(email) => setView("entities")} />}
+           {view === "search" && <SearchView caseId={caseId} onViewEntity={(email) => { setView("entities"); }} />}
            {view === "entities" && <EntityDiveView caseId={caseId} />}
            {view === "timeline" && <TimelineView caseId={caseId} />}
            {view === "graph" && <GraphView caseId={caseId} />}
            {view === "findings" && <FindingsView caseId={caseId} />}
-          {view === "findings" && <FindingsView caseId={caseId} />}
-          {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
-          {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
+           {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
+           {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
         </main>
       </div>
     </div>
