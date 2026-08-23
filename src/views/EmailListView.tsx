@@ -93,7 +93,7 @@ export function EmailListView({ caseId, filter, onViewEntity }: { caseId: string
       return uniqueEmails.filter(e => e.folder_category === "sent");
     }
     if (filter === "inbox") {
-      return uniqueEmails.filter(e => e.folder_category === "inbox" || e.folder_category === "other");
+      return uniqueEmails.filter(e => e.folder_category === "inbox");
     }
     if (filter === "soft_deleted") {
       return uniqueEmails.filter(e => e.folder_category === "soft_deleted" || e.recovery_status === "soft_deleted");
@@ -217,10 +217,11 @@ function VirtualEmailList({ emails, onSelect, onViewEntity }: { emails: Email[];
         <table style={{ marginTop: 0 }}>
           <thead>
             <tr>
-              <th className="th" style={{ width: 200 }}>From</th>
+              <th className="th" style={{ width: 150 }}>Name</th>
+              <th className="th" style={{ width: 180 }}>Email</th>
               <th className="th">Subject</th>
-              <th className="th" style={{ width: 100 }}>Date</th>
-              <th className="th" style={{ width: 60 }}>Del</th>
+              <th className="th" style={{ width: 90 }}>Date</th>
+              <th className="th" style={{ width: 50 }}>Folder</th>
             </tr>
           </thead>
         </table>
@@ -239,24 +240,26 @@ function VirtualEmailList({ emails, onSelect, onViewEntity }: { emails: Email[];
                   style={{ position: "absolute", top: (startIdx + i) * rowHeight, width: "100%" }}
                   onClick={() => onSelect(e)}
                 >
-                   <td className="td" style={{ width: 200 }}>
+                   <td className="td" style={{ width: 150 }}>
                      <span
-                       style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
-                       onClick={(evt) => { evt.stopPropagation(); onViewEntity?.(e.from_addr); }}
+                       style={{ color: "var(--text-1)", cursor: "pointer" }}
                        title="View person profile"
                      >
-                       {cleanDisplayName(e.from_display) || e.from_addr}
+                       {cleanDisplayName(e.from_display) || "—"}
                      </span>
                    </td>
-                  <td className="td subject-cell">
-                    {e.subject || <span className="muted">(no subject)</span>}
-                  </td>
-                  <td className="td muted date-cell" style={{ width: 100 }}>
-                    {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="td" style={{ width: 60 }}>
-                    {e.deleted_recovered && <span className="badge badge-red">DEL</span>}
-                  </td>
+                   <td className="td" style={{ width: 180, fontFamily: "var(--mono)", fontSize: 11, color: "var(--accent)" }}>
+                     {e.from_addr}
+                   </td>
+                   <td className="td subject-cell">
+                     {e.subject || <span className="muted">(no subject)</span>}
+                   </td>
+                   <td className="td muted date-cell" style={{ width: 90 }}>
+                     {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
+                   </td>
+                   <td className="td" style={{ width: 50 }}>
+                     <span className="badge badge-gray">{e.folder_category}</span>
+                   </td>
                 </tr>
               ))}
             </tbody>

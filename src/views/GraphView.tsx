@@ -7,10 +7,8 @@ interface GraphNode {
   sent: number;
   received: number;
   total: number;
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
+  x: number;
+  y: number;
 }
 
 interface GraphEdge {
@@ -28,23 +26,17 @@ export function GraphView({ caseId }: Props) {
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
-  const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string; weight: number } | null>(null);
-  const [betweenEmails, setBetweenEmails] = useState<any[]>([]);
-  const [loadingBetween, setLoadingBetween] = useState(false);
-  const [filterMin, setFilterMin] = useState(5);
+  const [filterMin, setFilterMin] = useState(10);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const animRef = useRef<number>(0);
-  const dragRef = useRef<{ node: GraphNode; offsetX: number; offsetY: number } | null>(null);
 
-  useEffect(() => {
-    loadData();
-  }, [caseId]);
+  useEffect(() => { loadData(); }, [caseId]);
 
   useEffect(() => {
     if (nodes.length > 0) {
-      runSimulation();
+      const timer = setTimeout(() => layoutGraph(), 100);
+      return () => clearTimeout(timer);
     }
-  }, [nodes, edges, filterMin]);
+  }, [nodes.length, filterMin]);
 
   useEffect(() => {
     drawGraph();
@@ -53,13 +45,22 @@ export function GraphView({ caseId }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
-      // Ensure entities exist first
-      const entities = await invoke<any>("entity_list", { input: { case_id: caseId } });
-      if (!entities || entities.length === 0) {
+      // Ensure entities exist
+      const entCheck = await invoke<any>("entity_list", { input: { case_id: caseId } });
+      if (!entCheck || entCheck.length === 0) {
         await invoke<number>("extract_entities", { caseId });
       }
       const res = await invoke<any>("graph_data", { input: { case_id: caseId } });
-      setNodes((res.nodes || []).map((n: any) => ({ ...n, x: Math.random() * 600, y: Math.random() * 400 })));
+      const rawNodes: GraphNode[] = (res.nodes || []).map((n: any) => ({
+        id: n.id,
+        name: n.name,
+        sent: n.sent || 0,
+        received: n.received || 0,
+        total: n.total || 0,
+        x: 400 + (Math.random() - 0.5) * 300,
+        y: 300 + (Math.random() - 0.5) * 200,
+      }));
+      setNodes(rawNodes);
       setEdges(res.edges || []);
     } catch (e) {
       console.error("Failed to load graph:", e);
@@ -67,239 +68,153 @@ export function GraphView({ caseId }: Props) {
     setLoading(false);
   };
 
-  const runSimulation = useCallback(() => {
-    const filteredNodes = nodes.filter(n => n.total >= filterMin);
-    const nodeIds = new Set(filteredNodes.map(n => n.id));
-    const filteredEdges = edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+  const layoutGraph = useCallback(() => {
+    setNodes(prevNodes => {
+      const filtered = prevNodes.filter(n => n.total >= filterMin);
+      if (filtered.length === 0) return prevNodes;
 
-    // Simple force-directed layout
-    const iterations = 100;
-    const repulsion = 5000;
-    const attraction = 0.01;
-    const damping = 0.9;
+      // Simple circular layout as base
+      const cx = 400, cy = 300;
+      const radius = Math.min(300, filtered.length * 15);
 
-    for (let iter = 0; iter < iterations; iter++) {
-      // Repulsion between all nodes
-      for (let i = 0; i < filteredNodes.length; i++) {
-        for (let j = i + 1; j < filteredNodes.length; j++) {
-          const a = filteredNodes[i];
-          const b = filteredNodes[j];
-          const dx = (a.x || 0) - (b.x || 0);
-          const dy = (a.y || 0) - (b.y || 0);
+      filtered.forEach((node, i) => {
+        const angle = (2 * Math.PI * i) / filtered.length - Math.PI / 2;
+        node.x = cx + radius * Math.cos(angle);
+        node.y = cy + radius * Math.sin(angle);
+      });
+
+      // Run simple force simulation
+      for (let iter = 0; iter < 50; iter++) {
+        // Repulsion
+        for (let i = 0; i < filtered.length; i++) {
+          for (let j = i + 1; j < filtered.length; j++) {
+            const a = filtered[i], b = filtered[j];
+            let dx = a.x - b.x, dy = a.y - b.y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            if (dist < 80) {
+              const force = 500 / dist;
+              dx /= dist; dy /= dist;
+              a.x += dx * force; a.y += dy * force;
+              b.x -= dx * force; b.y -= dy * force;
+            }
+          }
+        }
+        // Attraction along edges
+        for (const edge of edges) {
+          const s = filtered.find(n => n.id === edge.source);
+          const t = filtered.find(n => n.id === edge.target);
+          if (!s || !t) continue;
+          const dx = t.x - s.x, dy = t.y - s.y;
           const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-          const force = repulsion / (dist * dist);
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
-          a.vx = (a.vx || 0) + fx;
-          a.vy = (a.vy || 0) + fy;
-          b.vx = (b.vx || 0) - fx;
-          b.vy = (b.vy || 0) - fy;
+          const force = dist * 0.01;
+          s.x += (dx / dist) * force;
+          s.y += (dy / dist) * force;
+          t.x -= (dx / dist) * force;
+          t.y -= (dy / dist) * force;
+        }
+        // Keep in bounds
+        for (const n of filtered) {
+          n.x = Math.max(50, Math.min(750, n.x));
+          n.y = Math.max(50, Math.min(550, n.y));
         }
       }
 
-      // Attraction along edges
-      for (const edge of filteredEdges) {
-        const source = filteredNodes.find(n => n.id === edge.source);
-        const target = filteredNodes.find(n => n.id === edge.target);
-        if (!source || !target) continue;
-        const dx = (target.x || 0) - (source.x || 0);
-        const dy = (target.y || 0) - (source.y || 0);
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = dist * attraction * edge.weight;
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        source.vx = (source.vx || 0) + fx;
-        source.vy = (source.vy || 0) + fy;
-        target.vx = (target.vx || 0) - fx;
-        target.vy = (target.vy || 0) - fy;
-      }
-
-      // Apply velocities
-      for (const node of filteredNodes) {
-        node.vx = (node.vx || 0) * damping;
-        node.vy = (node.vy || 0) * damping;
-        node.x = (node.x || 0) + (node.vx || 0);
-        node.y = (node.y || 0) + (node.vy || 0);
-        // Keep in bounds
-        node.x = Math.max(50, Math.min(750, node.x || 0));
-        node.y = Math.max(50, Math.min(550, node.y || 0));
-      }
-    }
-
-    setNodes([...filteredNodes]);
-  }, [nodes, edges, filterMin]);
+      return [...filtered];
+    });
+  }, [edges, filterMin]);
 
   const drawGraph = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
-    canvas.width = rect.width * dpr;
-    canvas.height = rect.height * dpr;
-    ctx.scale(dpr, dpr);
+    canvas.width = rect.width * (window.devicePixelRatio || 1);
+    canvas.height = rect.height * (window.devicePixelRatio || 1);
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-    const width = rect.width;
-    const height = rect.height;
-
-    // Clear
     ctx.fillStyle = "#151a23";
-    ctx.fillRect(0, 0, width, height);
+    ctx.fillRect(0, 0, rect.width, rect.height);
 
-    // Center the graph
-    const centerX = width / 2;
-    const centerY = height / 2;
-    const scale = Math.min(width / 800, height / 600) * 0.8;
-
-    ctx.save();
-    ctx.translate(centerX, centerY);
-    ctx.scale(scale, scale);
+    const scale = Math.min(rect.width / 800, rect.height / 600) * 0.85;
+    const offsetX = rect.width / 2 - 400 * scale;
+    const offsetY = rect.height / 2 - 300 * scale;
 
     // Draw edges
     for (const edge of edges) {
-      const source = nodes.find(n => n.id === edge.source);
-      const target = nodes.find(n => n.id === edge.target);
-      if (!source || !target) continue;
-
-      ctx.strokeStyle = "rgba(100, 116, 139, 0.3)";
-      ctx.lineWidth = Math.min(3, edge.weight / 5);
+      const s = nodes.find(n => n.id === edge.source);
+      const t = nodes.find(n => n.id === edge.target);
+      if (!s || !t) continue;
+      ctx.strokeStyle = "rgba(100,116,139,0.2)";
+      ctx.lineWidth = Math.min(3, edge.weight / 10);
       ctx.beginPath();
-      ctx.moveTo(source.x || 0, source.y || 0);
-      ctx.lineTo(target.x || 0, target.y || 0);
+      ctx.moveTo(offsetX + s.x * scale, offsetY + s.y * scale);
+      ctx.lineTo(offsetX + t.x * scale, offsetY + t.y * scale);
       ctx.stroke();
     }
 
     // Draw nodes
     for (const node of nodes) {
-      const radius = Math.max(5, Math.min(25, node.total / 10));
-      const isSelected = selectedNode?.id === node.id;
+      const radius = Math.max(8, Math.min(30, node.total / 20));
+      const x = offsetX + node.x * scale;
+      const y = offsetY + node.y * scale;
 
-      // Node circle
       ctx.beginPath();
-      ctx.arc(node.x || 0, node.y || 0, radius, 0, Math.PI * 2);
-      ctx.fillStyle = isSelected ? "#fbbf24" : node.sent > node.received ? "#3b82f6" : "#22c55e";
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fillStyle = node === selectedNode ? "#fbbf24" : node.sent > node.received ? "#3b82f6" : "#22c55e";
       ctx.fill();
-
-      if (isSelected) {
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 3;
-        ctx.stroke();
-      }
+      ctx.strokeStyle = node === selectedNode ? "#fff" : "rgba(255,255,255,0.1)";
+      ctx.lineWidth = node === selectedNode ? 3 : 1;
+      ctx.stroke();
 
       // Label
-      if (node.total > 10 || isSelected) {
+      if (node.total > 15) {
         ctx.fillStyle = "#e2e8f0";
-        ctx.font = `${Math.max(10, radius)}px system-ui`;
+        ctx.font = "10px system-ui";
         ctx.textAlign = "center";
         const label = node.name || node.id.split("@")[0];
-        ctx.fillText(label.slice(0, 15), node.x || 0, node.y || 0 - radius - 5);
+        ctx.fillText(label.slice(0, 12), x, y - radius - 5);
       }
     }
-
-    ctx.restore();
 
     // Legend
     ctx.fillStyle = "#64748b";
-    ctx.font = "11px system-ui";
+    ctx.font = "10px system-ui";
     ctx.textAlign = "left";
-    ctx.fillText("● Blue = More sent  ● Green = More received  ● Yellow = Selected", 15, height - 15);
-    ctx.fillText("Drag nodes to rearrange · Scroll to filter by activity", 15, height - 30);
-
+    ctx.fillText("● Blue = More sent  ● Green = More received  ● Yellow = Selected", 10, rect.height - 10);
   }, [nodes, edges, selectedNode]);
 
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const rect = canvas.getBoundingClientRect();
-    const scale = Math.min(rect.width / 800, rect.height / 600) * 0.8;
-    const x = (e.clientX - rect.left - rect.width / 2) / scale;
-    const y = (e.clientY - rect.top - rect.height / 2) / scale;
+    const scale = Math.min(rect.width / 800, rect.height / 600) * 0.85;
+    const offsetX = rect.width / 2 - 400 * scale;
+    const offsetY = rect.height / 2 - 300 * scale;
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
 
-    // Find clicked node
     for (const node of nodes) {
-      const dx = (node.x || 0) - x;
-      const dy = (node.y || 0) - y;
-      const radius = Math.max(5, Math.min(25, node.total / 10));
-      if (dx * dx + dy * dy < radius * radius * 4) {
+      const x = offsetX + node.x * scale;
+      const y = offsetY + node.y * scale;
+      const radius = Math.max(8, Math.min(30, node.total / 20));
+      const dx = mx - x, dy = my - y;
+      if (dx * dx + dy * dy < (radius + 5) * (radius + 5)) {
         setSelectedNode(node);
-        setSelectedEdge(null);
-        dragRef.current = { node, offsetX: dx, offsetY: dy };
         return;
       }
     }
-
-    // Find clicked edge (near line)
-    for (const edge of edges) {
-      const source = nodes.find(n => n.id === edge.source);
-      const target = nodes.find(n => n.id === edge.target);
-      if (!source || !target) continue;
-      const dist = pointToLineDistance(x, y, source.x || 0, source.y || 0, target.x || 0, target.y || 0);
-      if (dist < 10) {
-        setSelectedEdge(edge);
-        setSelectedNode(null);
-        loadBetweenEmails(edge.source, edge.target);
-        return;
-      }
-    }
-
     setSelectedNode(null);
-    setSelectedEdge(null);
   };
 
-  const loadBetweenEmails = async (from: string, to: string) => {
-    setLoadingBetween(true);
-    try {
-      const data = await invoke<any>("emails_between", { input: { case_id: caseId, from, to } });
-      setBetweenEmails(data || []);
-    } catch (e) {
-      setBetweenEmails([]);
-    }
-    setLoadingBetween(false);
-  };
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragRef.current) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const rect = canvas.getBoundingClientRect();
-    const scale = Math.min(rect.width / 800, rect.height / 600) * 0.8;
-    const x = (e.clientX - rect.left - rect.width / 2) / scale - dragRef.current.offsetX;
-    const y = (e.clientY - rect.top - rect.height / 2) / scale - dragRef.current.offsetY;
-
-    dragRef.current.node.x = x;
-    dragRef.current.node.y = y;
-    drawGraph();
-  };
-
-  const handleMouseUp = () => {
-    dragRef.current = null;
-  };
-
-function pointToLineDistance(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
-  const A = px - x1;
-  const B = py - y1;
-  const C = x2 - x1;
-  const D = y2 - y1;
-  const dot = A * C + B * D;
-  const lenSq = C * C + D * D;
-  const param = lenSq !== 0 ? dot / lenSq : -1;
-  let xx: number, yy: number;
-  if (param < 0) { xx = x1; yy = y1; }
-  else if (param > 1) { xx = x2; yy = y2; }
-  else { xx = x1 + param * C; yy = y1 + param * D; }
-  return Math.sqrt((px - xx) ** 2 + (py - yy) ** 2);
-}
+  if (loading) return <div className="empty">Loading graph...</div>;
 
   if (nodes.length === 0) {
     return (
       <div>
         <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", marginBottom: 16 }}>Communication Graph</h2>
-        <div className="card empty">No entities found. Run entity extraction first.</div>
+        <div className="card empty">No entities found. Upload and parse email data first.</div>
       </div>
     );
   }
@@ -314,31 +229,20 @@ function pointToLineDistance(px: number, py: number, x1: number, y1: number, x2:
         <div className="row gap-2">
           <label className="row gap-2" style={{ fontSize: 12, color: "var(--text-2)" }}>
             Min emails:
-            <input
-              type="number"
-              value={filterMin}
-              onChange={(e) => setFilterMin(parseInt(e.target.value) || 1)}
-              style={{ width: 60 }}
-              className="input input-sm"
-            />
+            <input type="number" value={filterMin} onChange={e => setFilterMin(parseInt(e.target.value) || 1)} style={{ width: 60 }} className="input" />
           </label>
           <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
         </div>
       </div>
 
-      {/* Graph Canvas */}
       <div className="card mb-4" style={{ padding: 0, overflow: "hidden" }}>
         <canvas
           ref={canvasRef}
-          style={{ width: "100%", height: 500, cursor: dragRef.current ? "grabbing" : "pointer" }}
-          onClick={handleCanvasClick}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          style={{ width: "100%", height: 500, cursor: "pointer" }}
+          onClick={handleClick}
         />
       </div>
 
-      {/* Selected Node Details */}
       {selectedNode && (
         <div className="card" style={{ borderLeft: "4px solid var(--accent)" }}>
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
@@ -361,48 +265,6 @@ function pointToLineDistance(px: number, py: number, x1: number, y1: number, x2:
               <div style={{ fontSize: 10, color: "var(--text-3)" }}>Total</div>
             </div>
           </div>
-        </div>
-      )}
-      {/* Selected Edge Details */}
-      {selectedEdge && (
-        <div className="card" style={{ borderLeft: "4px solid #fbbf24" }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
-            Messages Between
-          </h3>
-          <p style={{ fontSize: 13, color: "var(--text-1)", marginBottom: 12 }}>
-            <span style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}>{selectedEdge.source}</span>
-            ↔
-            <span style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}>{selectedEdge.target}</span>
-            <span className="muted">({selectedEdge.weight} emails)</span>
-          </p>
-          {loadingBetween ? (
-            <div className="empty">Loading...</div>
-          ) : betweenEmails.length > 0 ? (
-            <div style={{ maxHeight: 300, overflowY: "auto" }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th className="th">From</th>
-                    <th className="th">Subject</th>
-                    <th className="th" style={{ width: 100 }}>Date</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {betweenEmails.map((e) => (
-                    <tr key={e.id} className="tr-click">
-                      <td className="td" style={{ fontSize: 12 }}>{e.from_display || e.from_addr}</td>
-                      <td className="td" style={{ fontSize: 12 }}>{e.subject || <span className="muted">—</span>}</td>
-                      <td className="td muted" style={{ fontSize: 11 }}>
-                        {e.date_sent_utc ? new Date(e.date_sent_utc).toLocaleDateString() : "—"}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="empty">No emails found between these entities</div>
-          )}
         </div>
       )}
     </div>

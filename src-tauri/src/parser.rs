@@ -133,8 +133,14 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
                 }
                 "x-from" => {
                     if from_display.is_none() {
-                        let name = value.trim().trim_matches('"').trim();
-                        if !name.is_empty() && !name.contains('@') { from_display = Some(name.to_string()); }
+                        let name = clean_exchange_name(value);
+                        if !name.is_empty() { from_display = Some(name); }
+                    }
+                }
+                "x-to" => {
+                    // Store X-To names for reference
+                    if !value.is_empty() {
+                        // Could store as extended data if needed
                     }
                 }
                 "to" => {
@@ -255,6 +261,42 @@ fn extract_display_name(s: &str) -> Option<String> {
         if !name.is_empty() && !name.contains('@') { return Some(name.to_string()); }
     }
     None
+}
+
+/// Clean Exchange/Notes formatting from display names
+fn clean_exchange_name(s: &str) -> String {
+    let mut name = s.trim().to_string();
+    // Remove IMCEANOTES- encoded parts
+    if let Some(idx) = name.find("IMCEANOTES-") {
+        name = name[..idx].trim().to_string();
+    }
+    // Remove @ENRON and everything after
+    if let Some(idx) = name.find("@ENRON") {
+        name = name[..idx].trim().to_string();
+    }
+    // Remove Exchange DN components like /O=ENRON/OU=NA/CN=RECIPIENTS/...
+    if let Some(idx) = name.find("/O=") {
+        name = name[..idx].trim().to_string();
+    }
+    // Remove angle brackets content
+    if let Some(start) = name.find('<') {
+        if let Some(end) = name.find('>') {
+            name = format!("{} {}", name[..start].trim(), name[end+1..].trim()).trim().to_string();
+        }
+    }
+    // Remove quotes
+    name = name.trim_matches('"').trim().to_string();
+    // Remove email addresses
+    if name.contains('@') {
+        // Try to extract just the name part
+        if let Some(start) = name.find('<') {
+            name = name[..start].trim().to_string();
+        } else {
+            // It's just an email, not a name
+            return String::new();
+        }
+    }
+    name.trim().to_string()
 }
 
 fn extract_address_list(s: &str) -> Vec<String> {
