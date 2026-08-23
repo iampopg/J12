@@ -28,6 +28,9 @@ export function GraphView({ caseId }: Props) {
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [selectedEdge, setSelectedEdge] = useState<{ source: string; target: string; weight: number } | null>(null);
+  const [betweenEmails, setBetweenEmails] = useState<any[]>([]);
+  const [loadingBetween, setLoadingBetween] = useState(false);
   const [filterMin, setFilterMin] = useState(5);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef = useRef<number>(0);
@@ -207,8 +210,9 @@ export function GraphView({ caseId }: Props) {
     if (!canvas) return;
 
     const rect = canvas.getBoundingClientRect();
-    const x = (e.clientX - rect.left - rect.width / 2) / (Math.min(rect.width / 800, rect.height / 600) * 0.8);
-    const y = (e.clientY - rect.top - rect.height / 2) / (Math.min(rect.width / 800, rect.height / 600) * 0.8);
+    const scale = Math.min(rect.width / 800, rect.height / 600) * 0.8;
+    const x = (e.clientX - rect.left - rect.width / 2) / scale;
+    const y = (e.clientY - rect.top - rect.height / 2) / scale;
 
     // Find clicked node
     for (const node of nodes) {
@@ -217,11 +221,39 @@ export function GraphView({ caseId }: Props) {
       const radius = Math.max(5, Math.min(25, node.total / 10));
       if (dx * dx + dy * dy < radius * radius * 4) {
         setSelectedNode(node);
+        setSelectedEdge(null);
         dragRef.current = { node, offsetX: dx, offsetY: dy };
         return;
       }
     }
+
+    // Find clicked edge (near line)
+    for (const edge of edges) {
+      const source = nodes.find(n => n.id === edge.source);
+      const target = nodes.find(n => n.id === edge.target);
+      if (!source || !target) continue;
+      const dist = pointToLineDistance(x, y, source.x || 0, source.y || 0, target.x || 0, target.y || 0);
+      if (dist < 10) {
+        setSelectedEdge(edge);
+        setSelectedNode(null);
+        loadBetweenEmails(edge.source, edge.target);
+        return;
+      }
+    }
+
     setSelectedNode(null);
+    setSelectedEdge(null);
+  };
+
+  const loadBetweenEmails = async (from: string, to: string) => {
+    setLoadingBetween(true);
+    try {
+      const data = await invoke<any>("emails_between", { input: { case_id: caseId, from, to } });
+      setBetweenEmails(data || []);
+    } catch (e) {
+      setBetweenEmails([]);
+    }
+    setLoadingBetween(false);
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -243,7 +275,20 @@ export function GraphView({ caseId }: Props) {
     dragRef.current = null;
   };
 
-  if (loading) return <div className="empty">Loading communication graph...</div>;
+function pointToLineDistance(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const A = px - x1;
+  const B = py - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+  const dot = A * C + B * D;
+  const lenSq = C * C + D * D;
+  const param = lenSq !== 0 ? dot / lenSq : -1;
+  let xx: number, yy: number;
+  if (param < 0) { xx = x1; yy = y1; }
+  else if (param > 1) { xx = x2; yy = y2; }
+  else { xx = x1 + param * C; yy = y1 + param * D; }
+  return Math.sqrt((px - xx) ** 2 + (py - yy) ** 2);
+}
 
   if (nodes.length === 0) {
     return (
@@ -311,6 +356,48 @@ export function GraphView({ caseId }: Props) {
               <div style={{ fontSize: 10, color: "var(--text-3)" }}>Total</div>
             </div>
           </div>
+        </div>
+      )}
+      {/* Selected Edge Details */}
+      {selectedEdge && (
+        <div className="card" style={{ borderLeft: "4px solid #fbbf24" }}>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
+            Messages Between
+          </h3>
+          <p style={{ fontSize: 13, color: "var(--text-1)", marginBottom: 12 }}>
+            <span style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}>{selectedEdge.source}</span>
+            ↔
+            <span style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}>{selectedEdge.target}</span>
+            <span className="muted">({selectedEdge.weight} emails)</span>
+          </p>
+          {loadingBetween ? (
+            <div className="empty">Loading...</div>
+          ) : betweenEmails.length > 0 ? (
+            <div style={{ maxHeight: 300, overflowY: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th className="th">From</th>
+                    <th className="th">Subject</th>
+                    <th className="th" style={{ width: 100 }}>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {betweenEmails.map((e) => (
+                    <tr key={e.id} className="tr-click">
+                      <td className="td" style={{ fontSize: 12 }}>{e.from_display || e.from_addr}</td>
+                      <td className="td" style={{ fontSize: 12 }}>{e.subject || <span className="muted">—</span>}</td>
+                      <td className="td muted" style={{ fontSize: 11 }}>
+                        {e.date_sent_utc ? new Date(e.date_sent_utc).toLocaleDateString() : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty">No emails found between these entities</div>
+          )}
         </div>
       )}
     </div>

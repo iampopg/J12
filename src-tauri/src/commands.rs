@@ -1029,7 +1029,57 @@ pub async fn timeline_data(state: State<'_, AppState>, input: EmptyInput) -> Res
     }))
 }
 
-/// Get communication heatmap data for an entity
+/// Get emails for a specific date (timeline drill-down)
+#[tauri::command]
+pub async fn emails_by_date(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<EmailMessage>, String> {
+    let db = state.db.lock().await;
+    let case_id = input["case_id"].as_str().unwrap_or("");
+    let date = input["date"].as_str().unwrap_or("");
+    
+    let mut stmt = db.conn.prepare("
+        SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, 
+               subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, 
+               folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
+        FROM emails 
+        WHERE case_id=?1 AND date_sent_utc LIKE ?2
+        ORDER BY date_sent_utc ASC
+        LIMIT 500
+    ").map_err(|e| e.to_string())?;
+    
+    let emails = stmt.query_map(rusqlite::params![case_id, format!("%{}%", date)], |row| {
+        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(emails)
+}
+
+/// Get emails between two entities (graph edge view)
+#[tauri::command]
+pub async fn emails_between(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<EmailMessage>, String> {
+    let db = state.db.lock().await;
+    let case_id = input["case_id"].as_str().unwrap_or("");
+    let from_addr = input["from"].as_str().unwrap_or("");
+    let to_addr = input["to"].as_str().unwrap_or("");
+    
+    let mut stmt = db.conn.prepare("
+        SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, 
+               subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, 
+               folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
+        FROM emails 
+        WHERE case_id=?1 AND (
+            (from_addr=?2 AND (to_addrs LIKE ?3 OR cc_addrs LIKE ?3))
+            OR (from_addr=?4 AND (to_addrs LIKE ?5 OR cc_addrs LIKE ?5))
+        )
+        ORDER BY date_sent_utc DESC
+        LIMIT 200
+    ").map_err(|e| e.to_string())?;
+    
+    let emails = stmt.query_map(rusqlite::params![
+        case_id, from_addr, format!("%{}%", to_addr), to_addr, format!("%{}%", from_addr)
+    ], |row| {
+        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(emails)
+}
 #[tauri::command]
 pub async fn entity_heatmap(state: State<'_, AppState>, input: EntityInput) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;

@@ -55,6 +55,8 @@ fn main() {
             commands::entity_list,
             commands::entity_dive,
             commands::entity_heatmap,
+            commands::emails_by_date,
+            commands::emails_between,
             commands::timeline_data,
             commands::graph_data,
         ])
