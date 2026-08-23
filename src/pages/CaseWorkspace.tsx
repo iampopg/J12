@@ -5,6 +5,8 @@ import { FindingsView } from "../views/FindingsView";
 import { TargetProfileView } from "../views/TargetProfileView";
 import { SearchView } from "../views/SearchView";
 import { EntityDiveView } from "../views/EntityDiveView";
+import { TimelineView } from "../views/TimelineView";
+import { GraphView } from "../views/GraphView";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
@@ -209,9 +211,12 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
                 <button className={`sb-item ${view === "search" ? "active" : ""}`} onClick={() => hasDone && setView("search")} style={{ opacity: hasDone ? 1 : 0.4 }}>
                   <span className="sb-icon">🔍</span> Search
                 </button>
-                <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">◷</span> Timeline
-                </button>
+                 <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">◷</span> Timeline
+                 </button>
+                 <button className={`sb-item ${view === "graph" ? "active" : ""}`} onClick={() => hasDone && setView("graph")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">◎</span> Graph
+                 </button>
               </div>
             )}
           </div>
@@ -252,9 +257,10 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
           {view === "spam" && <EmailListView caseId={caseId} filter="spam" />}
           {view === "other" && <EmailListView caseId={caseId} filter="other" />}
           {view === "search" && <SearchView caseId={caseId} />}
-          {view === "entities" && <EntityDiveView caseId={caseId} />}
-          {view === "timeline" && <div className="card"><div className="empty">Timeline — Phase 4</div></div>}
-          {view === "graph" && <div className="card"><div className="empty">Communication graph — Phase 4</div></div>}
+           {view === "entities" && <EntityDiveView caseId={caseId} />}
+           {view === "timeline" && <TimelineView caseId={caseId} />}
+           {view === "graph" && <GraphView caseId={caseId} />}
+           {view === "findings" && <FindingsView caseId={caseId} />}
           {view === "findings" && <FindingsView caseId={caseId} />}
           {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
           {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}

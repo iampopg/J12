@@ -964,3 +964,77 @@ fn update_date_range(first: &mut Option<String>, last: &mut Option<String>, date
         }
     }
 }
+
+/// Get timeline data for visualization
+#[tauri::command]
+pub async fn timeline_data(state: State<'_, AppState>, input: EmptyInput) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    let mut stmt = db.conn.prepare("
+        SELECT date(date_sent_utc) as day, COUNT(*) as total,
+               SUM(CASE WHEN folder_category='sent' THEN 1 ELSE 0 END) as sent,
+               SUM(CASE WHEN folder_category='inbox' THEN 1 ELSE 0 END) as received
+        FROM emails WHERE case_id=?1 AND date_sent_utc IS NOT NULL
+        GROUP BY day ORDER BY day ASC
+    ").map_err(|e| e.to_string())?;
+    
+    let daily: Vec<serde_json::Value> = stmt.query_map([&input.case_id], |row| {
+        Ok(serde_json::json!({
+            "date": row.get::<_, String>(0)?,
+            "total": row.get::<_, i64>(1)?,
+            "sent": row.get::<_, i64>(2)?,
+            "received": row.get::<_, i64>(3)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let (min_date, max_date): (Option<String>, Option<String>) = db.conn.query_row(
+        "SELECT MIN(date_sent_utc), MAX(date_sent_utc) FROM emails WHERE case_id=?1",
+        [&input.case_id],
+        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+    ).unwrap_or((None, None));
+    
+    Ok(serde_json::json!({
+        "daily": daily,
+        "date_range": {"min": min_date, "max": max_date},
+    }))
+}
+
+/// Get communication graph data (nodes and edges)
+#[tauri::command]
+pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    let mut stmt = db.conn.prepare("
+        SELECT email_address, display_name, sent_count, received_count, (sent_count + received_count) as total
+        FROM entities WHERE case_id=?1 ORDER BY total DESC LIMIT 100
+    ").map_err(|e| e.to_string())?;
+    
+    let nodes: Vec<serde_json::Value> = stmt.query_map([&input.case_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "name": row.get::<_, Option<String>>(1)?,
+            "sent": row.get::<_, i64>(2)?,
+            "received": row.get::<_, i64>(3)?,
+            "total": row.get::<_, i64>(4)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let mut stmt2 = db.conn.prepare("
+        SELECT e1.email_addr as src, e2.email_addr as tgt, COUNT(*) as w
+        FROM emails em, entities e1, entities e2
+        WHERE em.case_id=?1 AND e1.case_id=?1 AND e2.case_id=?1
+          AND em.from_addr = e1.email_address
+          AND em.to_addrs LIKE '%' || e2.email_address || '%'
+        GROUP BY src, tgt ORDER BY w DESC LIMIT 200
+    ").map_err(|e| e.to_string())?;
+    
+    let edges: Vec<serde_json::Value> = stmt2.query_map([&input.case_id], |row| {
+        Ok(serde_json::json!({
+            "source": row.get::<_, String>(0)?,
+            "target": row.get::<_, String>(1)?,
+            "weight": row.get::<_, i64>(2)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    Ok(serde_json::json!({ "nodes": nodes, "edges": edges }))
+}

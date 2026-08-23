@@ -54,6 +54,8 @@ fn main() {
             commands::extract_entities,
             commands::entity_list,
             commands::entity_dive,
+            commands::timeline_data,
+            commands::graph_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
