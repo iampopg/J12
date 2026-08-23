@@ -1,6 +1,21 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+function cleanDisplayName(name: string | null): string {
+  if (!name) return '';
+  let cleaned = name
+    .replace(/@ENRON.*$/g, '')
+    .replace(/IMCEANOTES-[^<]*/g, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/"/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.includes('@')) {
+    return cleaned.split('@')[0].trim() || cleaned;
+  }
+  return cleaned;
+}
+
 interface Entity {
   id: string;
   email_address: string;
@@ -48,6 +63,7 @@ export function EntityDiveView({ caseId, onSelectEmail }: Props) {
   const [showEmailList, setShowEmailList] = useState(false);
   const [entityEmails, setEntityEmails] = useState<EntityEmail[]>([]);
   const [emailsLoading, setEmailsLoading] = useState(false);
+  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
 
   // Filters
   const [dateFrom, setDateFrom] = useState("");
@@ -59,7 +75,12 @@ export function EntityDiveView({ caseId, onSelectEmail }: Props) {
   const loadEntities = async () => {
     setLoading(true);
     try {
-      const data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
+      let data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
+      // Auto-extract if empty
+      if (data.length === 0) {
+        await invoke<number>("extract_entities", { caseId });
+        data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
+      }
       setEntities(data);
       if (data.length > 0) loadEntityDive(data[0].email_address);
     } catch (e) { console.error(e); }
@@ -218,8 +239,8 @@ export function EntityDiveView({ caseId, onSelectEmail }: Props) {
                         <thead><tr><th className="th">From</th><th className="th">Subject</th><th className="th" style={{ width: 80 }}>Date</th><th className="th" style={{ width: 50 }}>Risk</th></tr></thead>
                         <tbody>
                           {entityEmails.map(e => (
-                            <tr key={e.id} className="tr-click" onClick={() => onSelectEmail?.(e.id)}>
-                              <td className="td" style={{ fontSize: 12 }}>{e.from_display || e.from_addr}</td>
+                             <tr key={e.id} className="tr-click" onClick={() => setSelectedEmailId(e.id)}>
+                              <td className="td" style={{ fontSize: 12 }}>{cleanDisplayName(e.from_display) || e.from_addr}</td>
                               <td className="td" style={{ fontSize: 12 }}>{e.subject || <span className="muted">—</span>}</td>
                               <td className="td muted" style={{ fontSize: 11 }}>{new Date(e.date_sent_utc).toLocaleDateString()}</td>
                               <td className="td"><span className={`badge ${e.risk_score >= 50 ? "badge-red" : e.risk_score >= 25 ? "badge-orange" : "badge-green"}`}>{e.risk_score}</span></td>
@@ -292,6 +313,63 @@ function CommunicationHeatmap({ email, caseId }: { email: string; caseId: string
         </div>
         <span style={{ fontSize: 10, color: "var(--text-3)" }}>More</span>
         <span style={{ fontSize: 10, color: "var(--text-3)" }}>{data[data.length - 1]?.date}</span>
+      </div>
+    </div>
+  );
+}
+
+// Email detail modal for search results
+function EmailDetailModal({ emailId, onClose }: { emailId: string; onClose: () => void }) {
+  const [email, setEmail] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    invoke<any>("email_get", { input: { case_id: emailId } })
+      .then(data => { setEmail(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [emailId]);
+
+  if (loading) return <Modal title="Loading..." onClose={onClose}><div className="empty">Loading...</div></Modal>;
+  if (!email) return <Modal title="Error" onClose={onClose}><div className="empty">Email not found</div></Modal>;
+
+  let toList: string[] = [];
+  try { toList = JSON.parse(email.to_addrs || "[]"); } catch {}
+
+  return (
+    <Modal title={email.subject || "(no subject)"} onClose={onClose}>
+      <div style={{ fontSize: 13 }}>
+        <div className="grid-2 mb-4">
+          <div><span className="muted">From:</span> <strong>{cleanDisplayName(email.from_display) || email.from_addr}</strong></div>
+          <div><span className="muted">Date:</span> {email.date_sent ? new Date(email.date_sent).toLocaleString() : "—"}</div>
+        </div>
+        <div className="mb-4"><span className="muted">To:</span> {toList.join(", ")}</div>
+        <div className="mb-4"><span className="muted">Risk:</span> <span className={`badge ${email.risk_score >= 50 ? "badge-red" : email.risk_score >= 25 ? "badge-orange" : "badge-green"}`}>{email.risk_score}</span></div>
+        {email.headers_raw && (
+          <details className="mb-4">
+            <summary style={{ cursor: "pointer", fontWeight: 600, marginBottom: 8 }}>View Headers</summary>
+            <pre style={{ background: "var(--bg-3)", padding: 12, borderRadius: "var(--r-sm)", fontSize: 11, maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>{email.headers_raw.slice(0, 3000)}</pre>
+          </details>
+        )}
+        {email.body_text && (
+          <div>
+            <span className="muted">Body:</span>
+            <pre style={{ background: "var(--bg-3)", padding: 16, borderRadius: "var(--r-md)", fontSize: 13, marginTop: 8, maxHeight: 300, overflow: "auto", whiteSpace: "pre-wrap" }}>{email.body_text.slice(0, 5000)}</pre>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
+      <div style={{ background: "var(--bg-2)", borderRadius: "var(--r-lg)", padding: 24, maxWidth: 800, width: "90%", maxHeight: "80vh", overflow: "auto", border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+        <div className="row between mb-4">
+          <h3 style={{ fontSize: 18, fontWeight: 600 }}>{title}</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        {children}
       </div>
     </div>
   );

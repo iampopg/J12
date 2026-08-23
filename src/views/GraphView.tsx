@@ -53,6 +53,11 @@ export function GraphView({ caseId }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
+      // Ensure entities exist first
+      const entities = await invoke<any>("entity_list", { input: { case_id: caseId } });
+      if (!entities || entities.length === 0) {
+        await invoke<number>("extract_entities", { caseId });
+      }
       const res = await invoke<any>("graph_data", { input: { case_id: caseId } });
       setNodes((res.nodes || []).map((n: any) => ({ ...n, x: Math.random() * 600, y: Math.random() * 400 })));
       setEdges(res.edges || []);

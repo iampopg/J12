@@ -1,6 +1,14 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+interface Entity {
+  id: string;
+  email_address: string;
+  display_name: string | null;
+  sent_count: number;
+  received_count: number;
+}
+
 interface TargetProfile {
   case_id: string;
   case_title: string;
@@ -43,10 +51,14 @@ export function TargetProfileView({ caseId, caseData }: Props) {
   const loadData = async () => {
     setLoading(true);
     try {
+      // First ensure entities exist
+      const existing = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
+      if (existing.length === 0) {
+        await invoke<number>("extract_entities", { caseId });
+      }
       const det = await invoke<any>("auto_detect_targets", { caseId });
       const targets: DetectedTarget[] = det.targets || [];
       setDetected(targets);
-      // Auto-select the top target
       if (targets.length > 0 && !selectedEmail) {
         const top = targets.reduce((a, b) => (a.total_emails > b.total_emails ? a : b));
         setSelectedEmail(top.email);

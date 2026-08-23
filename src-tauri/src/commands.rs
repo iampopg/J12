@@ -919,6 +919,14 @@ pub async fn entity_dive(state: State<'_, AppState>, input: EntityInput) -> Resu
     received_from_vec.sort_by(|a, b| b.1.cmp(&a.1));
     received_from_vec.truncate(10);
     
+    // Get top subjects for this entity
+    let mut stmt3 = db.conn.prepare(
+        "SELECT subject, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (from_addr=?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3) AND subject IS NOT NULL AND subject != '' GROUP BY subject ORDER BY cnt DESC LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+    let top_subjects: Vec<(String, i64)> = stmt3.query_map(rusqlite::params![&input.case_id, entity.0.clone(), format!("%{}%", entity.0)], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
     Ok(serde_json::json!({
         "email": entity.0,
         "display_name": entity.1,
@@ -928,6 +936,7 @@ pub async fn entity_dive(state: State<'_, AppState>, input: EntityInput) -> Resu
         "received_count": entity.5,
         "sent_to": sent_to,
         "received_from": received_from_vec,
+        "top_subjects": top_subjects,
     }))
 }
 

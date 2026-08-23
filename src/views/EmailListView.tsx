@@ -1,6 +1,23 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+// Helper to clean display names
+function cleanDisplayName(name: string | null): string {
+  if (!name) return '';
+  let cleaned = name
+    .replace(/@ENRON.*$/g, '')
+    .replace(/IMCEANOTES-[^<]*/g, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/"/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.includes('@')) {
+    const parts = cleaned.split('@');
+    return parts[0].trim() || cleaned;
+  }
+  return cleaned;
+}
+
 interface Email {
   id: string;
   evidence_id: string;
@@ -225,10 +242,10 @@ function VirtualEmailList({ emails, onSelect, onViewEntity }: { emails: Email[];
                    <td className="td" style={{ width: 200 }}>
                      <span
                        style={{ color: "var(--accent)", cursor: "pointer", textDecoration: "underline" }}
-                        onClick={(evt) => { evt.stopPropagation(); onViewEntity?.(e.from_addr); }}
+                       onClick={(evt) => { evt.stopPropagation(); onViewEntity?.(e.from_addr); }}
                        title="View person profile"
                      >
-                       {e.from_display || e.from_addr}
+                       {cleanDisplayName(e.from_display) || e.from_addr}
                      </span>
                    </td>
                   <td className="td subject-cell">

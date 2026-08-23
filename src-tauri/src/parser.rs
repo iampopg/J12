@@ -131,6 +131,12 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
                         from_display = extract_display_name(value);
                     }
                 }
+                "x-from" => {
+                    if from_display.is_none() {
+                        let name = value.trim().trim_matches('"').trim();
+                        if !name.is_empty() && !name.contains('@') { from_display = Some(name.to_string()); }
+                    }
+                }
                 "to" => {
                     for addr in extract_address_list(value) {
                         if !to_addrs.contains(&addr) { to_addrs.push(addr); }
