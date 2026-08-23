@@ -13,6 +13,8 @@ interface Email {
   risk_score: number;
 }
 
+type SortField = "date" | "from" | "subject" | "risk";
+
 interface Props {
   caseId: string;
   onSelectEmail?: (email: Email) => void;
@@ -24,7 +26,13 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
   const [results, setResults] = useState<Email[]>([]);
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [sortField, setSortField] = useState<SortField>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
 
   const doSearch = async () => {
     if (!query.trim()) return;
@@ -45,6 +53,17 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
     if (e.key === "Enter") doSearch();
   };
 
+  const sorted = [...results].sort((a, b) => {
+    let cmp = 0;
+    switch (sortField) {
+      case "date": cmp = (a.date_sent || "").localeCompare(b.date_sent || ""); break;
+      case "from": cmp = a.from_addr.localeCompare(b.from_addr); break;
+      case "subject": cmp = (a.subject || "").localeCompare(b.subject || ""); break;
+      case "risk": cmp = a.risk_score - b.risk_score; break;
+    }
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
   const operators = [
     { op: "from:", desc: "Sender contains" },
     { op: "to:", desc: "Recipient contains" },
@@ -59,7 +78,7 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
     { op: "ip:192.168", desc: "IP in headers" },
     { op: "hash:abc123", desc: "Attachment hash" },
     { op: "filename:report", desc: "Attachment name" },
-    { op: "folder:sent", desc: "In sent folder" },
+    { op: "folder:sent", desc: "In folder" },
   ];
 
   return (
@@ -71,7 +90,6 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
         </div>
       </div>
 
-      {/* Search Input */}
       <div className="card mb-4">
         <div className="row gap-2">
           <input
@@ -87,8 +105,6 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
             {loading ? "Searching..." : "🔍 Search"}
           </button>
         </div>
-
-        {/* Operator Hints */}
         <div style={{ marginTop: 16 }}>
           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 8 }}>SEARCH OPERATORS (click to add)</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 6 }}>
@@ -106,7 +122,6 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
         </div>
       </div>
 
-      {/* Results */}
       {loading && <div className="empty">Searching...</div>}
 
       {!loading && searched && results.length === 0 && (
@@ -117,7 +132,21 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
         <div>
           <div className="row between mb-4">
             <span className="muted">{results.length} result{results.length !== 1 ? "s" : ""}</span>
-            <span className="muted text-sm">Click row to view · Click email to see person</span>
+            <div className="row gap-2">
+              <span className="muted text-sm">Sort by:</span>
+              {([["date", "Date"], ["from", "From"], ["subject", "Subject"], ["risk", "Risk"]] as const).map(([field, label]) => (
+                <button
+                  key={field}
+                  className={`btn btn-sm ${sortField === field ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => {
+                    if (sortField === field) setSortDir(d => d === "asc" ? "desc" : "asc");
+                    else { setSortField(field as SortField); setSortDir("desc"); }
+                  }}
+                >
+                  {label} {sortField === field ? (sortDir === "asc" ? "▲" : "▼") : ""}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="card">
             <table>
@@ -132,7 +161,7 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {results.map((e) => (
+                {sorted.map((e) => (
                   <tr key={e.id} className="tr-click" onClick={() => onSelectEmail?.(e)}>
                     <td className="td">
                       <ClickableEmail addr={e.from_addr} name={e.from_display} onView={onViewEntity} />
@@ -140,20 +169,14 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
                     <td className="td" style={{ fontSize: 11, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>
                       {(JSON.parse(e.to_addrs || "[]")[0] || "").slice(0, 25)}
                     </td>
-                    <td className="td">
-                      {e.subject || <span className="muted">(no subject)</span>}
-                    </td>
-                    <td className="td muted">
-                      {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
-                    </td>
+                    <td className="td">{e.subject || <span className="muted">(no subject)</span>}</td>
+                    <td className="td muted">{e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}</td>
                     <td className="td">
                       <span className={`badge ${e.risk_score >= 50 ? "badge-red" : e.risk_score >= 25 ? "badge-orange" : "badge-green"}`}>
                         {e.risk_score}
                       </span>
                     </td>
-                    <td className="td">
-                      <HasAttachments emailId={e.id} />
-                    </td>
+                    <td className="td"><HasAttachments emailId={e.id} /></td>
                   </tr>
                 ))}
               </tbody>

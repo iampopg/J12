@@ -926,6 +926,51 @@ pub async fn entity_dive(state: State<'_, AppState>, input: EntityInput) -> Resu
         "received_from": received_from_vec,
     }))
 }
+
+/// Get emails for a specific entity (with date/attachment filters)
+#[tauri::command]
+pub async fn entity_emails(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<EmailMessage>, String> {
+    let db = state.db.lock().await;
+    let case_id = input["case_id"].as_str().unwrap_or("");
+    let email_addr = input["email"].as_str().unwrap_or("");
+    let date_from = input["date_from"].as_str().unwrap_or("");
+    let date_to = input["date_to"].as_str().unwrap_or("");
+    let has_attachment = input["has_attachment"].as_bool().unwrap_or(false);
+    
+    let mut sql = String::from("
+        SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, 
+               subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, 
+               folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
+        FROM emails 
+        WHERE case_id=?1 AND (from_addr=?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3)
+    ");
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![
+        Box::new(case_id.to_string()),
+        Box::new(email_addr.to_string()),
+        Box::new(format!("%{}%", email_addr)),
+    ];
+    
+    if !date_from.is_empty() {
+        sql.push_str(" AND date_sent_utc >= ?");
+        params.push(Box::new(date_from.to_string()));
+    }
+    if !date_to.is_empty() {
+        sql.push_str(" AND date_sent_utc <= ?");
+        params.push(Box::new(date_to.to_string()));
+    }
+    if has_attachment {
+        sql.push_str(" AND id IN (SELECT email_id FROM attachments)");
+    }
+    
+    sql.push_str(" ORDER BY date_sent_utc DESC LIMIT 200");
+    
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = db.conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let emails = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(emails)
+}
 #[tauri::command]
 pub async fn update_finding_status(
     state: State<'_, AppState>,

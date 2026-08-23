@@ -54,6 +54,7 @@ fn main() {
             commands::extract_entities,
             commands::entity_list,
             commands::entity_dive,
+            commands::entity_emails,
             commands::entity_heatmap,
             commands::emails_by_date,
             commands::emails_between,
