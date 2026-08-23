@@ -18,6 +18,14 @@ interface TargetProfile {
   display_names: string[];
 }
 
+interface DetectedTarget {
+  email: string;
+  display_name: string | null;
+  total_emails: number;
+  sent: number;
+  received: number;
+}
+
 interface Props {
   caseId: string;
   caseData: any;
@@ -25,19 +33,25 @@ interface Props {
 
 export function TargetProfileView({ caseId, caseData }: Props) {
   const [profile, setProfile] = useState<TargetProfile | null>(null);
+  const [detected, setDetected] = useState<DetectedTarget[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showSelector, setShowSelector] = useState(false);
 
   useEffect(() => {
-    loadProfile();
+    loadData();
   }, [caseId]);
 
-  const loadProfile = async () => {
+  const loadData = async () => {
     setLoading(true);
     try {
-      const data = await invoke<TargetProfile>("target_profile", { caseId });
-      setProfile(data);
+      const [prof, det] = await Promise.all([
+        invoke<TargetProfile>("target_profile", { caseId }),
+        invoke<any>("auto_detect_targets", { caseId }),
+      ]);
+      setProfile(prof);
+      setDetected(det.targets || []);
     } catch (e) {
-      console.error("Failed to load target profile:", e);
+      console.error("Failed to load target data:", e);
     }
     setLoading(false);
   };
@@ -51,12 +65,57 @@ export function TargetProfileView({ caseId, caseData }: Props) {
   if (!targetEmail && !targetName) {
     return (
       <div>
-        <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", marginBottom: 16 }}>Target Profile</h2>
-        <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>👤</div>
-          <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--text-0)" }}>No Target Defined</h3>
-          <p className="muted">Edit this case to add a target email address and name for investigation profiling.</p>
+        <div className="row between mb-4">
+          <div>
+            <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile</h2>
+            <p className="muted">Auto-detected potential targets from email data</p>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
         </div>
+
+        {/* Auto-detected targets */}
+        {detected.length > 0 ? (
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Select a Target to Investigate</h3>
+            <p className="muted mb-4" style={{ fontSize: 12 }}>
+              The following email addresses appear most frequently in this case. Select one to set as the investigation target.
+            </p>
+            <table>
+              <thead>
+                <tr>
+                  <th className="th">Email Address</th>
+                  <th className="th">Display Name</th>
+                  <th className="th" style={{ width: 80 }}>Sent</th>
+                  <th className="th" style={{ width: 80 }}>Received</th>
+                  <th className="th" style={{ width: 80 }}>Total</th>
+                  <th className="th" style={{ width: 100 }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detected.map((t, i) => (
+                  <tr key={i}>
+                    <td className="td" style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}>{t.email}</td>
+                    <td className="td">{t.display_name || <span className="muted">—</span>}</td>
+                    <td className="td">{t.sent}</td>
+                    <td className="td">{t.received}</td>
+                    <td className="td"><strong>{t.total_emails}</strong></td>
+                    <td className="td">
+                      <button className="btn btn-primary btn-sm" onClick={() => selectTarget(t)}>
+                        Select
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
+            <div style={{ fontSize: 48, marginBottom: 16 }}>👤</div>
+            <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--text-0)" }}>No Targets Detected</h3>
+            <p className="muted">Upload and parse email data to auto-detect potential investigation targets.</p>
+          </div>
+        )}
       </div>
     );
   }
@@ -64,25 +123,69 @@ export function TargetProfileView({ caseId, caseData }: Props) {
   const riskColor = (profile?.risk_score || 0) >= 50 ? "var(--danger)" : (profile?.risk_score || 0) >= 25 ? "var(--warning)" : "var(--success)";
   const riskLabel = (profile?.risk_score || 0) >= 50 ? "HIGH RISK" : (profile?.risk_score || 0) >= 25 ? "MEDIUM RISK" : "LOW RISK";
 
+  const selectTarget = async (t: DetectedTarget) => {
+    // TODO: Save selected target to case
+    setShowSelector(false);
+    loadData();
+  };
+
   return (
     <div>
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile</h2>
-          <p className="muted">Subject investigation overview — identity, communications, and risk assessment</p>
+          <p className="muted">Subject investigation overview</p>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={loadProfile}>↻ Refresh</button>
+        <div className="row gap-2">
+          <button className="btn btn-ghost btn-sm" onClick={() => setShowSelector(!showSelector)}>
+            {showSelector ? "Cancel" : "🔄 Change Target"}
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
+        </div>
       </div>
+
+      {/* Target selector */}
+      {showSelector && detected.length > 0 && (
+        <div className="card mb-4" style={{ borderLeft: "4px solid var(--warning)" }}>
+          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Select Different Target</h3>
+          <table>
+            <thead>
+              <tr>
+                <th className="th">Email</th>
+                <th className="th">Name</th>
+                <th className="th">Total</th>
+                <th className="th">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detected.map((t, i) => (
+                <tr key={i} style={{ background: t.email === targetEmail ? "var(--accent-subtle)" : "transparent" }}>
+                  <td className="td mono">{t.email}</td>
+                  <td className="td">{t.display_name || "—"}</td>
+                  <td className="td">{t.total_emails}</td>
+                  <td className="td">
+                    {t.email === targetEmail ? (
+                      <span className="badge badge-green">Active</span>
+                    ) : (
+                      <button className="btn btn-primary btn-sm" onClick={() => selectTarget(t)}>Select</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Identity Card */}
       <div className="card mb-4" style={{ borderLeft: "4px solid var(--accent)" }}>
         <div className="row between" style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "var(--bg-4)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28 }}>
-              {targetName ? targetName.charAt(0).toUpperCase() : "?"}
+            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "linear-gradient(135deg, #3b82f6, #6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, color: "#fff", fontWeight: 700 }}>
+              {targetName ? targetName.charAt(0).toUpperCase() : targetEmail ? targetEmail.charAt(0).toUpperCase() : "?"}
             </div>
             <div>
-              <h3 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)" }}>{targetName || "Unknown"}</h3>
+              <h3 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)" }}>{targetName || targetEmail || "Unknown"}</h3>
               {targetEmail && <p style={{ fontSize: 14, color: "var(--accent)", fontFamily: "var(--mono)" }}>{targetEmail}</p>}
               {targetOrg && <p style={{ fontSize: 12, color: "var(--text-3)" }}>{targetOrg}</p>}
             </div>
@@ -94,10 +197,10 @@ export function TargetProfileView({ caseId, caseData }: Props) {
           </div>
         </div>
 
-        {/* Display Names / Aliases */}
+        {/* Aliases */}
         {profile?.display_names && profile.display_names.length > 0 && (
           <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", letterSpacing: "0.05em", marginBottom: 8 }}>KNOWN ALIASES / DISPLAY NAMES</div>
+            <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", letterSpacing: "0.05em", marginBottom: 8 }}>KNOWN ALIASES</div>
             <div className="row gap-2" style={{ flexWrap: "wrap" }}>
               {profile.display_names.map((name, i) => (
                 <span key={i} className="badge badge-gray" style={{ fontSize: 12 }}>{name}</span>
@@ -107,7 +210,7 @@ export function TargetProfileView({ caseId, caseData }: Props) {
         )}
       </div>
 
-      {/* Communication Stats */}
+      {/* Stats */}
       <div className="kpi-grid mb-4">
         <div className="kpi">
           <div className="kpi-val" style={{ color: "var(--accent)" }}>{profile?.sent_count?.toLocaleString() || 0}</div>
@@ -135,9 +238,8 @@ export function TargetProfileView({ caseId, caseData }: Props) {
         </div>
       </div>
 
-      {/* Top Correspondents & Subjects */}
+      {/* Correspondents & Subjects */}
       <div className="grid-2">
-        {/* Top Correspondents */}
         <div className="card">
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Top Correspondents</h3>
           {profile?.top_correspondents && profile.top_correspondents.length > 0 ? (
@@ -153,11 +255,10 @@ export function TargetProfileView({ caseId, caseData }: Props) {
               ))}
             </div>
           ) : (
-            <div className="empty" style={{ padding: 24 }}>No correspondents found</div>
+            <div className="empty" style={{ padding: 24 }}>No correspondents</div>
           )}
         </div>
 
-        {/* Top Subjects */}
         <div className="card">
           <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Frequent Subjects</h3>
           {profile?.top_subjects && profile.top_subjects.length > 0 ? (
@@ -173,31 +274,8 @@ export function TargetProfileView({ caseId, caseData }: Props) {
               ))}
             </div>
           ) : (
-            <div className="empty" style={{ padding: 24 }}>No subjects found</div>
+            <div className="empty" style={{ padding: 24 }}>No subjects</div>
           )}
-        </div>
-      </div>
-
-      {/* Communication Activity */}
-      <div className="card mt-4">
-        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Activity Summary</h3>
-        <div className="grid-2" style={{ fontSize: 13 }}>
-          <div>
-            <span className="muted">Email Address:</span>
-            <p style={{ fontFamily: "var(--mono)", color: "var(--accent)", marginTop: 4 }}>{targetEmail || "—"}</p>
-          </div>
-          <div>
-            <span className="muted">Full Name:</span>
-            <p style={{ color: "var(--text-0)", marginTop: 4 }}>{targetName || "—"}</p>
-          </div>
-          <div>
-            <span className="muted">Organization:</span>
-            <p style={{ color: "var(--text-0)", marginTop: 4 }}>{targetOrg || "—"}</p>
-          </div>
-          <div>
-            <span className="muted">Investigation:</span>
-            <p style={{ color: "var(--text-0)", marginTop: 4 }}>{caseData?.case_title || "—"}</p>
-          </div>
         </div>
       </div>
     </div>

@@ -487,7 +487,62 @@ pub async fn run_analysis(state: State<'_, AppState>, case_id: String) -> Result
     Ok(total_findings)
 }
 
-/// Get target profile data for a case
+/// Auto-detect potential targets from email data
+#[tauri::command]
+pub async fn auto_detect_targets(state: State<'_, AppState>, case_id: String) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    // Find most frequent email addresses (sent + received)
+    let mut stmt = db.conn.prepare("
+        SELECT addr, SUM(cnt) as total FROM (
+            SELECT from_addr as addr, COUNT(*) as cnt FROM emails WHERE case_id=?1 GROUP BY from_addr
+            UNION ALL
+            SELECT json_each.value as addr, COUNT(*) as cnt FROM emails, json_each(emails.to_addrs) WHERE emails.case_id=?1 GROUP BY json_each.value
+        ) GROUP BY addr ORDER BY total DESC LIMIT 20
+    ").map_err(|e| e.to_string())?;
+    
+    let rows: Vec<(String, i64)> = stmt.query_map([&case_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    // For each address, get display name and stats
+    let mut targets = Vec::new();
+    for (addr, count) in &rows {
+        // Get display name
+        let display_name: Option<String> = db.conn.query_row(
+            "SELECT DISTINCT from_display FROM emails WHERE from_addr=?1 AND from_display IS NOT NULL AND from_display != '' LIMIT 1",
+            [addr.as_str()],
+            |row| row.get(0),
+        ).ok();
+        
+        // Get sent count
+        let sent: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND from_addr=?2",
+            rusqlite::params![&case_id, addr.as_str()],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        
+        // Get received count
+        let received: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND to_addrs LIKE ?2",
+            rusqlite::params![&case_id, format!("%{}%", addr.as_str())],
+            |row| row.get(0),
+        ).unwrap_or(0);
+        
+        targets.push(serde_json::json!({
+            "email": addr,
+            "display_name": display_name,
+            "total_emails": count,
+            "sent": sent,
+            "received": received,
+        }));
+    }
+    
+    Ok(serde_json::json!({
+        "targets": targets,
+        "case_id": case_id,
+    }))
+}
 #[tauri::command]
 pub async fn target_profile(state: State<'_, AppState>, case_id: String) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;

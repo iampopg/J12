@@ -48,6 +48,7 @@ fn main() {
             commands::update_finding_status,
             commands::add_finding_note,
             commands::target_profile,
+            commands::auto_detect_targets,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
