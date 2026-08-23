@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Email {
@@ -158,38 +158,91 @@ export function EmailListView({ caseId, filter }: { caseId: string; filter?: str
 
           <input className="input mb-4" placeholder="Search subject, sender, body..." value={q} onChange={(e) => setQ(e.target.value)} />
 
-          <div className="card">
-            <table>
-              <thead>
-                <tr>
-                  <th className="th sort-header" onClick={() => toggleSort("from")}>From <SortIcon field="from" /></th>
-                  <th className="th sort-header" onClick={() => toggleSort("subject")}>Subject <SortIcon field="subject" /></th>
-                  <th className="th sort-header" onClick={() => toggleSort("date")}>Date <SortIcon field="date" /></th>
-                  <th className="th" style={{ width: 60 }}>Deleted</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.slice(0, 500).map((e) => (
-                  <tr key={e.id} className="tr-click" onClick={() => setSelected(e)}>
-                    <td className="td from-cell">
-                      <span style={{ color: "var(--text-1)" }}>{e.from_display || e.from_addr}</span>
-                    </td>
-                    <td className="td subject-cell">
-                      {e.subject || <span className="muted">(no subject)</span>}
-                    </td>
-                    <td className="td muted date-cell">
-                      {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
-                    </td>
-                    <td className="td">{e.deleted_recovered && <span className="badge badge-red">DEL</span>}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {filtered.length === 0 && <div className="empty">No emails match filters</div>}
-            {filtered.length > 500 && <p className="muted text-sm mt-4">Showing 500 of {filtered.length}</p>}
-          </div>
+          <VirtualEmailList emails={filtered} onSelect={setSelected} />
         </>
       )}
+    </div>
+  );
+}
+
+function VirtualEmailList({ emails, onSelect }: { emails: Email[]; onSelect: (e: Email) => void }) {
+  const [scrollOffset, setScrollOffset] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const rowHeight = 41;
+  const visibleCount = 40;
+
+  const handleScroll = useCallback(() => {
+    if (containerRef.current) {
+      setScrollOffset(containerRef.current.scrollTop);
+    }
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) {
+      el.addEventListener("scroll", handleScroll);
+      return () => el.removeEventListener("scroll", handleScroll);
+    }
+  }, [handleScroll]);
+
+  const totalHeight = emails.length * rowHeight;
+  const startIdx = Math.max(0, Math.floor(scrollOffset / rowHeight));
+  const endIdx = Math.min(emails.length, startIdx + visibleCount);
+  const visibleEmails = emails.slice(startIdx, endIdx);
+
+  if (emails.length === 0) {
+    return <div className="card"><div className="empty">No emails match filters</div></div>;
+  }
+
+  return (
+    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ marginTop: 0 }}>
+          <thead>
+            <tr>
+              <th className="th" style={{ width: 200 }}>From</th>
+              <th className="th">Subject</th>
+              <th className="th" style={{ width: 100 }}>Date</th>
+              <th className="th" style={{ width: 60 }}>Del</th>
+            </tr>
+          </thead>
+        </table>
+      </div>
+      <div
+        ref={containerRef}
+        style={{ height: "60vh", overflowY: "auto", position: "relative" }}
+      >
+        <div style={{ height: totalHeight, position: "relative" }}>
+          <table style={{ marginTop: 0 }}>
+            <tbody>
+              {visibleEmails.map((e, i) => (
+                <tr
+                  key={e.id}
+                  className="tr-click"
+                  style={{ position: "absolute", top: (startIdx + i) * rowHeight, width: "100%" }}
+                  onClick={() => onSelect(e)}
+                >
+                  <td className="td" style={{ width: 200 }}>
+                    <span style={{ color: "var(--text-1)" }}>{e.from_display || e.from_addr}</span>
+                  </td>
+                  <td className="td subject-cell">
+                    {e.subject || <span className="muted">(no subject)</span>}
+                  </td>
+                  <td className="td muted date-cell" style={{ width: 100 }}>
+                    {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
+                  </td>
+                  <td className="td" style={{ width: 60 }}>
+                    {e.deleted_recovered && <span className="badge badge-red">DEL</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style={{ padding: "8px 16px", background: "var(--bg-3)", fontSize: 11, color: "var(--text-3)", borderTop: "1px solid var(--border)" }}>
+        {emails.length.toLocaleString()} emails
+      </div>
     </div>
   );
 }
@@ -533,14 +586,61 @@ function EmailDetail({ email, evidenceName, onClose }: { email: Email; evidenceN
         {tab === "attachments" && (
           <div>
             <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>Attachments</h4>
-            <div className="empty">Attachment extraction from MIME parts will be available in Phase 2</div>
-            <div style={{ marginTop: 20, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)" }}>
-              <p className="muted text-sm">Full attachment extraction (with SHA-256 hashes, magic byte detection, entropy analysis) requires MIME part byte extraction.</p>
-              <p className="muted text-sm mt-4">For EML/MBOX files, attachments are embedded in the MIME structure and need to be decoded from base64/quoted-printable encoding.</p>
-            </div>
+            <EmailAttachments emailId={email.id} />
           </div>
         )}
       </div>
     </div>
   );
+}
+
+function EmailAttachments({ emailId }: { emailId: string }) {
+  const [attachments, setAttachments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    invoke<any[]>("email_attachments", { emailId })
+      .then(data => setAttachments(data))
+      .catch(() => setAttachments([]))
+      .finally(() => setLoading(false));
+  }, [emailId]);
+
+  if (loading) return <div className="empty">Loading attachments...</div>;
+
+  if (attachments.length === 0) {
+    return <div className="empty">No attachments in this email</div>;
+  }
+
+  return (
+    <div>
+      <table>
+        <thead>
+          <tr>
+            <th className="th">Filename</th>
+            <th className="th">Type</th>
+            <th className="th" style={{ width: 80 }}>Size</th>
+            <th className="th" style={{ width: 120 }}>SHA-256</th>
+          </tr>
+        </thead>
+        <tbody>
+          {attachments.map((att) => (
+            <tr key={att.id}>
+              <td className="td">{att.filename || <span className="muted">unnamed</span>}</td>
+              <td className="td"><span className="badge badge-blue">{att.mime_type}</span></td>
+              <td className="td">{formatBytes(att.size_bytes)}</td>
+              <td className="td mono" style={{ fontSize: 10 }}>{att.sha256?.slice(0, 10)}…</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 }

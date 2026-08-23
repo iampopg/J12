@@ -296,6 +296,20 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                     &email.body_text, &email.body_html, &email.folder_name, &email.folder_category, &email.recovery_status, 0i64, 0i64, 0i64, "[]", &chrono::Utc::now().to_rfc3339()
                 ],
             ).map_err(|e| format!("Insert email {}: {}", email.message_id, e))?;
+            
+            // Insert attachments
+            for att in &email.attachments {
+                let att_id = generate_id();
+                let sha256 = crate::parser::sha256_data(&att.data);
+                let size = att.data.len() as i64;
+                tx.execute(
+                    "INSERT INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    rusqlite::params![
+                        &att_id, &email_id, &att.filename, &att.content_type, &att.content_type, &size, "", 0.0, "[]"
+                    ],
+                ).ok(); // Don't fail on attachment errors
+            }
         }
         
         // Update evidence status before commit
@@ -485,6 +499,27 @@ pub async fn run_analysis(state: State<'_, AppState>, case_id: String) -> Result
     }
     
     Ok(total_findings)
+}
+
+/// Get attachments for an email
+#[tauri::command]
+pub async fn email_attachments(state: State<'_, AppState>, email_id: String) -> Result<Vec<Attachment>, String> {
+    let db = state.db.lock().await;
+    let mut stmt = db.conn.prepare("SELECT id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags FROM attachments WHERE email_id=?1").map_err(|e| e.to_string())?;
+    let attachments = stmt.query_map([&email_id], |row| {
+        Ok(Attachment {
+            id: row.get(0)?,
+            email_id: row.get(1)?,
+            filename: row.get(2)?,
+            sha256: row.get(3)?,
+            mime_type: row.get(4)?,
+            size_bytes: row.get::<_, i64>(5)? as u64,
+            stored_path: row.get(6)?,
+            entropy: row.get::<_, Option<f64>>(7)?,
+            risk_flags: row.get(8)?,
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(attachments)
 }
 
 /// Auto-detect potential targets from email data

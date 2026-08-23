@@ -159,17 +159,23 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
         warnings.push("Missing From address".to_string());
     }
     
-    let (body_text, body_html) = if content_type.starts_with("multipart/") {
-        (Some(body.to_string()), None) // Simplified: return raw body for multipart
+    let (body_text, body_html, attachments) = if content_type.starts_with("multipart/") {
+        // Parse multipart message
+        let boundary = extract_boundary(&content_type);
+        if let Some(boundary) = boundary {
+            parse_multipart(body, &boundary)
+        } else {
+            (Some(body.to_string()), None, vec![])
+        }
     } else if content_type.contains("text/html") {
-        (None, Some(body.to_string()))
+        (None, Some(body.to_string()), vec![])
     } else if content_type.contains("text/plain") || content_type.is_empty() {
         {
             let text = if body.trim().is_empty() { None } else { Some(body.to_string()) };
-            (text, None)
+            (text, None, vec![])
         }
     } else {
-        (Some(body.to_string()), None)
+        (Some(body.to_string()), None, vec![])
     };
     
     // Categorize email based on X-Folder header with forensic distinction
@@ -263,4 +269,167 @@ pub fn sha256_data(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     format!("{:x}", hasher.finalize())
+}
+
+/// Extract boundary string from Content-Type header
+fn extract_boundary(content_type: &str) -> Option<String> {
+    if let Some(idx) = content_type.find("boundary=") {
+        let rest = &content_type[idx + 9..];
+        let boundary = rest.trim_matches('"').trim_matches('\'').trim();
+        if !boundary.is_empty() {
+            return Some(boundary.to_string());
+        }
+    }
+    None
+}
+
+/// Parse multipart MIME body into text, html, and attachments
+fn parse_multipart(body: &str, boundary: &str) -> (Option<String>, Option<String>, Vec<RawAttachment>) {
+    let mut text_parts = Vec::new();
+    let mut html_parts = Vec::new();
+    let mut attachments = Vec::new();
+    
+    let delimiter = format!("--{}", boundary);
+    
+    // Split by boundary
+    let parts: Vec<&str> = body.split(&delimiter).collect();
+    
+    for part in &parts {
+        let part = part.trim_start_matches("\r\n").trim_start_matches("\n");
+        if part.is_empty() || part == "--" {
+            continue;
+        }
+        
+        // Split headers from body
+        let (header_section, body_content) = if let Some(idx) = part.find("\r\n\r\n") {
+            (&part[..idx], &part[idx+4..])
+        } else if let Some(idx) = part.find("\n\n") {
+            (&part[..idx], &part[idx+2..])
+        } else {
+            continue;
+        };
+        
+        // Parse part headers
+        let mut part_content_type = String::new();
+        let mut part_encoding = String::new();
+        let mut part_filename = None;
+        let mut part_name = None;
+        
+        for line in header_section.lines() {
+            if let Some((key, value)) = line.split_once(':') {
+                let key = key.trim().to_lowercase();
+                let value = value.trim();
+                match key.as_str() {
+                    "content-type" => {
+                        part_content_type = value.split(';').next().unwrap_or(value).trim().to_lowercase();
+                        // Extract filename from Content-Type name= parameter
+                        if let Some(idx) = value.find("name=") {
+                            let name_rest = &value[idx + 5..];
+                            part_name = Some(name_rest.trim_matches('"').trim().to_string());
+                        }
+                    }
+                    "content-transfer-encoding" => part_encoding = value.to_lowercase(),
+                    "content-disposition" => {
+                        if let Some(idx) = value.find("filename=") {
+                            let fname_rest = &value[idx + 9..];
+                            part_filename = Some(fname_rest.trim_matches('"').trim_matches('\'').trim().to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
+        // Decode body
+        let decoded = if part_encoding.contains("base64") {
+            base64_decode(body_content.trim())
+        } else if part_encoding.contains("quoted-printable") {
+            qp_decode(body_content)
+        } else {
+            body_content.as_bytes().to_vec()
+        };
+        
+        // Categorize part
+        if part_content_type.starts_with("multipart/") {
+            // Nested multipart - recurse
+            if let Some(inner_boundary) = extract_boundary(&part_content_type) {
+                let (t, h, a) = parse_multipart(body_content, &inner_boundary);
+                if let Some(t) = t { text_parts.push(t); }
+                if let Some(h) = h { html_parts.push(h); }
+                attachments.extend(a);
+            }
+        } else if part_content_type.starts_with("text/plain") {
+            text_parts.push(String::from_utf8_lossy(&decoded).to_string());
+        } else if part_content_type.starts_with("text/html") {
+            html_parts.push(String::from_utf8_lossy(&decoded).to_string());
+        } else if part_content_type.starts_with("image/") || part_content_type.starts_with("application/") {
+            let filename = part_filename.or(part_name).or_else(|| {
+                // Generate filename from content type
+                let ext = match part_content_type.as_str() {
+                    "image/jpeg" | "image/jpg" => "jpg",
+                    "image/png" => "png",
+                    "image/gif" => "gif",
+                    "application/pdf" => "pdf",
+                    "application/zip" => "zip",
+                    "application/msword" => "doc",
+                    _ => "bin",
+                };
+                Some(format!("attachment_{}.{}", attachments.len() + 1, ext))
+            });
+            
+            attachments.push(RawAttachment {
+                filename,
+                content_type: part_content_type,
+                data: decoded,
+            });
+        } else if !decoded.is_empty() {
+            // Other types - treat as attachment
+            let filename = part_filename.or(part_name);
+            attachments.push(RawAttachment {
+                filename,
+                content_type: part_content_type,
+                data: decoded,
+            });
+        }
+    }
+    
+    (
+        if text_parts.is_empty() { None } else { Some(text_parts.join("\n")) },
+        if html_parts.is_empty() { None } else { Some(html_parts.join("\n")) },
+        attachments,
+    )
+}
+
+/// Simple base64 decode
+fn base64_decode(input: &str) -> Vec<u8> {
+    let cleaned: String = input.chars().filter(|c| !c.is_whitespace()).collect();
+    match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cleaned) {
+        Ok(data) => data,
+        Err(_) => cleaned.as_bytes().to_vec(),
+    }
+}
+
+/// Simple quoted-printable decode
+fn qp_decode(input: &str) -> Vec<u8> {
+    let mut result = Vec::new();
+    let mut chars = input.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '=' {
+            if let (Some(h), Some(l)) = (chars.next(), chars.next()) {
+                if h == '\r' || h == '\n' {
+                    // Soft line break, skip
+                    continue;
+                }
+                let hex = format!("{}{}", h, l);
+                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                    result.push(byte);
+                }
+            }
+        } else {
+            result.push(c as u8);
+        }
+    }
+    
+    result
 }

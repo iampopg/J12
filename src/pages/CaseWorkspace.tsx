@@ -419,6 +419,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
   const [uploading, setUploading] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
 
   const addLog = (level: string, message: string) => {
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), level, message }]);
@@ -428,9 +429,15 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
     try {
       const selected = await invoke<string | null>("open_file_dialog");
       if (!selected) return;
-      setUploading(true);
-      addLog("info", `Uploading: ${selected}`);
-      const ev = await invoke<any>("evidence_upload", { input: { case_id: caseId, file_path: selected, source_description: null } });
+      processFile(selected);
+    } catch (e: any) { addLog("error", `Upload failed: ${e}`); }
+  };
+
+  const processFile = async (path: string) => {
+    setUploading(true);
+    addLog("info", `Uploading: ${path}`);
+    try {
+      const ev = await invoke<any>("evidence_upload", { input: { case_id: caseId, file_path: path, source_description: null } });
       addLog("success", `Uploaded: ${ev.filename} (${ev.format}, ${(ev.size_bytes / 1024).toFixed(0)} KB)`);
       addLog("info", "Auto-parsing...");
       invoke("parse_evidence", { evidenceId: ev.id }).then((count: any) => {
@@ -442,6 +449,23 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
       onRefresh();
     } catch (e: any) { addLog("error", `Upload failed: ${e}`); }
     setUploading(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    // Note: Browser File API doesn't expose full path for security
+    // For Tauri, we use the file picker. Drag-drop shows a message.
+    addLog("info", "Please use the upload button to select files (browser security restricts drag-drop paths)");
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = () => {
+    setDragOver(false);
   };
 
   const handleParse = async (evidenceId: string, filename: string) => {
@@ -487,10 +511,21 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
       )}
 
       {evidence.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
+        <div
+          className="card"
+          style={{
+            textAlign: "center",
+            padding: "60px 40px",
+            border: dragOver ? "2px dashed var(--accent)" : "2px dashed var(--border)",
+            background: dragOver ? "var(--accent-subtle)" : "transparent",
+          }}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
           <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
           <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--text-0)" }}>No evidence yet</h3>
-          <p className="muted mb-4">Upload email files to begin analysis.</p>
+          <p className="muted mb-4">Drag & drop email files here or click upload</p>
           <button className="btn btn-primary" onClick={handleUpload}>+ Upload Evidence</button>
         </div>
       ) : (
