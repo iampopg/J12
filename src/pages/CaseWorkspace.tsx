@@ -112,11 +112,11 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
            )}
 
            {/* Target Profile */}
-           {!sidebarCollapsed && caseData?.target_email && (
+           {!sidebarCollapsed && (
              <div className="sb-folder" style={{ marginBottom: 8 }}>
                <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")} style={{ fontWeight: 500 }}>
                  <span className="sb-icon">👤</span> Target Profile
-                 <span className="sb-count" style={{ background: "var(--danger)" }}>!</span>
+                 {caseData?.target_email && <span className="sb-count" style={{ background: "var(--accent)" }}>●</span>}
                </button>
              </div>
            )}

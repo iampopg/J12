@@ -154,13 +154,15 @@ pub async fn dashboard(state: State<'_, AppState>, input: EmptyInput) -> Result<
     let spamc: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='spam'", [&input.case_id], |r| r.get(0)).unwrap_or(0);
     let otherc: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='other'", [&input.case_id], |r| r.get(0)).unwrap_or(0);
     let enc: i64 = db.conn.query_row("SELECT COUNT(*) FROM entities WHERE case_id=?1", [&input.case_id], |r| r.get(0)).unwrap_or(0);
-    let fc: i64 = db.conn.query_row("SELECT COUNT(*) FROM findings WHERE case_id=?1", [&input.case_id], |r| r.get(0)).unwrap_or(0);
+    
+    // Get findings count per severity (use DISTINCT to avoid duplicates)
+    let fc: i64 = db.conn.query_row("SELECT COUNT(DISTINCT id) FROM findings WHERE case_id=?1", [&input.case_id], |r| r.get(0)).unwrap_or(0);
     
     // Severity breakdown for findings
     let mut severity_breakdown = std::collections::HashMap::new();
     for severity in &["critical", "high", "medium", "low"] {
         let count: i64 = db.conn.query_row(
-            "SELECT COUNT(*) FROM findings WHERE case_id=?1 AND severity=?2",
+            "SELECT COUNT(DISTINCT id) FROM findings WHERE case_id=?1 AND severity=?2",
             rusqlite::params![&input.case_id, severity],
             |r| r.get(0),
         ).unwrap_or(0);
