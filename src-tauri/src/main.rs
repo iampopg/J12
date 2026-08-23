@@ -49,6 +49,10 @@ fn main() {
             commands::add_finding_note,
             commands::target_profile,
             commands::auto_detect_targets,
+            commands::advanced_search,
+            commands::extract_entities,
+            commands::entity_list,
+            commands::entity_dive,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

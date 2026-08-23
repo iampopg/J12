@@ -668,6 +668,199 @@ pub async fn target_profile(state: State<'_, AppState>, case_id: String) -> Resu
         "display_names": display_names,
     }))
 }
+
+/// Advanced search with operators
+#[tauri::command]
+pub async fn advanced_search(state: State<'_, AppState>, input: SearchInput) -> Result<Vec<EmailMessage>, String> {
+    let db = state.db.lock().await;
+    let limit = input.limit.unwrap_or(100) as i64;
+    
+    let query = input.query.trim();
+    let mut sql = String::from("SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,headers_raw,body_text,body_html,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags FROM emails WHERE case_id=?1");
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(input.case_id.clone())];
+    
+    if query.contains(':') {
+        let parts: Vec<&str> = query.split_whitespace().collect();
+        for part in &parts {
+            if let Some((key, value)) = part.split_once(':') {
+                let value = value.trim_matches('"');
+                match key.to_lowercase().as_str() {
+                    "from" => {
+                        sql.push_str(" AND from_addr LIKE ?");
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "to" => {
+                        sql.push_str(" AND (to_addrs LIKE ? OR cc_addrs LIKE ?)");
+                        params.push(Box::new(format!("%{}%", value)));
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "subject" => {
+                        sql.push_str(" AND subject LIKE ?");
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "body" => {
+                        sql.push_str(" AND body_text LIKE ?");
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "domain" => {
+                        sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ?)");
+                        params.push(Box::new(format!("%{}%", value)));
+                        params.push(Box::new(format!("%{}%", value)));
+                    }
+                    "after" => {
+                        sql.push_str(" AND date_sent_utc >= ?");
+                        params.push(Box::new(value.to_string()));
+                    }
+                    "before" => {
+                        sql.push_str(" AND date_sent_utc <= ?");
+                        params.push(Box::new(value.to_string()));
+                    }
+                    "risk" => {
+                        if value.starts_with('>') {
+                            let threshold: i64 = value[1..].parse().unwrap_or(50);
+                            sql.push_str(" AND risk_score >= ?");
+                            params.push(Box::new(threshold));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    } else {
+        sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR subject LIKE ? OR body_text LIKE ?)");
+        let pattern = format!("%{}%", query);
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern.clone()));
+        params.push(Box::new(pattern));
+    }
+    
+    sql.push_str(" ORDER BY date_sent_utc DESC LIMIT ?");
+    params.push(Box::new(limit));
+    
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut stmt = db.conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let emails = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(emails)
+}
+
+/// Extract and store entities from emails
+#[tauri::command]
+pub async fn extract_entities(state: State<'_, AppState>, case_id: String) -> Result<u32, String> {
+    let db = state.db.lock().await;
+    
+    let mut stmt = db.conn.prepare("SELECT from_addr, from_display, to_addrs, cc_addrs, date_sent_utc FROM emails WHERE case_id=?1").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([&case_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+        ))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let mut entity_counts: std::collections::HashMap<String, (Option<String>, i64, i64, Option<String>, Option<String>)> = std::collections::HashMap::new();
+    
+    for (from_addr, from_display, to_addrs, cc_addrs, date) in rows {
+        // From address (sent)
+        let entry = entity_counts.entry(from_addr.clone()).or_insert((from_display.clone(), 0, 0, date.clone(), date.clone()));
+        entry.1 += 1;
+        update_date_range(&mut entry.3, &mut entry.4, &date);
+        
+        // To addresses (received)
+        let to_list: Vec<String> = serde_json::from_str(&to_addrs).unwrap_or_default();
+        for to_addr in to_list {
+            let entry = entity_counts.entry(to_addr).or_insert((None, 0, 0, date.clone(), date.clone()));
+            entry.2 += 1;
+            update_date_range(&mut entry.3, &mut entry.4, &date);
+        }
+        
+        // CC addresses
+        let cc_list: Vec<String> = serde_json::from_str(&cc_addrs).unwrap_or_default();
+        for cc_addr in cc_list {
+            let entry = entity_counts.entry(cc_addr).or_insert((None, 0, 0, date.clone(), date.clone()));
+            entry.2 += 1;
+            update_date_range(&mut entry.3, &mut entry.4, &date);
+        }
+    }
+    
+    db.conn.execute("DELETE FROM entities WHERE case_id=?1", [&case_id]).ok();
+    
+    let mut count = 0;
+    for (email, (display_name, sent, received, first_seen, last_seen)) in entity_counts {
+        let id = generate_id();
+        db.conn.execute(
+            "INSERT INTO entities (id, case_id, email_address, display_name, first_seen, last_seen, sent_count, received_count, role) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'unknown')",
+            rusqlite::params![&id, &case_id, &email, &display_name, &first_seen, &last_seen, sent as i64, received as i64],
+        ).map_err(|e| format!("Insert entity: {}", e))?;
+        count += 1;
+    }
+    
+    Ok(count)
+}
+
+/// Get entities for a case
+#[tauri::command]
+pub async fn entity_list(state: State<'_, AppState>, input: EmptyInput) -> Result<Vec<Entity>, String> {
+    let db = state.db.lock().await;
+    let mut stmt = db.conn.prepare("SELECT id,case_id,email_address,display_name,first_seen,last_seen,sent_count,received_count,role FROM entities WHERE case_id=?1 ORDER BY (sent_count + received_count) DESC").map_err(|e| e.to_string())?;
+    let entities = stmt.query_map([&input.case_id], |row| {
+        Ok(Entity { id: row.get(0)?, case_id: row.get(1)?, email_address: row.get(2)?, display_name: row.get(3)?, first_seen: row.get(4)?, last_seen: row.get(5)?, sent_count: row.get(6)?, received_count: row.get(7)?, role: row.get(8)? })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    Ok(entities)
+}
+
+/// Get single entity deep-dive
+#[tauri::command]
+pub async fn entity_dive(state: State<'_, AppState>, input: EntityInput) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    let entity: (String, Option<String>, Option<String>, Option<String>, i64, i64) = db.conn.query_row(
+        "SELECT email_address, display_name, first_seen, last_seen, sent_count, received_count FROM entities WHERE case_id=?1 AND email_address=?2",
+        rusqlite::params![&input.case_id, &input.email_address],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+    ).map_err(|e| e.to_string())?;
+    
+    let mut stmt = db.conn.prepare(
+        "SELECT from_addr, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2) GROUP BY from_addr ORDER BY cnt DESC LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+    let sent_to: Vec<(String, i64)> = stmt.query_map(rusqlite::params![&input.case_id, format!("%{}%", entity.0)], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let mut stmt2 = db.conn.prepare(
+        "SELECT to_addrs FROM emails WHERE case_id=?1 AND from_addr=?2"
+    ).map_err(|e| e.to_string())?;
+    let received_from_rows: Vec<Vec<String>> = stmt2.query_map(rusqlite::params![&input.case_id, entity.0.clone()], |row| {
+        let to_addrs: String = row.get(0)?;
+        let addrs: Vec<String> = serde_json::from_str(&to_addrs).unwrap_or_default();
+        Ok(addrs)
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let mut received_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for addrs in received_from_rows {
+        for addr in addrs {
+            *received_counts.entry(addr).or_insert(0) += 1;
+        }
+    }
+    let mut received_from_vec: Vec<(String, i64)> = received_counts.into_iter().collect();
+    received_from_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    received_from_vec.truncate(10);
+    
+    Ok(serde_json::json!({
+        "email": entity.0,
+        "display_name": entity.1,
+        "first_seen": entity.2,
+        "last_seen": entity.3,
+        "sent_count": entity.4,
+        "received_count": entity.5,
+        "sent_to": sent_to,
+        "received_from": received_from_vec,
+    }))
+}
 #[tauri::command]
 pub async fn update_finding_status(
     state: State<'_, AppState>,
@@ -723,4 +916,16 @@ pub async fn add_finding_note(
     ).ok();
     
     Ok(())
+}
+
+/// Helper to update first_seen/last_seen date range
+fn update_date_range(first: &mut Option<String>, last: &mut Option<String>, date: &Option<String>) {
+    if let Some(d) = date {
+        if first.as_ref().map_or(true, |f| d < f) {
+            *first = Some(d.clone());
+        }
+        if last.as_ref().map_or(true, |l| d > l) {
+            *last = Some(d.clone());
+        }
+    }
 }

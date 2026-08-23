@@ -166,6 +166,25 @@ pub struct SearchInput {
     pub limit: Option<u32>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Entity {
+    pub id: String,
+    pub case_id: String,
+    pub email_address: String,
+    pub display_name: Option<String>,
+    pub first_seen: Option<String>,
+    pub last_seen: Option<String>,
+    pub sent_count: i64,
+    pub received_count: i64,
+    pub role: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EntityInput {
+    pub case_id: String,
+    pub email_address: String,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct EmptyInput {
     pub case_id: String,

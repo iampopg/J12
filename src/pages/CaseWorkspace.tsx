@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { EmailListView } from "../views/EmailListView";
 import { FindingsView } from "../views/FindingsView";
 import { TargetProfileView } from "../views/TargetProfileView";
+import { SearchView } from "../views/SearchView";
+import { EntityDiveView } from "../views/EntityDiveView";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
@@ -249,10 +251,10 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
           {view === "recoverable" && <EmailListView caseId={caseId} filter="recoverable" />}
           {view === "spam" && <EmailListView caseId={caseId} filter="spam" />}
           {view === "other" && <EmailListView caseId={caseId} filter="other" />}
-          {view === "search" && <div className="card"><div className="empty">Advanced search — Phase 4</div></div>}
+          {view === "search" && <SearchView caseId={caseId} />}
+          {view === "entities" && <EntityDiveView caseId={caseId} />}
           {view === "timeline" && <div className="card"><div className="empty">Timeline — Phase 4</div></div>}
           {view === "graph" && <div className="card"><div className="empty">Communication graph — Phase 4</div></div>}
-          {view === "entities" && <div className="card"><div className="empty">Entity profiles — Phase 4</div></div>}
           {view === "findings" && <FindingsView caseId={caseId} />}
           {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
           {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
