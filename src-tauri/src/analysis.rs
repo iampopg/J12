@@ -979,8 +979,14 @@ pub fn generate_findings(
 ) -> Vec<NewFinding> {
     let mut findings = Vec::new();
     
-    // Header-based findings
+    // Header-based findings - skip expected MBOX behavior
     for anomaly in &header_analysis.routing_anomalies {
+        // Don't create findings for expected MBOX archive behavior
+        match anomaly.anomaly_type.as_str() {
+            "no_received_internal" | "missing_received" => continue,
+            _ => {}
+        }
+        
         let severity = match anomaly.severity.as_str() {
             "critical" => "critical",
             "high" => "high",
@@ -1108,8 +1114,19 @@ pub fn calculate_risk_score(
         score += att.risk_score / 4; // Max 25 from attachments
     }
     
-    // Routing anomalies
-    score += (header_analysis.routing_anomalies.len() as u8) * 5;
+    // Routing anomalies - only count actual anomalies, not expected MBOX behavior
+    for anomaly in &header_analysis.routing_anomalies {
+        // Skip anomalies that are expected for MBOX archives
+        match anomaly.anomaly_type.as_str() {
+            "missing_received" | "no_received_internal" => {
+                // Not a risk for MBOX files - Received headers are stripped during archival
+            }
+            "timestamp_reversal" => score += 10,
+            "long_transit" => score += 5,
+            "excessive_hops" => score += 10,
+            _ => score += 5,
+        }
+    }
     
     score.min(100)
 }

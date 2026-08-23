@@ -403,7 +403,16 @@ function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence
               </tr>
             </thead>
             <tbody>
-              {evidence.map(e => (
+              {evidence.reduce((unique: Evidence[], e) => {
+                // Deduplicate by filename, keeping the latest status
+                const existing = unique.find(u => u.filename === e.filename);
+                if (!existing) unique.push(e);
+                else if (e.message_count > existing.message_count) {
+                  const idx = unique.indexOf(existing);
+                  unique[idx] = e;
+                }
+                return unique;
+              }, []).map(e => (
                 <tr key={e.id}>
                   <td className="td">{e.filename}</td>
                   <td className="td"><span className="badge badge-blue">{e.format}</span></td>
@@ -414,6 +423,9 @@ function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence
               ))}
             </tbody>
           </table>
+          {evidence.length > 1 && evidence.length !== new Set(evidence.map(e => e.filename)).size && (
+            <p className="muted text-sm mt-4">{evidence.length} uploads · {new Set(evidence.map(e => e.filename)).size} unique files (showing latest status)</p>
+          )}
         </div>
       )}
     </div>

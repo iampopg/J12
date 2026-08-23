@@ -284,20 +284,26 @@ pub fn compute_sha512(path: &PathBuf) -> Result<String, std::io::Error> {
 }
 
 pub fn detect_format(filename: &str) -> String {
-    let ext = PathBuf::from(filename)
+    let lower = filename.to_lowercase();
+    let path_buf = PathBuf::from(&lower);
+    let ext = path_buf
         .extension()
         .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    match ext.as_str() {
-        "eml" => "eml",
-        "mbox" => "mbox",
-        "msg" => "msg",
-        "pst" => "pst",
-        "ost" => "ost",
-        "emlx" => "emlx",
-        _ => "unknown",
-    }.to_string()
+        .unwrap_or("");
+    match ext {
+        "eml" => return "eml".to_string(),
+        "mbox" => return "mbox".to_string(),
+        "msg" => return "msg".to_string(),
+        "pst" => return "pst".to_string(),
+        "ost" => return "ost".to_string(),
+        "emlx" => return "emlx".to_string(),
+        "dat" => return "tnef".to_string(),
+        _ => {}
+    }
+    if lower.contains("mbox") || lower.contains("inbox") || lower.contains("sent") || lower.contains("mailbox") {
+        return "mbox".to_string();
+    }
+    "unknown".to_string()
 }
 
 pub fn generate_id() -> String {

@@ -35,249 +35,134 @@ export function TargetProfileView({ caseId, caseData }: Props) {
   const [profile, setProfile] = useState<TargetProfile | null>(null);
   const [detected, setDetected] = useState<DetectedTarget[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showSelector, setShowSelector] = useState(false);
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [showAll, setShowAll] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [caseId]);
+  useEffect(() => { loadData(); }, [caseId]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const [prof, det] = await Promise.all([
-        invoke<TargetProfile>("target_profile", { caseId }),
-        invoke<any>("auto_detect_targets", { caseId }),
-      ]);
-      setProfile(prof);
-      setDetected(det.targets || []);
-    } catch (e) {
-      console.error("Failed to load target data:", e);
-    }
+      const det = await invoke<any>("auto_detect_targets", { caseId });
+      const targets: DetectedTarget[] = det.targets || [];
+      setDetected(targets);
+      // Auto-select the top target
+      if (targets.length > 0 && !selectedEmail) {
+        const top = targets.reduce((a, b) => (a.total_emails > b.total_emails ? a : b));
+        setSelectedEmail(top.email);
+        loadProfile(top.email);
+      } else if (selectedEmail) {
+        loadProfile(selectedEmail);
+      }
+    } catch (e) { console.error(e); }
     setLoading(false);
+  };
+
+  const loadProfile = async (email: string) => {
+    try {
+      const prof = await invoke<TargetProfile>("target_profile", { caseId });
+      setProfile(prof);
+    } catch (e) { console.error(e); }
   };
 
   if (loading) return <div className="empty">Loading target profile...</div>;
 
-  const targetEmail = profile?.target_email || caseData?.target_email;
-  const targetName = profile?.target_name || caseData?.target_name;
-  const targetOrg = profile?.target_organization || caseData?.target_organization;
-
-  if (!targetEmail && !targetName) {
+  if (detected.length === 0) {
     return (
       <div>
-        <div className="row between mb-4">
-          <div>
-            <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile</h2>
-            <p className="muted">Auto-detected potential targets from email data</p>
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
-        </div>
-
-        {/* Auto-detected targets */}
-        {detected.length > 0 ? (
-          <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Select a Target to Investigate</h3>
-            <p className="muted mb-4" style={{ fontSize: 12 }}>
-              The following email addresses appear most frequently in this case. Select one to set as the investigation target.
-            </p>
-            <table>
-              <thead>
-                <tr>
-                  <th className="th">Email Address</th>
-                  <th className="th">Display Name</th>
-                  <th className="th" style={{ width: 80 }}>Sent</th>
-                  <th className="th" style={{ width: 80 }}>Received</th>
-                  <th className="th" style={{ width: 80 }}>Total</th>
-                  <th className="th" style={{ width: 100 }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {detected.map((t, i) => (
-                  <tr key={i}>
-                    <td className="td" style={{ fontFamily: "var(--mono)", color: "var(--accent)" }}>{t.email}</td>
-                    <td className="td">{t.display_name || <span className="muted">—</span>}</td>
-                    <td className="td">{t.sent}</td>
-                    <td className="td">{t.received}</td>
-                    <td className="td"><strong>{t.total_emails}</strong></td>
-                    <td className="td">
-                      <button className="btn btn-primary btn-sm" onClick={() => selectTarget(t)}>
-                        Select
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
-            <div style={{ fontSize: 48, marginBottom: 16 }}>👤</div>
-            <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--text-0)" }}>No Targets Detected</h3>
-            <p className="muted">Upload and parse email data to auto-detect potential investigation targets.</p>
-          </div>
-        )}
+        <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", marginBottom: 16 }}>Target Profile</h2>
+        <div className="card empty">No targets detected. Upload and parse email data first.</div>
       </div>
     );
   }
 
+  // Get the selected target's data
+  const selected = detected.find(t => t.email === selectedEmail) || detected[0];
   const riskColor = (profile?.risk_score || 0) >= 50 ? "var(--danger)" : (profile?.risk_score || 0) >= 25 ? "var(--warning)" : "var(--success)";
   const riskLabel = (profile?.risk_score || 0) >= 50 ? "HIGH RISK" : (profile?.risk_score || 0) >= 25 ? "MEDIUM RISK" : "LOW RISK";
-
-  const selectTarget = async (t: DetectedTarget) => {
-    // TODO: Save selected target to case
-    setShowSelector(false);
-    loadData();
-  };
 
   return (
     <div>
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile</h2>
-          <p className="muted">Subject investigation overview</p>
+          <p className="muted">Main investigation subject — {selected.display_name || selected.email}</p>
         </div>
-        <div className="row gap-2">
-          <button className="btn btn-ghost btn-sm" onClick={() => setShowSelector(!showSelector)}>
-            {showSelector ? "Cancel" : "🔄 Change Target"}
-          </button>
-          <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
-        </div>
+        <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
       </div>
 
-      {/* Target selector */}
-      {showSelector && detected.length > 0 && (
-        <div className="card mb-4" style={{ borderLeft: "4px solid var(--warning)" }}>
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Select Different Target</h3>
-          <table>
-            <thead>
-              <tr>
-                <th className="th">Email</th>
-                <th className="th">Name</th>
-                <th className="th">Total</th>
-                <th className="th">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detected.map((t, i) => (
-                <tr key={i} style={{ background: t.email === targetEmail ? "var(--accent-subtle)" : "transparent" }}>
-                  <td className="td mono">{t.email}</td>
-                  <td className="td">{t.display_name || "—"}</td>
-                  <td className="td">{t.total_emails}</td>
-                  <td className="td">
-                    {t.email === targetEmail ? (
-                      <span className="badge badge-green">Active</span>
-                    ) : (
-                      <button className="btn btn-primary btn-sm" onClick={() => selectTarget(t)}>Select</button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Identity Card */}
+      {/* Main Identity Card */}
       <div className="card mb-4" style={{ borderLeft: "4px solid var(--accent)" }}>
         <div className="row between" style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ width: 64, height: 64, borderRadius: "50%", background: "linear-gradient(135deg, #3b82f6, #6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, color: "#fff", fontWeight: 700 }}>
-              {targetName ? targetName.charAt(0).toUpperCase() : targetEmail ? targetEmail.charAt(0).toUpperCase() : "?"}
+            <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg, #3b82f6, #6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, color: "#fff", fontWeight: 700 }}>
+              {(selected.display_name || selected.email).charAt(0).toUpperCase()}
             </div>
             <div>
-              <h3 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)" }}>{targetName || targetEmail || "Unknown"}</h3>
-              {targetEmail && <p style={{ fontSize: 14, color: "var(--accent)", fontFamily: "var(--mono)" }}>{targetEmail}</p>}
-              {targetOrg && <p style={{ fontSize: 12, color: "var(--text-3)" }}>{targetOrg}</p>}
+              <h3 style={{ fontSize: 22, fontWeight: 700 }}>{selected.display_name || selected.email}</h3>
+              <p style={{ fontSize: 14, color: "var(--accent)", fontFamily: "var(--mono)" }}>{selected.email}</p>
+              <p style={{ fontSize: 12, color: "var(--text-3)" }}>Appears in {selected.total_emails} emails</p>
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", letterSpacing: "0.05em", marginBottom: 4 }}>RISK SCORE</div>
-            <div style={{ fontSize: 32, fontWeight: 800, color: riskColor }}>{profile?.risk_score || 0}</div>
+            <div style={{ fontSize: 36, fontWeight: 800, color: riskColor }}>{profile?.risk_score || 0}</div>
             <div style={{ fontSize: 11, color: riskColor, fontWeight: 600 }}>{riskLabel}</div>
           </div>
         </div>
-
-        {/* Aliases */}
-        {profile?.display_names && profile.display_names.length > 0 && (
-          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "var(--text-3)", letterSpacing: "0.05em", marginBottom: 8 }}>KNOWN ALIASES</div>
-            <div className="row gap-2" style={{ flexWrap: "wrap" }}>
-              {profile.display_names.map((name, i) => (
-                <span key={i} className="badge badge-gray" style={{ fontSize: 12 }}>{name}</span>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Stats */}
       <div className="kpi-grid mb-4">
-        <div className="kpi">
-          <div className="kpi-val" style={{ color: "var(--accent)" }}>{profile?.sent_count?.toLocaleString() || 0}</div>
-          <div className="kpi-label">Sent</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ color: "var(--success)" }}>{profile?.received_count?.toLocaleString() || 0}</div>
-          <div className="kpi-label">Received</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-val">{profile?.total_emails?.toLocaleString() || 0}</div>
-          <div className="kpi-label">Total Involved</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ fontSize: 18 }}>
-            {profile?.first_seen ? new Date(profile.first_seen).toLocaleDateString() : "—"}
-          </div>
-          <div className="kpi-label">First Seen</div>
-        </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ fontSize: 18 }}>
-            {profile?.last_seen ? new Date(profile.last_seen).toLocaleDateString() : "—"}
-          </div>
-          <div className="kpi-label">Last Seen</div>
-        </div>
+        <div className="kpi"><div className="kpi-val" style={{ color: "var(--accent)" }}>{selected.sent}</div><div className="kpi-label">Sent</div></div>
+        <div className="kpi"><div className="kpi-val" style={{ color: "var(--success)" }}>{selected.received}</div><div className="kpi-label">Received</div></div>
+        <div className="kpi"><div className="kpi-val">{selected.total_emails}</div><div className="kpi-label">Total Involved</div></div>
+        <div className="kpi"><div className="kpi-val" style={{ fontSize: 16 }}>{detected.length}</div><div className="kpi-label">People in Case</div></div>
       </div>
 
-      {/* Correspondents & Subjects */}
-      <div className="grid-2">
-        <div className="card">
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Top Correspondents</h3>
-          {profile?.top_correspondents && profile.top_correspondents.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {profile.top_correspondents.map(([email, count], i) => (
-                <div key={i} className="row between" style={{ padding: "8px 12px", background: "var(--bg-3)", borderRadius: "var(--r-sm)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 11, color: "var(--text-3)", width: 20 }}>#{i + 1}</span>
-                    <span style={{ fontSize: 12, color: "var(--text-1)", fontFamily: "var(--mono)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{email}</span>
-                  </div>
-                  <span className="badge badge-blue">{count}</span>
+      {/* Other detected targets */}
+      {detected.length > 1 && (
+        <div className="card mb-4">
+          <div className="row between mb-4">
+            <h4 style={{ fontSize: 13, fontWeight: 600 }}>Other People in Case ({detected.length - 1})</h4>
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowAll(!showAll)}>{showAll ? "Hide" : "Show All"}</button>
+          </div>
+          {showAll && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
+              {detected.filter(t => t.email !== selected.email).map((t, i) => (
+                <div key={i} className="row between" style={{ padding: "8px 12px", background: "var(--bg-3)", borderRadius: "var(--r-sm)", cursor: "pointer" }} onClick={() => { setSelectedEmail(t.email); loadProfile(t.email); }}>
+                  <span style={{ fontSize: 12, fontFamily: "var(--mono)" }}>{t.display_name || t.email}</span>
+                  <span className="badge badge-gray">{t.total_emails}</span>
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="empty" style={{ padding: 24 }}>No correspondents</div>
           )}
         </div>
+      )}
 
-        <div className="card">
-          <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>Frequent Subjects</h3>
-          {profile?.top_subjects && profile.top_subjects.length > 0 ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {profile.top_subjects.map(([subject, count], i) => (
-                <div key={i} className="row between" style={{ padding: "8px 12px", background: "var(--bg-3)", borderRadius: "var(--r-sm)" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 11, color: "var(--text-3)", width: 20 }}>#{i + 1}</span>
-                    <span style={{ fontSize: 12, color: "var(--text-1)", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subject}</span>
-                  </div>
-                  <span className="badge badge-gray">{count}</span>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty" style={{ padding: 24 }}>No subjects</div>
-          )}
+      {/* Profile details */}
+      {profile && (
+        <div className="grid-2">
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Top Correspondents</h3>
+            {profile.top_correspondents?.length > 0 ? profile.top_correspondents.map(([email, count], i) => (
+              <div key={i} className="row between" style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 12, fontFamily: "var(--mono)" }}>{email}</span>
+                <span className="badge badge-blue">{count}</span>
+              </div>
+            )) : <div className="muted text-sm">No data</div>}
+          </div>
+          <div className="card">
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Frequent Subjects</h3>
+            {profile.top_subjects?.length > 0 ? profile.top_subjects.map(([subject, count], i) => (
+              <div key={i} className="row between" style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 12 }}>{subject}</span>
+                <span className="badge badge-gray">{count}</span>
+              </div>
+            )) : <div className="muted text-sm">No data</div>}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

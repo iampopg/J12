@@ -321,6 +321,10 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
         tx.commit().map_err(|e| format!("Commit error: {}", e))?;
     }
     
+    // Auto-run entity extraction and analysis after parsing
+    let _ = extract_entities(state.clone(), case_id.clone()).await;
+    let _ = run_analysis(state.clone(), case_id.clone()).await;
+    
     Ok(count)
 }
 

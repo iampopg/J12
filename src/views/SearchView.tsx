@@ -28,6 +28,7 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
   const [searched, setSearched] = useState(false);
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -152,8 +153,8 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
             <table>
               <thead>
                 <tr>
-                  <th className="th">From</th>
-                  <th className="th">To</th>
+                  <th className="th" style={{ width: 180 }}>From</th>
+                  <th className="th" style={{ width: 180 }}>To</th>
                   <th className="th">Subject</th>
                   <th className="th" style={{ width: 90 }}>Date</th>
                   <th className="th" style={{ width: 50 }}>Risk</th>
@@ -161,29 +162,36 @@ export function SearchView({ caseId, onSelectEmail, onViewEntity }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {sorted.map((e) => (
-                  <tr key={e.id} className="tr-click" onClick={() => onSelectEmail?.(e)}>
-                    <td className="td">
-                      <ClickableEmail addr={e.from_addr} name={e.from_display} onView={onViewEntity} />
-                    </td>
-                    <td className="td" style={{ fontSize: 11, maxWidth: 150, overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {(JSON.parse(e.to_addrs || "[]")[0] || "").slice(0, 25)}
-                    </td>
-                    <td className="td">{e.subject || <span className="muted">(no subject)</span>}</td>
-                    <td className="td muted">{e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}</td>
-                    <td className="td">
-                      <span className={`badge ${e.risk_score >= 50 ? "badge-red" : e.risk_score >= 25 ? "badge-orange" : "badge-green"}`}>
-                        {e.risk_score}
-                      </span>
-                    </td>
-                    <td className="td"><HasAttachments emailId={e.id} /></td>
-                  </tr>
-                ))}
+                {sorted.map((e) => {
+                  const toList = JSON.parse(e.to_addrs || "[]");
+                  return (
+                    <tr key={e.id} className="tr-click" onClick={() => setSelectedEmailId(e.id)}>
+                      <td className="td" style={{ fontSize: 12 }}>
+                        <ClickableEmail addr={e.from_addr} name={e.from_display} onView={onViewEntity} />
+                      </td>
+                      <td className="td" style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--text-2)" }}>
+                        {toList.slice(0, 2).join(", ")}
+                        {toList.length > 2 && <span className="muted"> +{toList.length - 2}</span>}
+                      </td>
+                      <td className="td">{e.subject || <span className="muted">(no subject)</span>}</td>
+                      <td className="td muted">{e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}</td>
+                      <td className="td">
+                        <span className={`badge ${e.risk_score >= 50 ? "badge-red" : e.risk_score >= 25 ? "badge-orange" : "badge-green"}`}>
+                          {e.risk_score}
+                        </span>
+                      </td>
+                      <td className="td"><HasAttachments emailId={e.id} /></td>
+                    </tr>
+                  );
+                })}
               </tbody>
-            </table>
+             </table>
           </div>
         </div>
       )}
+
+      {/* Email detail modal */}
+      {selectedEmailId && <EmailDetailModal emailId={selectedEmailId} onClose={() => setSelectedEmailId(null)} />}
     </div>
   );
 }
@@ -211,4 +219,61 @@ function HasAttachments({ emailId }: { emailId: string }) {
 
   if (count === 0) return <span className="muted">—</span>;
   return <span className="badge badge-blue">📎 {count}</span>;
+}
+
+// Email detail modal for search results
+function EmailDetailModal({ emailId, onClose }: { emailId: string; onClose: () => void }) {
+  const [email, setEmail] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    invoke<any>("email_get", { input: { case_id: emailId } })
+      .then(data => { setEmail(data); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [emailId]);
+
+  if (loading) return <Modal title="Loading..." onClose={onClose}><div className="empty">Loading...</div></Modal>;
+  if (!email) return <Modal title="Error" onClose={onClose}><div className="empty">Email not found</div></Modal>;
+
+  let toList: string[] = [];
+  try { toList = JSON.parse(email.to_addrs || "[]"); } catch {}
+
+  return (
+    <Modal title={email.subject || "(no subject)"} onClose={onClose}>
+      <div style={{ fontSize: 13 }}>
+        <div className="grid-2 mb-4">
+          <div><span className="muted">From:</span> <strong>{email.from_display || email.from_addr}</strong></div>
+          <div><span className="muted">Date:</span> {email.date_sent ? new Date(email.date_sent).toLocaleString() : "—"}</div>
+        </div>
+        <div className="mb-4"><span className="muted">To:</span> {toList.join(", ")}</div>
+        <div className="mb-4"><span className="muted">Risk Score:</span> <span className={`badge ${email.risk_score >= 50 ? "badge-red" : email.risk_score >= 25 ? "badge-orange" : "badge-green"}`}>{email.risk_score}</span></div>
+        {email.headers_raw && (
+          <details className="mb-4">
+            <summary style={{ cursor: "pointer", fontWeight: 600, marginBottom: 8 }}>View Headers</summary>
+            <pre style={{ background: "var(--bg-3)", padding: 12, borderRadius: "var(--r-sm)", fontSize: 11, maxHeight: 200, overflow: "auto", whiteSpace: "pre-wrap" }}>{email.headers_raw.slice(0, 3000)}</pre>
+          </details>
+        )}
+        {email.body_text && (
+          <div>
+            <span className="muted">Body:</span>
+            <pre style={{ background: "var(--bg-3)", padding: 16, borderRadius: "var(--r-md)", fontSize: 13, marginTop: 8, maxHeight: 300, overflow: "auto", whiteSpace: "pre-wrap" }}>{email.body_text.slice(0, 5000)}</pre>
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
+      <div style={{ background: "var(--bg-2)", borderRadius: "var(--r-lg)", padding: 24, maxWidth: 800, width: "90%", maxHeight: "80vh", overflow: "auto", border: "1px solid var(--border)" }} onClick={e => e.stopPropagation()}>
+        <div className="row between mb-4">
+          <h3 style={{ fontSize: 18, fontWeight: 600 }}>{title}</h3>
+          <button className="btn btn-ghost btn-sm" onClick={onClose}>✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
 }
