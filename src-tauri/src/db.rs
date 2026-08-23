@@ -50,6 +50,10 @@ impl Database {
                 description TEXT,
                 status TEXT DEFAULT 'open',
                 owner_id TEXT,
+                target_email TEXT,
+                target_name TEXT,
+                target_organization TEXT,
+                investigation_type TEXT DEFAULT 'general',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -190,8 +194,14 @@ impl Database {
             );
         "        ).expect("Failed to initialize schema");
         
-        // Migration: add body_html column if missing (for existing databases)
-        self.conn.execute("ALTER TABLE emails ADD COLUMN body_html TEXT", []).ok();
+        // Migration: add target_email column if missing
+        self.conn.execute("ALTER TABLE cases ADD COLUMN target_email TEXT", []).ok();
+        // Migration: add target_name column if missing
+        self.conn.execute("ALTER TABLE cases ADD COLUMN target_name TEXT", []).ok();
+        // Migration: add target_organization column if missing
+        self.conn.execute("ALTER TABLE cases ADD COLUMN target_organization TEXT", []).ok();
+        // Migration: add investigation_type column if missing
+        self.conn.execute("ALTER TABLE cases ADD COLUMN investigation_type TEXT DEFAULT 'general'", []).ok();
         // Migration: add folder_name column if missing
         self.conn.execute("ALTER TABLE emails ADD COLUMN folder_name TEXT", []).ok();
         // Migration: add folder_category column if missing

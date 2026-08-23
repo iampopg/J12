@@ -434,7 +434,7 @@ function EmailDetail({ email, evidenceName, onClose }: { email: Email; evidenceN
                     </span>
                   </div>
                   <p className="muted text-sm mt-4">{analysisData.auth_results.dmarc.detail}</p>
-                  {analysisData.auth_results.dmarc.aligned !== undefined && (
+                  {analysisData.auth_results.dmarc.result !== 'none' && analysisData.auth_results.dmarc.result !== '' && (
                     <p className="text-sm mt-4">Alignment: <span className={analysisData.auth_results.dmarc.aligned ? "badge badge-green" : "badge badge-red"}>{analysisData.auth_results.dmarc.aligned ? "ALIGNED" : "NOT ALIGNED"}</span></p>
                   )}
                 </div>

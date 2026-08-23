@@ -20,19 +20,23 @@ pub async fn case_create(state: State<'_, AppState>, input: CaseCreateInput) -> 
     let id = generate_id();
     let cn = input.case_number.clone().unwrap_or_default();
     let desc = input.description.clone().unwrap_or_default();
+    let target_email = input.target_email.clone().unwrap_or_default();
+    let target_name = input.target_name.clone().unwrap_or_default();
+    let target_org = input.target_organization.clone().unwrap_or_default();
+    let inv_type = input.investigation_type.clone().unwrap_or_else(|| "general".to_string());
     db.conn.execute(
-        "INSERT INTO cases (id,title,case_number,description,status,owner_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-        (&id, &input.title, &cn, &desc, "open", "admin", &now.to_rfc3339(), &now.to_rfc3339()),
+        "INSERT INTO cases (id,title,case_number,description,status,owner_id,target_email,target_name,target_organization,investigation_type,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+        (&id, &input.title, &cn, &desc, "open", "admin", &target_email, &target_name, &target_org, &inv_type, &now.to_rfc3339(), &now.to_rfc3339()),
     ).map_err(|e| e.to_string())?;
-    Ok(Case { id, title: input.title, case_number: cn, description: desc, status: "open".to_string(), owner_id: "admin".to_string(), created_at: now, updated_at: now })
+    Ok(Case { id, title: input.title, case_number: cn, description: desc, status: "open".to_string(), owner_id: "admin".to_string(), target_email: if target_email.is_empty() { None } else { Some(target_email) }, target_name: if target_name.is_empty() { None } else { Some(target_name) }, target_organization: if target_org.is_empty() { None } else { Some(target_org) }, investigation_type: inv_type, created_at: now, updated_at: now })
 }
 
 #[tauri::command]
 pub async fn case_list(state: State<'_, AppState>) -> Result<Vec<Case>, String> {
     let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare("SELECT id,title,case_number,description,status,owner_id,created_at,updated_at FROM cases ORDER BY created_at DESC").map_err(|e| e.to_string())?;
+    let mut stmt = db.conn.prepare("SELECT id,title,case_number,description,status,owner_id,target_email,target_name,target_organization,investigation_type,created_at,updated_at FROM cases ORDER BY created_at DESC").map_err(|e| e.to_string())?;
     let cases = stmt.query_map([], |row| {
-        Ok(Case { id: row.get(0)?, title: row.get(1)?, case_number: row.get(2)?, description: row.get(3)?, status: row.get(4)?, owner_id: row.get(5)?, created_at: parse_dt(&row.get::<_, String>(6)?), updated_at: parse_dt(&row.get::<_, String>(7)?) })
+        Ok(Case { id: row.get(0)?, title: row.get(1)?, case_number: row.get(2)?, description: row.get(3)?, status: row.get(4)?, owner_id: row.get(5)?, target_email: row.get(6)?, target_name: row.get(7)?, target_organization: row.get(8)?, investigation_type: row.get(9)?, created_at: parse_dt(&row.get::<_, String>(10)?), updated_at: parse_dt(&row.get::<_, String>(11)?) })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     Ok(cases)
 }
@@ -40,8 +44,8 @@ pub async fn case_list(state: State<'_, AppState>) -> Result<Vec<Case>, String> 
 #[tauri::command]
 pub async fn case_get(state: State<'_, AppState>, input: EmptyInput) -> Result<Option<Case>, String> {
     let db = state.db.lock().await;
-    let r = db.conn.query_row("SELECT id,title,case_number,description,status,owner_id,created_at,updated_at FROM cases WHERE id=?1", [&input.case_id],
-        |row| Ok(Case { id: row.get(0)?, title: row.get(1)?, case_number: row.get(2)?, description: row.get(3)?, status: row.get(4)?, owner_id: row.get(5)?, created_at: parse_dt(&row.get::<_, String>(6)?), updated_at: parse_dt(&row.get::<_, String>(7)?) }));
+    let r = db.conn.query_row("SELECT id,title,case_number,description,status,owner_id,target_email,target_name,target_organization,investigation_type,created_at,updated_at FROM cases WHERE id=?1", [&input.case_id],
+        |row| Ok(Case { id: row.get(0)?, title: row.get(1)?, case_number: row.get(2)?, description: row.get(3)?, status: row.get(4)?, owner_id: row.get(5)?, target_email: row.get(6)?, target_name: row.get(7)?, target_organization: row.get(8)?, investigation_type: row.get(9)?, created_at: parse_dt(&row.get::<_, String>(10)?), updated_at: parse_dt(&row.get::<_, String>(11)?) }));
     match r { Ok(c) => Ok(Some(c)), Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None), Err(e) => Err(e.to_string()) }
 }
 
@@ -401,6 +405,12 @@ pub async fn email_headers(state: State<'_, AppState>, email_id: String) -> Resu
 /// Run analysis on all emails in a case and generate findings
 #[tauri::command]
 pub async fn run_analysis(state: State<'_, AppState>, case_id: String) -> Result<u32, String> {
+    // Clear existing findings for this case to avoid duplicates
+    {
+        let db = state.db.lock().await;
+        db.conn.execute("DELETE FROM findings WHERE case_id=?1", [&case_id]).map_err(|e| format!("Clear findings: {}", e))?;
+    }
+
     // Fetch all emails for this case
     let emails = {
         let db = state.db.lock().await;

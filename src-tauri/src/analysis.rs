@@ -121,11 +121,28 @@ pub fn analyze_headers(headers_raw: &str) -> HeaderAnalysis {
         .collect();
     
     if received_lines.is_empty() {
-        anomalies.push(Anomaly {
-            anomaly_type: "missing_received".to_string(),
-            description: "No Received headers found - possible direct injection or header manipulation".to_string(),
-            severity: "high".to_string(),
+        // Check if this might be an internal message (e.g., Exchange)
+        let has_transport_headers = headers_raw.lines().any(|l| {
+            let lower = l.to_lowercase();
+            lower.starts_with("x-from:") || lower.starts_with("x-to:") || 
+            lower.starts_with("x-cc:") || lower.starts_with("x-message-id:") ||
+            lower.starts_with("x-mailer:")
         });
+        
+        if has_transport_headers {
+            // Internal message (Exchange, Notes, etc.) — no Received headers is normal
+            anomalies.push(Anomaly {
+                anomaly_type: "no_received_internal".to_string(),
+                description: "No Received headers — message appears to be internal (Exchange/Notes transport headers present)".to_string(),
+                severity: "low".to_string(),
+            });
+        } else {
+            anomalies.push(Anomaly {
+                anomaly_type: "missing_received".to_string(),
+                description: "No Received headers found — possible direct injection or header manipulation".to_string(),
+                severity: "medium".to_string(),
+            });
+        }
     }
     
     // Parse each hop (bottom-up = oldest first)
@@ -189,16 +206,24 @@ pub fn analyze_headers(headers_raw: &str) -> HeaderAnalysis {
         hops_with_transit.push(hop);
     }
     
-    // Extract originating IP (from the last hop = first in the chain)
-    let originating_ip = hops_with_transit.first()
-        .and_then(|hop| extract_ip_from_received(&hop.from.as_deref().unwrap_or("")))
-        .or_else(|| {
-            // Try to find X-Originating-IP
-            headers_raw.lines()
-                .find(|l| l.to_lowercase().starts_with("x-originating-ip:"))
-                .and_then(|l| l.split_once(':'))
-                .map(|(_, v)| v.trim().to_string())
-        });
+    // Extract originating IP (from the first hop = last in raw order)
+    let originating_ip = if hops_with_transit.is_empty() {
+        // No Received headers — try X-Originating-IP
+        headers_raw.lines()
+            .find(|l| l.to_lowercase().starts_with("x-originating-ip:"))
+            .and_then(|l| l.split_once(':'))
+            .map(|(_, v)| v.trim().to_string())
+    } else {
+        hops_with_transit.first()
+            .and_then(|hop| {
+                let from = hop.from.as_deref().unwrap_or("");
+                if from.is_empty() {
+                    None
+                } else {
+                    extract_ip_from_received(from)
+                }
+            })
+    };
     
     // Detect suspicious relay patterns
     if hops_with_transit.len() > 10 {
@@ -1156,9 +1181,9 @@ fn extract_reply_to_domain(headers_raw: &str) -> Option<String> {
         .map(|e| extract_domain(&e))
 }
 
-/// Extract Message-ID domain
+/// Extract Message-ID domain (only if it looks like a real domain, not a mail server hostname)
 fn extract_message_id_domain(headers_raw: &str) -> Option<String> {
-    headers_raw.lines()
+    let domain = headers_raw.lines()
         .find(|l| l.to_lowercase().starts_with("message-id:"))
         .and_then(|l| l.split_once(':'))
         .map(|(_, v)| v.trim())
@@ -1166,7 +1191,21 @@ fn extract_message_id_domain(headers_raw: &str) -> Option<String> {
             v.split('@').nth(1)
                 .map(|d| d.trim_matches('>').to_lowercase())
         })
-        .flatten()
+        .flatten()?;
+    
+    // Filter out single-label hostnames (e.g., "thyme", "mail", "localhost")
+    // These are mail server hostnames, not real domains
+    if !domain.contains('.') {
+        return None; // Single word = mail server hostname, not a domain
+    }
+    
+    // Filter out obviously internal hostnames
+    let internal_names = ["localhost", "mail", "mx", "smtp", "exchange", "domino"];
+    if internal_names.contains(&domain.as_str()) {
+        return None;
+    }
+    
+    Some(domain)
 }
 
 /// Check if domain contains homoglyph characters or punycode

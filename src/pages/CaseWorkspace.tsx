@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { EmailListView } from "../views/EmailListView";
 import { FindingsView } from "../views/FindingsView";
 
-interface Case { id: string; title: string; case_number: string; description: string; status: string; }
+interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
 interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
 
@@ -70,14 +70,23 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand" onClick={onBack} style={{ cursor: "pointer" }}>
-          <img src="/j12-logo.png" alt="J12" className="topbar-logo" />
-          <div>
-            <div className="brand-title"><span className="brand-j">J</span><span className="brand-12">12</span> · {caseData?.title || "Case"}</div>
-            <div className="brand-sub">{caseData?.case_number || "No case number"}</div>
+        <div className="row gap-4">
+          <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back to Cases</button>
+          <div className="brand" style={{ cursor: "pointer" }}>
+            <img src="/j12-logo.png" alt="J12" className="topbar-logo" />
+            <div>
+              <div className="brand-title"><span className="brand-j">J</span><span className="brand-12">12</span> · {caseData?.title || "Case"}</div>
+              <div className="brand-sub">{caseData?.case_number || "No case number"}</div>
+            </div>
           </div>
         </div>
         <div className="row gap-4">
+          {caseData?.target_email && (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, color: "var(--text-3)" }}>TARGET</div>
+              <div style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>{caseData.target_email}</div>
+            </div>
+          )}
           {hasDone && <span className="badge badge-green">● {dashboard?.email_count?.toLocaleString() || 0} emails</span>}
           <span className="muted">{evidence.length} source(s)</span>
         </div>
@@ -209,7 +218,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
 
         {/* Main content area */}
         <main className="content">
-          {view === "dashboard" && dashboard && <DashboardView data={dashboard} evidence={evidence} />}
+          {view === "dashboard" && dashboard && <DashboardView data={dashboard} evidence={evidence} caseData={caseData} />}
           {view === "evidence" && <EvidenceView evidence={evidence} caseId={caseId} onRefresh={loadAll} />}
           {view === "emails" && <EmailListView caseId={caseId} filter="all" />}
           {view === "sent" && <EmailListView caseId={caseId} filter="sent" />}
@@ -232,29 +241,147 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
   );
 }
 
-function DashboardView({ data, evidence }: { data: Dashboard; evidence: Evidence[] }) {
+function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence: Evidence[]; caseData: Case | null }) {
+  const severityData = [
+    { label: "Critical", value: data.severity_breakdown?.critical || 0, color: "#ef4444" },
+    { label: "High", value: data.severity_breakdown?.high || 0, color: "#f97316" },
+    { label: "Medium", value: data.severity_breakdown?.medium || 0, color: "#eab308" },
+    { label: "Low", value: data.severity_breakdown?.low || 0, color: "#22c55e" },
+  ];
+  const totalFindings = severityData.reduce((sum, s) => sum + s.value, 0);
+  const maxSeverity = Math.max(...severityData.map(s => s.value), 1);
+
   return (
     <div>
-      <h2 style={{ fontSize: 24, fontWeight: 700, color: "var(--text-0)", marginBottom: 4 }}>Case Dashboard</h2>
-      <p className="muted mb-4">Overview of evidence and investigation findings</p>
-      <div className="kpi-grid">
-        <div className="kpi"><div className="kpi-val">{data.email_count.toLocaleString()}</div><div className="kpi-label">Emails</div></div>
-        <div className="kpi"><div className="kpi-val">{data.entity_count}</div><div className="kpi-label">Entities</div></div>
-        <div className="kpi"><div className="kpi-val">{data.deleted_recovered}</div><div className="kpi-label">Deleted Recovered</div></div>
-        <div className="kpi"><div className="kpi-val">{data.finding_count}</div><div className="kpi-label">Findings</div></div>
-        <div className="kpi"><div className="kpi-val">{data.evidence_count}</div><div className="kpi-label">Evidence</div></div>
+      <div className="row between mb-4">
+        <div>
+          <h2 style={{ fontSize: 24, fontWeight: 700, color: "var(--text-0)", marginBottom: 4 }}>Case Dashboard</h2>
+          <p className="muted">Overview of evidence and investigation findings</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => { /* trigger analysis refresh */ }}>
+          ↻ Refresh
+        </button>
       </div>
+
+      {/* Target Info Card */}
+      {(caseData?.target_name || caseData?.target_email || caseData?.target_organization) && (
+        <div className="card mb-4" style={{ borderLeft: "4px solid var(--accent)" }}>
+          <div className="row between">
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 600, color: "var(--accent)", letterSpacing: "0.05em", marginBottom: 8 }}>INVESTIGATION TARGET</div>
+              <div className="row gap-4" style={{ flexWrap: "wrap" }}>
+                {caseData.target_name && (
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>Name</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)" }}>{caseData.target_name}</div>
+                  </div>
+                )}
+                {caseData.target_email && (
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>Email</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--accent)", fontFamily: "var(--mono)" }}>{caseData.target_email}</div>
+                  </div>
+                )}
+                {caseData.target_organization && (
+                  <div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>Organization</div>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text-1)" }}>{caseData.target_organization}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 11, color: "var(--text-3)" }}>Case Number</div>
+              <div style={{ fontSize: 13, fontFamily: "var(--mono)", color: "var(--text-1)" }}>{caseData.case_number || "—"}</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* KPI Cards */}
+      <div className="kpi-grid">
+        <div className="kpi">
+          <div className="kpi-val">{data.email_count.toLocaleString()}</div>
+          <div className="kpi-label">Emails</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: "var(--accent)" }}>{data.entity_count || 0}</div>
+          <div className="kpi-label">Entities</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: "var(--warning)" }}>{data.deleted_recovered}</div>
+          <div className="kpi-label">Deleted Recovered</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: totalFindings > 0 ? "var(--danger)" : "var(--text-0)" }}>{totalFindings}</div>
+          <div className="kpi-label">Findings</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: "var(--success)" }}>{data.evidence_count}</div>
+          <div className="kpi-label">Evidence</div>
+        </div>
+      </div>
+
+      {/* Folder Breakdown */}
+      <div className="card mb-4">
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Email Folder Breakdown</h3>
+        <div className="row gap-4" style={{ flexWrap: "wrap" }}>
+          {[
+            { label: "Inbox", count: data.inbox_count, color: "#3b82f6" },
+            { label: "Sent", count: data.sent_count, color: "#22c55e" },
+            { label: "Deleted", count: data.soft_deleted_count, color: "#f97316" },
+            { label: "Drafts", count: data.drafts_count, color: "#a855f7" },
+            { label: "Spam", count: data.spam_count, color: "#ef4444" },
+            { label: "Other", count: data.other_count, color: "#6b7280" },
+          ].map(folder => (
+            <div key={folder.label} style={{ flex: 1, minWidth: 120, padding: 12, background: "var(--bg-3)", borderRadius: "var(--r-sm)", textAlign: "center" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: folder.color }}>{folder.count.toLocaleString()}</div>
+              <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 4 }}>{folder.label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Severity Breakdown */}
+      {totalFindings > 0 && (
+        <div className="card mb-4">
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Findings by Severity</h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {severityData.map(sev => (
+              <div key={sev.label} className="row gap-4">
+                <span style={{ width: 70, fontSize: 12, color: sev.color, fontWeight: 600 }}>{sev.label}</span>
+                <div style={{ flex: 1, height: 24, background: "var(--bg-3)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
+                  <div style={{ width: `${(sev.value / maxSeverity) * 100}%`, height: "100%", background: sev.color, borderRadius: "var(--r-sm)", opacity: 0.7 }} />
+                </div>
+                <span style={{ width: 40, textAlign: "right", fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>{sev.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Evidence Status */}
       {evidence.length > 0 && (
         <div className="card">
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Evidence Status</h3>
           <table>
-            <thead><tr><th className="th">File</th><th className="th">Status</th><th className="th">Messages</th></tr></thead>
+            <thead>
+              <tr>
+                <th className="th">File</th>
+                <th className="th">Format</th>
+                <th className="th">Status</th>
+                <th className="th">Messages</th>
+                <th className="th">SHA-256</th>
+              </tr>
+            </thead>
             <tbody>
               {evidence.map(e => (
                 <tr key={e.id}>
                   <td className="td">{e.filename}</td>
-                  <td className="td"><span className={`badge badge-${e.parse_status === "done" ? "green" : e.parse_status === "error" ? "red" : "gray"}`}>{e.parse_status}</span></td>
-                  <td className="td">{e.message_count}</td>
+                  <td className="td"><span className="badge badge-blue">{e.format}</span></td>
+                  <td className="td"><span className={`badge badge-${e.parse_status === "done" ? "green" : e.parse_status === "error" ? "red" : e.parse_status === "parsing" ? "blue" : "gray"}`}>{e.parse_status}</span></td>
+                  <td className="td">{e.message_count.toLocaleString()}</td>
+                  <td className="td mono muted">{e.sha256.slice(0, 10)}…</td>
                 </tr>
               ))}
             </tbody>

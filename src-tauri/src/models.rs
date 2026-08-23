@@ -9,6 +9,10 @@ pub struct Case {
     pub description: String,
     pub status: String,
     pub owner_id: String,
+    pub target_email: Option<String>,
+    pub target_name: Option<String>,
+    pub target_organization: Option<String>,
+    pub investigation_type: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -134,6 +138,10 @@ pub struct CaseCreateInput {
     pub title: String,
     pub case_number: Option<String>,
     pub description: Option<String>,
+    pub target_email: Option<String>,
+    pub target_name: Option<String>,
+    pub target_organization: Option<String>,
+    pub investigation_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
