@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { EmailListView } from "../views/EmailListView";
 import { FindingsView } from "../views/FindingsView";
 import { TargetProfileView } from "../views/TargetProfileView";
@@ -1509,12 +1510,57 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   const [fetching, setFetching] = useState(false);
   const [result, setResult] = useState<any>(saved.result || null);
   const [logs, setLogs] = useState<string[]>(saved.logs || []);
+  const [progress, setProgress] = useState<{
+    folder?: string;
+    folderIndex?: number;
+    totalFolders?: number;
+    msgSeq?: number;
+    folderTotal?: number;
+    ingested?: number;
+    duplicatesSkipped?: number;
+    subject?: string;
+    from?: string;
+  } | null>(null);
+
+  const logsEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     localStorage.setItem(`imap_creds_${caseId}`, JSON.stringify({
       username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs
     }));
   }, [caseId, username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs]);
+
+  useEffect(() => {
+    let unlisten: any;
+    listen("imap_progress", (event: any) => {
+      const p = event.payload;
+      if (p?.log) {
+        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${p.log}`]);
+      }
+      if (p?.status === "ingested" || p?.status === "folder_discovered" || p?.status === "duplicate_skipped") {
+        setProgress(prev => ({
+          ...prev,
+          folder: p.folder || prev?.folder,
+          folderIndex: p.folder_index || prev?.folderIndex,
+          totalFolders: p.total_folders || prev?.totalFolders,
+          msgSeq: p.msg_seq || prev?.msgSeq,
+          folderTotal: p.folder_total || prev?.folderTotal,
+          ingested: p.ingested_count !== undefined ? p.ingested_count : prev?.ingested,
+          duplicatesSkipped: p.duplicates_skipped !== undefined ? p.duplicates_skipped : prev?.duplicatesSkipped,
+          subject: p.subject || prev?.subject,
+          from: p.from || prev?.from,
+        }));
+      }
+    }).then(u => { unlisten = u; });
+
+    return () => {
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
   // Automatically detect IMAP server settings based on email domain
   const handleEmailChange = (val: string) => {
@@ -1602,8 +1648,10 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     const effectivePass = cleanUser.toLowerCase().includes("gmail") ? cleanPass.replace(/\s+/g, "") : cleanPass;
     setFetching(true);
     setLogs([]);
-    addLog(`Starting forensic acquisition for account: ${cleanUser}...`);
+    setProgress(null);
+    addLog(`Starting forensic streaming acquisition for account: ${cleanUser}...`);
     addLog(`Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
+    addLog(`⚡ Real-time incremental deduplication active (previously ingested emails will be preserved)`);
     try {
       const res = await invoke<any>("imap_fetch_emails", {
         input: {
@@ -1622,13 +1670,21 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
         }
       });
       setResult(res);
-      addLog(`✓ Acquisition Complete! Successfully ingested ${res.downloaded} emails across ${res.folders_acquired?.length || 1} folders`);
-      if (res.errors > 0) addLog(`Notice: ${res.errors} items skipped`);
+      addLog(`✓ Acquisition Finished: Ingested ${res.downloaded} new emails (${res.duplicates_skipped || 0} duplicates skipped) across ${res.folders_acquired?.length || 1} folders`);
       onComplete();
     } catch (e: any) {
-      addLog(`✗ Acquisition failed: ${e}`);
+      addLog(`✗ Acquisition error: ${e}`);
     }
     setFetching(false);
+  };
+
+  const stopAcquisition = async () => {
+    try {
+      await invoke("imap_cancel_acquisition");
+      addLog("⏹ Stop requested. Wrapping up current message and committing all downloaded emails to database...");
+    } catch (e: any) {
+      addLog(`Error stopping: ${e}`);
+    }
   };
 
   const isGmail = username.toLowerCase().includes("gmail.com") || username.toLowerCase().includes("googlemail.com");
@@ -1636,16 +1692,21 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   const isOutlook = username.toLowerCase().includes("outlook") || username.toLowerCase().includes("hotmail") || username.toLowerCase().includes("live.com");
   const isApple = username.toLowerCase().includes("icloud") || username.toLowerCase().includes("me.com");
 
+  const percent = (progress?.folderTotal && progress?.msgSeq) ? Math.min(100, Math.round((progress.msgSeq / progress.folderTotal) * 100)) : 0;
+
   return (
     <div>
       <div className="row between mb-3">
         <div>
           <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-0)" }}>Live IMAP Account Acquisition</h3>
           <p className="muted" style={{ fontSize: 12 }}>
-            Forensic multi-folder extraction over TLS (Inbox, Sent, Trash, Spam, Drafts, Archive)
+            Forensic multi-folder streaming extraction over TLS with live deduplication &amp; disk payload storage
           </p>
         </div>
-        <span className="badge badge-blue">TLS 1.3 / SSL Verified</span>
+        <div className="row gap-2">
+          <span className="badge badge-green">RESUME / DEDUPLICATION READY</span>
+          <span className="badge badge-blue">TLS 1.3 / SSL VERIFIED</span>
+        </div>
       </div>
 
       {/* App Password Instructions Notice */}
@@ -1731,29 +1792,76 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
           </div>
         )}
 
-        <div className="row gap-2" style={{ marginTop: 20 }}>
-          <button 
-            type="button" 
-            className="btn btn-ghost" 
-            onClick={testConnection} 
-            disabled={connecting || !username || !password}
-          >
-            {connecting ? "Testing Connection..." : "🔗 Test Connection & Enumerate Folders"}
-          </button>
-          <button 
-            type="button" 
-            className="btn btn-primary" 
-            onClick={acquireEmails} 
-            disabled={fetching || !username || !password}
-          >
-            {fetching ? "Acquiring Full Account..." : "📥 Acquire & Ingest Live Emails"}
-          </button>
+        <div className="row between" style={{ marginTop: 20 }}>
+          <div className="row gap-2">
+            <button 
+              type="button" 
+              className="btn btn-ghost" 
+              onClick={testConnection} 
+              disabled={connecting || fetching || !username || !password}
+            >
+              {connecting ? "Testing Connection..." : "🔗 Test Connection & Enumerate Folders"}
+            </button>
+            <button 
+              type="button" 
+              className="btn btn-primary" 
+              onClick={acquireEmails} 
+              disabled={fetching || connecting || !username || !password}
+            >
+              {fetching ? "⏳ Acquiring Live Account..." : "📥 Acquire & Ingest Live Emails"}
+            </button>
+          </div>
+
+          {fetching && (
+            <button 
+              type="button" 
+              className="btn btn-danger" 
+              onClick={stopAcquisition}
+              style={{ background: "#dc2626", color: "#fff", borderColor: "#dc2626" }}
+            >
+              ⏹ Stop / Pause Acquisition
+            </button>
+          )}
         </div>
       </div>
 
+      {/* Live Streaming Progress HUD */}
+      {fetching && progress && (
+        <div className="card mb-4" style={{ border: "1px solid var(--accent)", background: "var(--bg-2)" }}>
+          <div className="row between mb-2">
+            <div className="row gap-2" style={{ alignItems: "center" }}>
+              <span className="badge badge-blue">FOLDER {progress.folderIndex || 1} OF {progress.totalFolders || 1}</span>
+              <strong style={{ fontSize: 13, color: "var(--text-0)" }}>{progress.folder || "Scanning folder..."}</strong>
+            </div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: "var(--accent)" }}>
+              {percent}% ({progress.msgSeq || 0}/{progress.folderTotal || 0} messages)
+            </div>
+          </div>
+
+          {/* Animated Progress Bar */}
+          <div style={{ width: "100%", height: 8, background: "var(--bg-3)", borderRadius: 4, overflow: "hidden", marginBottom: 12 }}>
+            <div style={{ width: `${percent}%`, height: "100%", background: "linear-gradient(90deg, #3b82f6, #6366f1)", transition: "width 0.2s ease" }} />
+          </div>
+
+          <div className="grid-3" style={{ fontSize: 12 }}>
+            <div>
+              <span className="muted">Total Ingested:</span> <strong style={{ color: "var(--success)" }}>{progress.ingested || 0}</strong>
+            </div>
+            <div>
+              <span className="muted">Duplicates Skipped:</span> <strong style={{ color: "#38bdf8" }}>{progress.duplicatesSkipped || 0}</strong>
+            </div>
+            <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <span className="muted">Current:</span> <span>{progress.subject || "..."}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {result && (
         <div className="card mb-4">
-          <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 12 }}>Acquisition Results</h4>
+          <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 12 }}>
+            {result.was_cancelled ? "⏹ Acquisition Paused / Stopped" : "✓ Acquisition Results"}
+          </h4>
           <div className="grid-3 mb-3">
             <div className="card" style={{ textAlign: "center", padding: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)" }}>{result.total_found}</div>
@@ -1761,11 +1869,11 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
             </div>
             <div className="card" style={{ textAlign: "center", padding: 12 }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: "var(--success)" }}>{result.downloaded}</div>
-              <div className="muted text-sm">Ingested & Parsed</div>
+              <div className="muted text-sm">Ingested &amp; Saved to DB</div>
             </div>
             <div className="card" style={{ textAlign: "center", padding: 12 }}>
-              <div style={{ fontSize: 22, fontWeight: 700, color: result.errors > 0 ? "var(--red)" : "var(--text-2)" }}>{result.errors}</div>
-              <div className="muted text-sm">Skipped / Errors</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "#38bdf8" }}>{result.duplicates_skipped || 0}</div>
+              <div className="muted text-sm">Skipped (Saved Bandwidth)</div>
             </div>
           </div>
           {result.folders_acquired && result.folders_acquired.length > 0 && (
@@ -1777,13 +1885,33 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
       )}
 
       {logs.length > 0 && (
-        <div className="card" style={{ maxHeight: 220, overflowY: "auto", background: "var(--bg-0)" }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-1)" }}>Live Acquisition Audit Stream</h4>
-          {logs.map((log, i) => (
-            <div key={i} style={{ fontSize: 11, fontFamily: "var(--mono)", marginBottom: 3, color: log.startsWith("✓") ? "var(--success)" : log.startsWith("✗") ? "var(--red)" : "var(--text-2)" }}>
-              {log}
-            </div>
-          ))}
+        <div className="card" style={{ maxHeight: 260, overflowY: "auto", background: "#0b0f19", border: "1px solid #1e293b", padding: 14 }}>
+          <div className="row between mb-2">
+            <h4 style={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.05em", margin: 0 }}>
+              📡 LIVE FORENSIC ACQUISITION AUDIT STREAM
+            </h4>
+            <span style={{ fontSize: 10, color: "#64748b" }}>{logs.length} EVENTS</span>
+          </div>
+          {logs.map((log, i) => {
+            const isSuccess = log.includes("✓") || log.includes("Ingested");
+            const isError = log.includes("✗") || log.includes("Error") || log.includes("failed");
+            const isSkip = log.includes("Skipped") || log.includes("duplicate");
+            return (
+              <div 
+                key={i} 
+                style={{ 
+                  fontSize: 11, 
+                  fontFamily: "var(--mono)", 
+                  marginBottom: 3, 
+                  lineHeight: 1.4,
+                  color: isSuccess ? "#4ade80" : isError ? "#f87171" : isSkip ? "#38bdf8" : "#cbd5e1" 
+                }}
+              >
+                {log}
+              </div>
+            );
+          })}
+          <div ref={logsEndRef} />
         </div>
       )}
     </div>

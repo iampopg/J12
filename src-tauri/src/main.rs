@@ -15,8 +15,9 @@ use models::*;
 use analysis::{AnalysisResult, analyze_headers, analyze_authentication, detect_spoofing, generate_findings, calculate_risk_score};
 
 pub struct AppState {
-    db: Mutex<Database>,
-    data_dir: PathBuf,
+    pub db: Mutex<Database>,
+    pub data_dir: PathBuf,
+    pub cancel_imap: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 fn main() {
@@ -26,6 +27,7 @@ fn main() {
         .manage(AppState {
             db: Mutex::new(Database::new()),
             data_dir: PathBuf::new(),
+            cancel_imap: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
         .invoke_handler(tauri::generate_handler![
             commands::case_create,
@@ -84,6 +86,7 @@ fn main() {
             commands::check_custody_chain,
             commands::imap_list_mailboxes,
             commands::imap_fetch_emails,
+            commands::imap_cancel_acquisition,
             commands::case_attachments_list,
             commands::export_attachment,
             commands::case_artifacts_summary,

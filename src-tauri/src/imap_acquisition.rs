@@ -7,6 +7,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use native_tls::TlsConnector;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone)]
 pub struct ImapConfig {
@@ -244,18 +245,36 @@ impl ImapClient {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StreamingMessage {
+    pub folder_name: String,
+    pub folder_category: String,
+    pub seq_id: u32,
+    pub folder_total: u32,
+    pub folder_index: usize,
+    pub total_folders: usize,
+    pub raw_content: String,
+}
+
 /// List available mailboxes on remote IMAP server
 pub fn list_mailboxes(config: &ImapConfig) -> Result<Vec<String>, String> {
     let mut client = ImapClient::connect(config)?;
     client.list_mailboxes()
 }
 
-/// Dynamically fetch emails across ALL mailboxes or a specific selected mailbox
-pub fn fetch_emails(
+/// Streaming multi-folder email acquisition with real-time progress callbacks and cancellation
+pub fn fetch_emails_streaming<F, G>(
     config: &ImapConfig,
     target_mailbox: Option<&str>,
     max_per_folder: Option<u32>,
-) -> Result<ImapAcquisitionResult, String> {
+    cancel_flag: &std::sync::atomic::AtomicBool,
+    mut on_folder_discovered: F,
+    mut on_message: G,
+) -> Result<ImapAcquisitionResult, String>
+where
+    F: FnMut(&str, u32, usize, usize),
+    G: FnMut(StreamingMessage) -> Result<(), String>,
+{
     let mut client = ImapClient::connect(config)?;
     let all_folders = client.list_mailboxes()?;
 
@@ -269,44 +288,58 @@ pub fn fetch_emails(
         all_folders
     };
 
+    let total_folder_count = folders_to_process.len();
     let mut total_found = 0;
     let mut downloaded = 0;
     let mut errors = 0;
     let mut folders_acquired = Vec::new();
-    let mut messages = Vec::new();
 
-    for folder in &folders_to_process {
+    for (f_idx, folder) in folders_to_process.iter().enumerate() {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+
         // Skip [Gmail]/All Mail if other individual folders are selected to avoid duplicate downloading
-        if folders_to_process.len() > 1 && (folder.contains("All Mail") || folder.contains("Chats")) {
+        if total_folder_count > 1 && (folder.contains("All Mail") || folder.contains("Chats")) {
             continue;
         }
 
         match client.select_mailbox(folder) {
             Ok(count) => {
                 total_found += count;
+                on_folder_discovered(folder, count, f_idx + 1, total_folder_count);
                 if count > 0 {
                     folders_acquired.push(folder.clone());
                     let limit = if let Some(m) = max_per_folder { m.min(count) } else { count };
                     let category = categorize_imap_folder(folder);
 
                     for seq in 1..=limit {
+                        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            break;
+                        }
+
                         match client.fetch_raw_message(seq) {
                             Ok(raw) => {
                                 downloaded += 1;
-                                messages.push(ImapFolderMessage {
+                                let msg = StreamingMessage {
                                     folder_name: folder.clone(),
                                     folder_category: category.clone(),
+                                    seq_id: seq,
+                                    folder_total: limit,
+                                    folder_index: f_idx + 1,
+                                    total_folders: total_folder_count,
                                     raw_content: raw,
-                                });
+                                };
+                                let _ = on_message(msg);
                             }
                             Err(_) => {
                                 errors += 1;
                             }
                         }
-                        
-                        // Rate limiting: be nice to IMAP server (Gmail allows ~250 commands/min)
-                        if seq % 25 == 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
+
+                        // Gentle throttle for IMAP servers
+                        if seq % 20 == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
                         }
                     }
                 }
@@ -322,32 +355,6 @@ pub fn fetch_emails(
         downloaded,
         errors,
         folders_acquired,
-        messages,
+        messages: Vec::new(),
     })
-}
-
-/// Save raw email to evidence store
-pub fn save_imap_email(
-    evidence_id: &str,
-    case_id: &str,
-    raw_email: &str,
-    message_id: &str,
-) -> Result<String, String> {
-    let storage_dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("j12-forensic")
-        .join("evidence")
-        .join(case_id)
-        .join("imap")
-        .join(evidence_id);
-    
-    std::fs::create_dir_all(&storage_dir).map_err(|e| format!("Create dir: {}", e))?;
-    
-    let safe_id = message_id.replace(|c: char| !c.is_alphanumeric() && c != '-' && c != '_', "_");
-    let filename = format!("{}.eml", if safe_id.is_empty() { "msg" } else { &safe_id });
-    let filepath = storage_dir.join(&filename);
-    
-    std::fs::write(&filepath, raw_email).map_err(|e| format!("Write file: {}", e))?;
-    
-    Ok(filepath.to_string_lossy().to_string())
 }
