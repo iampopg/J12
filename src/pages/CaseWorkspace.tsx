@@ -109,6 +109,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
 
   const [folderFilter, setFolderFilter] = useState<FolderFilter>("all");
   const [showDeleteCase, setShowDeleteCase] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletingCase, setDeletingCase] = useState(false);
 
   const hasEvidence = evidence.length > 0;
@@ -448,23 +449,50 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
 
        {/* Delete Case Confirmation Modal */}
        {showDeleteCase && (
-         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-           <div className="card" style={{ maxWidth: 440, width: "90%", padding: 24 }}>
-             <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-0)", marginBottom: 12 }}>⚠ Delete Case</h3>
-             <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.6 }}>
-               Are you sure you want to delete case <strong>"{caseData?.title}"</strong>? This will permanently remove:
+         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}>
+           <div className="card" style={{ maxWidth: 460, width: "90%", padding: 24, border: "1px solid rgba(239, 68, 68, 0.4)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+               <span style={{ fontSize: 32 }}>⚠️</span>
+               <div>
+                 <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--danger)", margin: 0 }}>Delete Case</h3>
+                 <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>Permanent &amp; Irreversible Destruction</p>
+               </div>
+             </div>
+             <p style={{ fontSize: 13, color: "var(--text-1)", marginBottom: 12, lineHeight: 1.6 }}>
+               Are you sure you want to delete case <strong>"{caseData?.title}"</strong>? This will permanently erase:
              </p>
-             <ul style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 20, paddingLeft: 20, lineHeight: 1.8 }}>
+             <ul style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 16, paddingLeft: 20, lineHeight: 1.8 }}>
                <li>All evidence sources ({evidence.length} files)</li>
                <li>All parsed emails ({dashboard?.email_count?.toLocaleString() || 0} messages)</li>
-               <li>All findings and analysis results</li>
-               <li>Chain of custody records</li>
+               <li>All extracted forensic artifacts and security findings</li>
+               <li>Chain of custody and audit records</li>
              </ul>
-             <p style={{ fontSize: 12, color: "var(--red)", marginBottom: 20 }}>This action cannot be undone.</p>
+
+             <div style={{ marginBottom: 18 }}>
+               <label className="label" style={{ color: "var(--danger)", fontWeight: 700, fontSize: 11 }}>
+                 Type <span style={{ textDecoration: "underline" }}>DELETE</span> to confirm:
+               </label>
+               <input
+                 className="input"
+                 style={{ borderColor: deleteConfirmText === "DELETE" ? "var(--danger)" : "var(--border)", fontWeight: 700, letterSpacing: "0.08em" }}
+                 placeholder="Type DELETE"
+                 value={deleteConfirmText}
+                 onChange={e => setDeleteConfirmText(e.target.value)}
+                 autoFocus
+               />
+             </div>
+
              <div className="row gap-2" style={{ justifyContent: "flex-end" }}>
-               <button className="btn btn-ghost" onClick={() => setShowDeleteCase(false)} disabled={deletingCase}>Cancel</button>
-               <button className="btn" style={{ background: "var(--red)", color: "#fff" }} onClick={handleDeleteCase} disabled={deletingCase}>
-                 {deletingCase ? "Deleting..." : "Delete Permanently"}
+               <button className="btn btn-ghost" onClick={() => { setShowDeleteCase(false); setDeleteConfirmText(""); }} disabled={deletingCase}>
+                 Cancel
+               </button>
+               <button 
+                 className="btn btn-danger" 
+                 style={{ background: "#dc2626", color: "#fff", fontWeight: 700 }} 
+                 onClick={handleDeleteCase} 
+                 disabled={deletingCase || deleteConfirmText.trim() !== "DELETE"}
+               >
+                 {deletingCase ? "Deleting Case..." : "Delete Case Permanently"}
                </button>
              </div>
            </div>
@@ -1011,6 +1039,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [confirmDeleteModal, setConfirmDeleteModal] = useState<{ id: string; filename: string } | null>(null);
+  const [deleteEvidenceConfirmText, setDeleteEvidenceConfirmText] = useState("");
 
   const handleDeleteEvidence = async (evidenceId: string, filename: string) => {
     setDeletingId(evidenceId);
@@ -1019,6 +1048,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
       addLog("success", `Deleted evidence source "${filename}" and its associated emails.`);
       if (selectedId === evidenceId) setSelectedId(null);
       setConfirmDeleteModal(null);
+      setDeleteEvidenceConfirmText("");
       onRefresh();
     } catch (e: any) {
       addLog("error", `Failed to delete evidence: ${e}`);
@@ -1044,7 +1074,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
             justifyContent: "center",
             zIndex: 9999,
           }}
-          onClick={() => setConfirmDeleteModal(null)}
+          onClick={() => { setConfirmDeleteModal(null); setDeleteEvidenceConfirmText(""); }}
         >
           <div
             className="card"
@@ -1073,17 +1103,32 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
               Are you sure you want to permanently delete <strong>"{confirmDeleteModal.filename}"</strong>? 
               This will remove all associated emails, extracted attachments, and chain-of-custody records for this container.
             </p>
+
+            <div style={{ marginBottom: 18 }}>
+              <label className="label" style={{ color: "var(--danger)", fontWeight: 700, fontSize: 11 }}>
+                Type <span style={{ textDecoration: "underline" }}>DELETE</span> to confirm:
+              </label>
+              <input
+                className="input"
+                style={{ borderColor: deleteEvidenceConfirmText === "DELETE" ? "var(--danger)" : "var(--border)", fontWeight: 700, letterSpacing: "0.08em" }}
+                placeholder="Type DELETE"
+                value={deleteEvidenceConfirmText}
+                onChange={e => setDeleteEvidenceConfirmText(e.target.value)}
+                autoFocus
+              />
+            </div>
+
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
-              <button className="btn btn-ghost" onClick={() => setConfirmDeleteModal(null)}>
+              <button className="btn btn-ghost" onClick={() => { setConfirmDeleteModal(null); setDeleteEvidenceConfirmText(""); }}>
                 Cancel
               </button>
               <button
                 className="btn btn-danger"
-                style={{ background: "#dc2626", color: "#fff", fontWeight: 600 }}
+                style={{ background: "#dc2626", color: "#fff", fontWeight: 700 }}
                 onClick={() => handleDeleteEvidence(confirmDeleteModal.id, confirmDeleteModal.filename)}
-                disabled={deletingId !== null}
+                disabled={deletingId !== null || deleteEvidenceConfirmText.trim() !== "DELETE"}
               >
-                {deletingId ? "Deleting..." : "Yes, Delete Evidence Source"}
+                {deletingId ? "Deleting..." : "Delete Evidence Source"}
               </button>
             </div>
           </div>
@@ -1344,6 +1389,7 @@ function CaseManageView({ caseData, caseId, onUpdate, onBack }: { caseData: Case
   const [targetOrg, setTargetOrg] = useState(caseData?.target_organization || "");
   const [saving, setSaving] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
 
   const handleSave = async () => {
@@ -1452,22 +1498,49 @@ function CaseManageView({ caseData, caseId, onUpdate, onBack }: { caseData: Case
       </div>
 
       {showDelete && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
-          <div className="card" style={{ maxWidth: 440, width: "90%", padding: 24 }}>
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-0)", marginBottom: 12 }}>⚠ Delete Case</h3>
-            <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.6 }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}>
+          <div className="card" style={{ maxWidth: 460, width: "90%", padding: 24, border: "1px solid rgba(239, 68, 68, 0.4)", boxShadow: "0 20px 50px rgba(0,0,0,0.7)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <span style={{ fontSize: 32 }}>⚠️</span>
+              <div>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--danger)", margin: 0 }}>Delete Case</h3>
+                <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>Permanent &amp; Irreversible Destruction</p>
+              </div>
+            </div>
+            <p style={{ fontSize: 13, color: "var(--text-1)", marginBottom: 12, lineHeight: 1.6 }}>
               Are you sure you want to delete case <strong>"{caseData?.title}"</strong>? This will permanently remove:
             </p>
-            <ul style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 20, paddingLeft: 20, lineHeight: 1.8 }}>
+            <ul style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 16, paddingLeft: 20, lineHeight: 1.8 }}>
               <li>All evidence sources</li>
               <li>All parsed emails</li>
-              <li>All findings and analysis results</li>
+              <li>All findings, artifacts, and analysis results</li>
               <li>Chain of custody records</li>
             </ul>
-            <p style={{ fontSize: 12, color: "var(--red)", marginBottom: 20 }}>This action cannot be undone.</p>
+
+            <div style={{ marginBottom: 18 }}>
+              <label className="label" style={{ color: "var(--danger)", fontWeight: 700, fontSize: 11 }}>
+                Type <span style={{ textDecoration: "underline" }}>DELETE</span> to confirm:
+              </label>
+              <input
+                className="input"
+                style={{ borderColor: deleteConfirmText === "DELETE" ? "var(--danger)" : "var(--border)", fontWeight: 700, letterSpacing: "0.08em" }}
+                placeholder="Type DELETE"
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                autoFocus
+              />
+            </div>
+
             <div className="row gap-2" style={{ justifyContent: "flex-end" }}>
-              <button className="btn btn-ghost" onClick={() => setShowDelete(false)} disabled={deleting}>Cancel</button>
-               <button className="btn" style={{ background: "var(--red)", color: "#fff" }} onClick={handleDelete} disabled={deleting}>
+              <button className="btn btn-ghost" onClick={() => { setShowDelete(false); setDeleteConfirmText(""); }} disabled={deleting}>
+                Cancel
+              </button>
+              <button 
+                className="btn btn-danger" 
+                style={{ background: "#dc2626", color: "#fff", fontWeight: 700 }} 
+                onClick={handleDelete} 
+                disabled={deleting || deleteConfirmText.trim() !== "DELETE"}
+              >
                 {deleting ? "Deleting..." : "Delete Permanently"}
               </button>
             </div>
