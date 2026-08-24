@@ -93,6 +93,8 @@ impl ImapClient {
     fn connect(config: &ImapConfig) -> Result<Self, String> {
         let addr = format!("{}:{}", config.server, config.port);
         let tcp_stream = TcpStream::connect(&addr).map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+        let _ = tcp_stream.set_read_timeout(Some(std::time::Duration::from_secs(15)));
+        let _ = tcp_stream.set_write_timeout(Some(std::time::Duration::from_secs(15)));
 
         let stream = if config.use_ssl || config.port == 993 {
             let connector = TlsConnector::new().map_err(|e| format!("TLS init error: {}", e))?;
@@ -218,7 +220,20 @@ impl ImapClient {
         self.stream.get_mut().flush().map_err(|e| e.to_string())?;
 
         let mut first_line = String::new();
-        self.stream.read_line(&mut first_line).map_err(|e| e.to_string())?;
+        loop {
+            let n = self.stream.read_line(&mut first_line).map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err("Connection closed while waiting for FETCH response".to_string());
+            }
+            if first_line.contains('{') || first_line.starts_with(&tag) {
+                break;
+            }
+            first_line.clear();
+        }
+
+        if first_line.starts_with(&tag) {
+            return Err(format!("Fetch response error: {}", first_line));
+        }
 
         let byte_count = if let Some(open_brace) = first_line.rfind('{') {
             if let Some(close_brace) = first_line[open_brace..].find('}') {
@@ -235,8 +250,8 @@ impl ImapClient {
 
         loop {
             let mut line = String::new();
-            self.stream.read_line(&mut line).map_err(|e| e.to_string())?;
-            if line.starts_with(&tag) {
+            let n = self.stream.read_line(&mut line).map_err(|e| e.to_string())?;
+            if n == 0 || line.starts_with(&tag) {
                 break;
             }
         }
@@ -357,4 +372,74 @@ where
         folders_acquired,
         messages: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::AtomicBool;
+    use std::thread;
+
+    #[test]
+    fn test_imap_streaming_lifecycle() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind listener");
+        let local_addr = listener.local_addr().expect("local addr");
+        let port = local_addr.port();
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let _ = stream.write_all(b"* OK [CAPABILITY IMAP4rev1] Mock IMAP Server\r\n");
+                let mut buf = [0u8; 1024];
+                while let Ok(n) = stream.read(&mut buf) {
+                    if n == 0 { break; }
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let tag = req.split_whitespace().next().unwrap_or("A0001");
+                    let cmd = req.split_whitespace().nth(1).unwrap_or("");
+                    
+                    if cmd == "LOGIN" {
+                        let _ = stream.write_all(format!("{} OK LOGIN completed\r\n", tag).as_bytes());
+                    } else if cmd == "LIST" {
+                        let _ = stream.write_all(b"* LIST (\\HasNoChildren) \"/\" \"INBOX\"\r\n");
+                        let _ = stream.write_all(format!("{} OK LIST completed\r\n", tag).as_bytes());
+                    } else if cmd == "SELECT" {
+                        let _ = stream.write_all(b"* 1 EXISTS\r\n");
+                        let _ = stream.write_all(format!("{} OK [READ-WRITE] SELECT completed\r\n", tag).as_bytes());
+                    } else if cmd == "FETCH" {
+                        let body = "From: test@example.com\r\nSubject: Test Email\r\n\r\nBody here";
+                        let resp = format!("* 1 FETCH (BODY[] {{{}}}\r\n{})\r\n{} OK FETCH completed\r\n", body.len(), body, tag);
+                        let _ = stream.write_all(resp.as_bytes());
+                    }
+                }
+            }
+        });
+
+        let config = ImapConfig {
+            server: "127.0.0.1".to_string(),
+            port,
+            username: "user@example.com".to_string(),
+            password: "testpassword".to_string(),
+            use_ssl: false,
+            mailbox: "INBOX".to_string(),
+        };
+
+        let cancel_flag = AtomicBool::new(false);
+        let mut received = Vec::new();
+        let res = fetch_emails_streaming(
+            &config,
+            Some("INBOX"),
+            Some(10),
+            &cancel_flag,
+            |_folder, _count, _idx, _total| {},
+            |msg| {
+                received.push(msg);
+                Ok(())
+            },
+        ).expect("acquisition must succeed");
+
+        assert_eq!(res.downloaded, 1);
+        assert_eq!(received.len(), 1);
+        assert!(received[0].raw_content.contains("Subject: Test Email"));
+    }
 }
