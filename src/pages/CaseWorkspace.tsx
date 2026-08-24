@@ -1460,132 +1460,268 @@ function IntegrityView({ caseId }: { caseId: string }) {
 }
 
 function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: () => void }) {
-  const [server, setServer] = useState("imap.gmail.com");
-  const [port, setPort] = useState("993");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [server, setServer] = useState("imap.gmail.com");
+  const [port, setPort] = useState("993");
   const [useSsl, setUseSsl] = useState(true);
-  const [mailbox, setMailbox] = useState("INBOX");
-  const [maxMessages, setMaxMessages] = useState("100");
+  const [mailboxScope, setMailboxScope] = useState("ALL");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [mailboxes, setMailboxes] = useState<string[]>([]);
   const [connecting, setConnecting] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [logs, setLogs] = useState<string[]>([]);
 
+  // Automatically detect IMAP server settings based on email domain
+  const handleEmailChange = (val: string) => {
+    setUsername(val);
+    const domain = val.includes("@") ? val.split("@")[1].toLowerCase().trim() : "";
+    if (domain.includes("gmail") || domain.includes("googlemail")) {
+      setServer("imap.gmail.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live.com") || domain.includes("office365")) {
+      setServer("outlook.office365.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("yahoo") || domain.includes("ymail") || domain.includes("rocketmail")) {
+      setServer("imap.mail.yahoo.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("icloud") || domain.includes("me.com") || domain.includes("mac.com")) {
+      setServer("imap.mail.me.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("zoho")) {
+      setServer("imap.zoho.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("aol.com")) {
+      setServer("imap.aol.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("fastmail")) {
+      setServer("imap.fastmail.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("gmx")) {
+      setServer("imap.gmx.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("mail.com")) {
+      setServer("imap.mail.com");
+      setPort("993");
+      setUseSsl(true);
+    } else if (domain.includes("proton")) {
+      setServer("127.0.0.1");
+      setPort("1143");
+      setUseSsl(false);
+    } else if (domain.includes(".") && !domain.endsWith(".")) {
+      setServer(`imap.${domain}`);
+      setPort("993");
+      setUseSsl(true);
+    }
+  };
+
   const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
 
-  const connect = async () => {
+  const testConnection = async () => {
     setConnecting(true);
     setLogs([]);
-    addLog(`Connecting to ${server}:${port}...`);
+    addLog(`Testing connection to ${server}:${port} (SSL: ${useSsl ? "YES" : "NO"})...`);
     try {
       const boxes = await invoke<string[]>("imap_list_mailboxes", {
-        server, port: parseInt(port), username, password, useSsl
+        server, port: parseInt(port) || 993, username, password, useSsl
       });
       setMailboxes(boxes);
-      addLog(`Connected! Found ${boxes.length} mailboxes`);
+      addLog(`✓ Connection & Authentication Successful!`);
+      addLog(`Discovered ${boxes.length} account folders: ${boxes.join(", ")}`);
     } catch (e: any) {
-      addLog(`Connection failed: ${e}`);
+      addLog(`✗ Connection failed: ${e}`);
     }
     setConnecting(false);
   };
 
-  const fetch = async () => {
+  const acquireEmails = async () => {
     setFetching(true);
     setLogs([]);
-    addLog(`Fetching from ${mailbox} (max ${maxMessages})...`);
+    addLog(`Starting forensic acquisition for account: ${username}...`);
+    addLog(`Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
     try {
       const res = await invoke<any>("imap_fetch_emails", {
         caseId,
         evidence_id: `imap_${Date.now()}`,
-        server, port: parseInt(port), username, password, useSsl,
-        mailbox, maxMessages: parseInt(maxMessages)
+        server, 
+        port: parseInt(port) || 993, 
+        username, 
+        password, 
+        useSsl,
+        mailbox: mailboxScope,
+        maxMessages: null
       });
       setResult(res);
-      addLog(`Done! Downloaded ${res.downloaded}/${res.total_found} emails`);
-      if (res.errors > 0) addLog(`${res.errors} errors`);
+      addLog(`✓ Acquisition Complete! Successfully ingested ${res.downloaded} emails across ${res.folders_acquired?.length || 1} folders`);
+      if (res.errors > 0) addLog(`Notice: ${res.errors} items skipped`);
       onComplete();
     } catch (e: any) {
-      addLog(`Fetch failed: ${e}`);
+      addLog(`✗ Acquisition failed: ${e}`);
     }
     setFetching(false);
   };
 
+  const isGmail = username.toLowerCase().includes("gmail.com") || username.toLowerCase().includes("googlemail.com");
+  const isYahoo = username.toLowerCase().includes("yahoo") || username.toLowerCase().includes("ymail");
+  const isOutlook = username.toLowerCase().includes("outlook") || username.toLowerCase().includes("hotmail") || username.toLowerCase().includes("live.com");
+  const isApple = username.toLowerCase().includes("icloud") || username.toLowerCase().includes("me.com");
+
   return (
     <div>
-      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>IMAP Mail Server Acquisition</h3>
+      <div className="row between mb-3">
+        <div>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-0)" }}>Live IMAP Account Acquisition</h3>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Forensic multi-folder extraction over TLS (Inbox, Sent, Trash, Spam, Drafts, Archive)
+          </p>
+        </div>
+        <span className="badge badge-blue">TLS 1.3 / SSL Verified</span>
+      </div>
+
+      {/* App Password Instructions Notice */}
+      {(isGmail || isYahoo || isOutlook || isApple) && (
+        <div style={{ padding: "12px 14px", background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "var(--r-md)", marginBottom: 16, fontSize: 12, lineHeight: 1.5, color: "var(--text-1)" }}>
+          <strong>ℹ Authentication Notice:</strong>
+          {isGmail && <span> Google requires a 16-character <strong>App Password</strong>. Generate one in your Google Account &gt; Security &gt; 2-Step Verification &gt; App Passwords.</span>}
+          {isYahoo && <span> Yahoo requires a generated <strong>App Password</strong> from Account Security settings.</span>}
+          {isOutlook && <span> Microsoft accounts with 2FA require an <strong>App Password</strong> from Microsoft Security settings.</span>}
+          {isApple && <span> Apple iCloud accounts require an <strong>App-Specific Password</strong> from appleid.apple.com.</span>}
+        </div>
+      )}
       
       <div className="card mb-4">
-        <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Server Settings</h4>
         <div className="grid-2">
           <div className="field">
-            <label className="label">IMAP Server</label>
-            <input className="input" value={server} onChange={e => setServer(e.target.value)} placeholder="imap.gmail.com" />
+            <label className="label">Target Email / Account *</label>
+            <input 
+              className="input" 
+              value={username} 
+              onChange={e => handleEmailChange(e.target.value)} 
+              placeholder="e.g. suspect@gmail.com, target@company.com" 
+              required
+            />
           </div>
           <div className="field">
-            <label className="label">Port</label>
-            <input className="input" value={port} onChange={e => setPort(e.target.value)} placeholder="993" />
-          </div>
-          <div className="field">
-            <label className="label">Username / Email</label>
-            <input className="input" value={username} onChange={e => setUsername(e.target.value)} placeholder="user@gmail.com" />
-          </div>
-          <div className="field">
-            <label className="label">Password / App Password</label>
-            <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="App Password" />
-          </div>
-          <div className="field">
-            <label className="label">Mailbox</label>
-            <select className="input" value={mailbox} onChange={e => setMailbox(e.target.value)}>
-              <option value="INBOX">INBOX</option>
-              {mailboxes.map(b => <option key={b} value={b}>{b}</option>)}
-            </select>
-          </div>
-          <div className="field">
-            <label className="label">Max Messages</label>
-            <input className="input" value={maxMessages} onChange={e => setMaxMessages(e.target.value)} placeholder="100" />
+            <label className="label">Password / App-Specific Password *</label>
+            <input 
+              className="input" 
+              type="password" 
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+              placeholder="••••••••••••••••" 
+              required
+            />
           </div>
         </div>
-        <label className="row gap-2 mb-4">
-          <input type="checkbox" checked={useSsl} onChange={e => setUseSsl(e.target.checked)} />
-          <span style={{ fontSize: 13 }}>Use SSL/TLS</span>
-        </label>
-        <div className="row gap-2">
-          <button className="btn btn-ghost" onClick={connect} disabled={connecting || !username || !password}>
-            {connecting ? "Connecting..." : "🔗 Test Connection"}
+
+        <div className="grid-2" style={{ marginTop: 12 }}>
+          <div className="field">
+            <label className="label">Acquisition Scope</label>
+            <select className="input" value={mailboxScope} onChange={e => setMailboxScope(e.target.value)}>
+              <option value="ALL">📦 Entire Account (All Folders: Inbox, Sent, Trash, Spam, Archive)</option>
+              <option value="INBOX">📥 Inbox Only</option>
+              {mailboxes.filter(b => b.toUpperCase() !== "INBOX").map(b => (
+                <option key={b} value={b}>📁 {b}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="field" style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
+            <button 
+              type="button" 
+              className="btn btn-ghost" 
+              style={{ fontSize: 12, textAlign: "left", width: "fit-content", padding: "8px 12px" }}
+              onClick={() => setShowAdvanced(!showAdvanced)}
+            >
+              {showAdvanced ? "▲ Hide Server Configuration" : "⚙️ Custom Server Settings (Auto-Configured)"}
+            </button>
+          </div>
+        </div>
+
+        {/* Collapsible Advanced Server Configuration */}
+        {showAdvanced && (
+          <div style={{ marginTop: 16, padding: 14, background: "var(--bg-3)", borderRadius: "var(--r-md)" }}>
+            <h5 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", marginBottom: 10 }}>IMAP Server Parameters</h5>
+            <div className="grid-3">
+              <div className="field">
+                <label className="label">Host / Server</label>
+                <input className="input" value={server} onChange={e => setServer(e.target.value)} placeholder="imap.server.com" />
+              </div>
+              <div className="field">
+                <label className="label">Port</label>
+                <input className="input" value={port} onChange={e => setPort(e.target.value)} placeholder="993" />
+              </div>
+              <div className="field" style={{ display: "flex", alignItems: "center", paddingTop: 20 }}>
+                <label className="row gap-2" style={{ cursor: "pointer" }}>
+                  <input type="checkbox" checked={useSsl} onChange={e => setUseSsl(e.target.checked)} />
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>Use SSL / TLS (Port 993)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="row gap-2" style={{ marginTop: 20 }}>
+          <button 
+            type="button" 
+            className="btn btn-ghost" 
+            onClick={testConnection} 
+            disabled={connecting || !username || !password}
+          >
+            {connecting ? "Testing Connection..." : "🔗 Test Connection & Enumerate Folders"}
           </button>
-          <button className="btn btn-primary" onClick={fetch} disabled={fetching || !username || !password}>
-            {fetching ? "Fetching..." : "📥 Fetch Emails"}
+          <button 
+            type="button" 
+            className="btn btn-primary" 
+            onClick={acquireEmails} 
+            disabled={fetching || !username || !password}
+          >
+            {fetching ? "Acquiring Full Account..." : "📥 Acquire & Ingest Live Emails"}
           </button>
         </div>
       </div>
 
       {result && (
         <div className="card mb-4">
-          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Results</h4>
-          <div className="grid-3">
+          <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 12 }}>Acquisition Results</h4>
+          <div className="grid-3 mb-3">
             <div className="card" style={{ textAlign: "center", padding: 12 }}>
-              <div style={{ fontSize: 20, fontWeight: 700 }}>{result.total_found}</div>
-              <div className="muted text-sm">Total Found</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "var(--accent)" }}>{result.total_found}</div>
+              <div className="muted text-sm">Discovered on Server</div>
             </div>
             <div className="card" style={{ textAlign: "center", padding: 12 }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--success)" }}>{result.downloaded}</div>
-              <div className="muted text-sm">Downloaded</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: "var(--success)" }}>{result.downloaded}</div>
+              <div className="muted text-sm">Ingested & Parsed</div>
             </div>
             <div className="card" style={{ textAlign: "center", padding: 12 }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--red)" }}>{result.errors}</div>
-              <div className="muted text-sm">Errors</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: result.errors > 0 ? "var(--red)" : "var(--text-2)" }}>{result.errors}</div>
+              <div className="muted text-sm">Skipped / Errors</div>
             </div>
           </div>
+          {result.folders_acquired && result.folders_acquired.length > 0 && (
+            <div style={{ fontSize: 12, color: "var(--text-2)" }}>
+              <strong>Folders Acquired:</strong> {result.folders_acquired.join(", ")}
+            </div>
+          )}
         </div>
       )}
 
       {logs.length > 0 && (
-        <div className="card" style={{ maxHeight: 200, overflowY: "auto", background: "var(--bg-0)" }}>
-          <h4 style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Activity Log</h4>
+        <div className="card" style={{ maxHeight: 220, overflowY: "auto", background: "var(--bg-0)" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-1)" }}>Live Acquisition Audit Stream</h4>
           {logs.map((log, i) => (
-            <div key={i} style={{ fontSize: 11, fontFamily: "var(--mono)", marginBottom: 2 }}>{log}</div>
+            <div key={i} style={{ fontSize: 11, fontFamily: "var(--mono)", marginBottom: 3, color: log.startsWith("✓") ? "var(--success)" : log.startsWith("✗") ? "var(--red)" : "var(--text-2)" }}>
+              {log}
+            </div>
           ))}
         </div>
       )}

@@ -1,10 +1,11 @@
 //! Live IMAP email acquisition module
 //! Connects to real IMAP servers over TLS (port 993) or standard port (143),
-//! authenticates credentials, enumerates mailboxes, and downloads raw RFC-822 EML emails.
+//! authenticates credentials, enumerates ALL mailboxes (Inbox, Sent, Trash, Spam, Drafts, Archive, etc.),
+//! and downloads raw RFC-822 EML emails across the entire account without arbitrary limits.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use native_tls::TlsConnector;
 
 #[derive(Debug, Clone)]
@@ -18,11 +19,19 @@ pub struct ImapConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct ImapFolderMessage {
+    pub folder_name: String,
+    pub folder_category: String,
+    pub raw_content: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ImapAcquisitionResult {
     pub total_found: u32,
     pub downloaded: u32,
     pub errors: u32,
-    pub messages: Vec<String>,
+    pub folders_acquired: Vec<String>,
+    pub messages: Vec<ImapFolderMessage>,
 }
 
 enum ImapStream {
@@ -58,6 +67,25 @@ impl std::io::Write for ImapStream {
 struct ImapClient {
     stream: BufReader<ImapStream>,
     tag_counter: u32,
+}
+
+pub fn categorize_imap_folder(folder_name: &str) -> String {
+    let lower = folder_name.to_lowercase();
+    if lower.contains("sent") {
+        "sent".to_string()
+    } else if lower.contains("draft") {
+        "drafts".to_string()
+    } else if lower.contains("trash") || lower.contains("deleted") || lower.contains("bin") {
+        "trash".to_string()
+    } else if lower.contains("spam") || lower.contains("junk") {
+        "spam".to_string()
+    } else if lower.contains("archive") || lower.contains("all mail") {
+        "archive".to_string()
+    } else if lower.contains("inbox") {
+        "inbox".to_string()
+    } else {
+        "other".to_string()
+    }
 }
 
 impl ImapClient {
@@ -125,7 +153,7 @@ impl ImapClient {
         let clean_user = user.replace('"', "\\\"");
         let clean_pass = pass.replace('"', "\\\"");
         let cmd = format!("LOGIN \"{}\" \"{}\"", clean_user, clean_pass);
-        self.send_command(&cmd).map_err(|e| format!("IMAP Authentication failed: {}", e))?;
+        self.send_command(&cmd).map_err(|e| format!("IMAP Authentication failed. Check your password or use an App Password: {}", e))?;
         Ok(())
     }
 
@@ -134,17 +162,19 @@ impl ImapClient {
         let mut boxes = Vec::new();
         for line in lines {
             if line.to_uppercase().starts_with("* LIST") {
-                // Extract quoted or unquoted folder name at the end
                 if let Some(last_quote) = line.rfind('"') {
                     if let Some(first_quote) = line[..last_quote].rfind('"') {
-                        boxes.push(line[first_quote+1..last_quote].to_string());
-                        continue;
+                        let name = line[first_quote+1..last_quote].to_string();
+                        if !name.is_empty() && !boxes.contains(&name) {
+                            boxes.push(name);
+                            continue;
+                        }
                     }
                 }
                 if let Some(last_space) = line.rfind(' ') {
-                    let folder = line[last_space+1..].trim();
-                    if !folder.is_empty() {
-                        boxes.push(folder.to_string());
+                    let folder = line[last_space+1..].trim().to_string();
+                    if !folder.is_empty() && !boxes.contains(&folder) {
+                        boxes.push(folder);
                     }
                 }
             }
@@ -182,7 +212,6 @@ impl ImapClient {
         let mut first_line = String::new();
         self.stream.read_line(&mut first_line).map_err(|e| e.to_string())?;
 
-        // Parse byte count literal e.g. {1234}
         let byte_count = if let Some(open_brace) = first_line.rfind('{') {
             if let Some(close_brace) = first_line[open_brace..].find('}') {
                 let num_str = &first_line[open_brace+1..open_brace+close_brace];
@@ -196,7 +225,6 @@ impl ImapClient {
             self.stream.read_exact(&mut body_bytes).map_err(|e| e.to_string())?;
         }
 
-        // Read until tagged OK response
         loop {
             let mut line = String::new();
             self.stream.read_line(&mut line).map_err(|e| e.to_string())?;
@@ -215,21 +243,61 @@ pub fn list_mailboxes(config: &ImapConfig) -> Result<Vec<String>, String> {
     client.list_mailboxes()
 }
 
-/// Fetch emails from IMAP server and return downloaded count
-pub fn fetch_emails(config: &ImapConfig, max_messages: Option<u32>) -> Result<ImapAcquisitionResult, String> {
+/// Dynamically fetch emails across ALL mailboxes or a specific selected mailbox
+pub fn fetch_emails(
+    config: &ImapConfig,
+    target_mailbox: Option<&str>,
+    max_per_folder: Option<u32>,
+) -> Result<ImapAcquisitionResult, String> {
     let mut client = ImapClient::connect(config)?;
-    let total_found = client.select_mailbox(&config.mailbox)?;
-    let limit = max_messages.unwrap_or(100).min(total_found);
+    let all_folders = client.list_mailboxes()?;
 
+    let folders_to_process = if let Some(single) = target_mailbox {
+        if single.is_empty() || single.to_uppercase() == "ALL" {
+            all_folders
+        } else {
+            vec![single.to_string()]
+        }
+    } else {
+        all_folders
+    };
+
+    let mut total_found = 0;
     let mut downloaded = 0;
     let mut errors = 0;
+    let mut folders_acquired = Vec::new();
     let mut messages = Vec::new();
 
-    for seq in 1..=limit {
-        match client.fetch_raw_message(seq) {
-            Ok(raw) => {
-                downloaded += 1;
-                messages.push(raw);
+    for folder in &folders_to_process {
+        // Skip [Gmail]/All Mail if other individual folders are selected to avoid duplicate downloading
+        if folders_to_process.len() > 1 && (folder.contains("All Mail") || folder.contains("Chats")) {
+            continue;
+        }
+
+        match client.select_mailbox(folder) {
+            Ok(count) => {
+                total_found += count;
+                if count > 0 {
+                    folders_acquired.push(folder.clone());
+                    let limit = if let Some(m) = max_per_folder { m.min(count) } else { count };
+                    let category = categorize_imap_folder(folder);
+
+                    for seq in 1..=limit {
+                        match client.fetch_raw_message(seq) {
+                            Ok(raw) => {
+                                downloaded += 1;
+                                messages.push(ImapFolderMessage {
+                                    folder_name: folder.clone(),
+                                    folder_category: category.clone(),
+                                    raw_content: raw,
+                                });
+                            }
+                            Err(_) => {
+                                errors += 1;
+                            }
+                        }
+                    }
+                }
             }
             Err(_) => {
                 errors += 1;
@@ -241,6 +309,7 @@ pub fn fetch_emails(config: &ImapConfig, max_messages: Option<u32>) -> Result<Im
         total_found,
         downloaded,
         errors,
+        folders_acquired,
         messages,
     })
 }
