@@ -1698,11 +1698,6 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     }
   };
 
-  const isGmail = username.toLowerCase().includes("gmail.com") || username.toLowerCase().includes("googlemail.com");
-  const isYahoo = username.toLowerCase().includes("yahoo") || username.toLowerCase().includes("ymail");
-  const isOutlook = username.toLowerCase().includes("outlook") || username.toLowerCase().includes("hotmail") || username.toLowerCase().includes("live.com");
-  const isApple = username.toLowerCase().includes("icloud") || username.toLowerCase().includes("me.com");
-
   const percent = (progress?.folderTotal && progress?.msgSeq) ? Math.min(100, Math.round((progress.msgSeq / progress.folderTotal) * 100)) : 0;
 
   return (
@@ -1719,17 +1714,6 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
           <span className="badge badge-blue">TLS 1.3 / SSL VERIFIED</span>
         </div>
       </div>
-
-      {/* App Password Instructions Notice */}
-      {(isGmail || isYahoo || isOutlook || isApple) && (
-        <div style={{ padding: "12px 14px", background: "rgba(59, 130, 246, 0.08)", border: "1px solid rgba(59, 130, 246, 0.2)", borderRadius: "var(--r-md)", marginBottom: 16, fontSize: 12, lineHeight: 1.5, color: "var(--text-1)" }}>
-          <strong>ℹ Authentication Notice:</strong>
-          {isGmail && <span> Google requires a 16-character <strong>App Password</strong>. Generate one in your Google Account &gt; Security &gt; 2-Step Verification &gt; App Passwords.</span>}
-          {isYahoo && <span> Yahoo requires a generated <strong>App Password</strong> from Account Security settings.</span>}
-          {isOutlook && <span> Microsoft accounts with 2FA require an <strong>App Password</strong> from Microsoft Security settings.</span>}
-          {isApple && <span> Apple iCloud accounts require an <strong>App-Specific Password</strong> from appleid.apple.com.</span>}
-        </div>
-      )}
       
       <div className="card mb-4">
         <div className="grid-2">
