@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { J12Logo } from "../components/J12Logo";
+import { FooterSignature } from "../components/FooterSignature";
 
 interface Case {
   id: string;
@@ -286,6 +287,9 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
             ))}
           </div>
         )}
+
+        {/* Footer Signature & GitHub Star */}
+        <FooterSignature style={{ marginTop: 40 }} />
       </div>
     </div>
   );

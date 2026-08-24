@@ -97,6 +97,7 @@ fn main() {
             commands::case_artifacts_summary,
             commands::case_artifacts_list,
             commands::rescan_case_artifacts,
+            commands::open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

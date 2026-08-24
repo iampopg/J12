@@ -12,6 +12,7 @@ import { ReportView } from "../views/ReportView";
 import { ArtifactsView } from "../views/ArtifactsView";
 import { AttachmentsView } from "../views/AttachmentsView";
 import { J12Logo } from "../components/J12Logo";
+import { FooterSignature } from "../components/FooterSignature";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; working_dir?: string | null; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
@@ -412,6 +413,9 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
                </div>
              )}
            </div>
+
+           {/* Sidebar Footer Signature */}
+           {!sidebarCollapsed && <FooterSignature compact style={{ marginTop: "auto" }} />}
          </nav>
 
         {/* Main content area */}
