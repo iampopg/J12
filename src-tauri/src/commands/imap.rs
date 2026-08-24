@@ -1,20 +1,26 @@
 use chrono::Utc;
-use serde_json::json;
+use serde_json::{json, Value};
 use tauri::State;
 
 use crate::AppState;
-use crate::db::{compute_sha256, generate_id};
+use crate::db::generate_id;
 use crate::imap_acquisition::{self, ImapConfig};
 use crate::parser;
 
 #[tauri::command]
-pub async fn imap_list_mailboxes(
-    server: String,
-    port: u16,
-    username: String,
-    password: String,
-    use_ssl: bool,
-) -> Result<Vec<String>, String> {
+pub async fn imap_list_mailboxes(input: Value) -> Result<Vec<String>, String> {
+    let server = input["server"].as_str().unwrap_or("imap.gmail.com").to_string();
+    let port = input["port"].as_u64().unwrap_or(993) as u16;
+    let username = input["username"].as_str().unwrap_or("").to_string();
+    let password = input["password"].as_str().unwrap_or("").to_string();
+    let use_ssl = input["use_ssl"].as_bool()
+        .or_else(|| input["useSsl"].as_bool())
+        .unwrap_or(true);
+
+    if username.is_empty() || password.is_empty() {
+        return Err("Username and password are required".to_string());
+    }
+
     let config = ImapConfig {
         server,
         port,
@@ -29,17 +35,37 @@ pub async fn imap_list_mailboxes(
 #[tauri::command]
 pub async fn imap_fetch_emails(
     state: State<'_, AppState>,
-    case_id: String,
-    evidence_id: String,
-    server: String,
-    port: u16,
-    username: String,
-    password: String,
-    use_ssl: bool,
-    mailbox: Option<String>,
-    max_messages: Option<u32>,
+    input: Value,
 ) -> Result<serde_json::Value, String> {
-    let target_mb = mailbox.as_deref().unwrap_or("ALL");
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let evidence_id = input["evidence_id"].as_str()
+        .or_else(|| input["evidenceId"].as_str())
+        .unwrap_or_else(|| "imap_live_evidence")
+        .to_string();
+
+    let server = input["server"].as_str().unwrap_or("imap.gmail.com").to_string();
+    let port = input["port"].as_u64().unwrap_or(993) as u16;
+    let username = input["username"].as_str().unwrap_or("").to_string();
+    let password = input["password"].as_str().unwrap_or("").to_string();
+    let use_ssl = input["use_ssl"].as_bool()
+        .or_else(|| input["useSsl"].as_bool())
+        .unwrap_or(true);
+
+    let mailbox_opt = input["mailbox"].as_str().map(|s| s.to_string());
+    let target_mb = mailbox_opt.as_deref().unwrap_or("ALL");
+
+    let max_messages = input["max_messages"].as_u64()
+        .or_else(|| input["maxMessages"].as_u64())
+        .map(|m| m as u32);
+
+    if username.is_empty() || password.is_empty() {
+        return Err("Username and password are required".to_string());
+    }
+
     let config = ImapConfig {
         server: server.clone(),
         port,

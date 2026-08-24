@@ -1532,7 +1532,14 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     addLog(`Testing connection to ${server}:${port} (SSL: ${useSsl ? "YES" : "NO"})...`);
     try {
       const boxes = await invoke<string[]>("imap_list_mailboxes", {
-        server, port: parseInt(port) || 993, username, password, useSsl
+        input: {
+          server, 
+          port: parseInt(port) || 993, 
+          username, 
+          password, 
+          use_ssl: useSsl,
+          useSsl
+        }
       });
       setMailboxes(boxes);
       addLog(`✓ Connection & Authentication Successful!`);
@@ -1550,15 +1557,20 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     addLog(`Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
     try {
       const res = await invoke<any>("imap_fetch_emails", {
-        caseId,
-        evidence_id: `imap_${Date.now()}`,
-        server, 
-        port: parseInt(port) || 993, 
-        username, 
-        password, 
-        useSsl,
-        mailbox: mailboxScope,
-        maxMessages: null
+        input: {
+          case_id: caseId,
+          caseId,
+          evidence_id: `imap_${Date.now()}`,
+          evidenceId: `imap_${Date.now()}`,
+          server, 
+          port: parseInt(port) || 993, 
+          username, 
+          password, 
+          use_ssl: useSsl,
+          useSsl,
+          mailbox: mailboxScope,
+          max_messages: null
+        }
       });
       setResult(res);
       addLog(`✓ Acquisition Complete! Successfully ingested ${res.downloaded} emails across ${res.folders_acquired?.length || 1} folders`);
