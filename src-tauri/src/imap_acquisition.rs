@@ -388,7 +388,7 @@ where
                     let limit = if let Some(m) = max_per_folder { m.min(count) } else { count };
                     let category = categorize_imap_folder(folder);
 
-                    let chunk_size: u32 = 25;
+                    let chunk_size: u32 = 100;
                     let mut seq = 1;
 
                     while seq <= limit {
