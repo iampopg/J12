@@ -1532,26 +1532,30 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
 
   useEffect(() => {
     let unlisten: any;
-    listen("imap_progress", (event: any) => {
-      const p = event.payload;
-      if (p?.log) {
-        setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${p.log}`]);
-      }
-      if (p?.status === "ingested" || p?.status === "folder_discovered" || p?.status === "duplicate_skipped") {
-        setProgress(prev => ({
-          ...prev,
-          folder: p.folder || prev?.folder,
-          folderIndex: p.folder_index || prev?.folderIndex,
-          totalFolders: p.total_folders || prev?.totalFolders,
-          msgSeq: p.msg_seq || prev?.msgSeq,
-          folderTotal: p.folder_total || prev?.folderTotal,
-          ingested: p.ingested_count !== undefined ? p.ingested_count : prev?.ingested,
-          duplicatesSkipped: p.duplicates_skipped !== undefined ? p.duplicates_skipped : prev?.duplicatesSkipped,
-          subject: p.subject || prev?.subject,
-          from: p.from || prev?.from,
-        }));
-      }
-    }).then(u => { unlisten = u; });
+    try {
+      listen("imap_progress", (event: any) => {
+        const p = event.payload;
+        if (p?.log) {
+          setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${p.log}`]);
+        }
+        if (p?.status === "ingested" || p?.status === "folder_discovered" || p?.status === "duplicate_skipped") {
+          setProgress(prev => ({
+            ...prev,
+            folder: p.folder || prev?.folder,
+            folderIndex: p.folder_index || prev?.folderIndex,
+            totalFolders: p.total_folders || prev?.totalFolders,
+            msgSeq: p.msg_seq || prev?.msgSeq,
+            folderTotal: p.folder_total || prev?.folderTotal,
+            ingested: p.ingested_count !== undefined ? p.ingested_count : prev?.ingested,
+            duplicatesSkipped: p.duplicates_skipped !== undefined ? p.duplicates_skipped : prev?.duplicatesSkipped,
+            subject: p.subject || prev?.subject,
+            from: p.from || prev?.from,
+          }));
+        }
+      }).then(u => { unlisten = u; }).catch(() => {});
+    } catch {
+      // Ignore
+    }
 
     return () => {
       if (unlisten) unlisten();
