@@ -69,6 +69,9 @@ export function ArtifactsView({ caseId }: Props) {
   const [search, setSearch] = useState<string>("");
   const [showEmptyDomains, setShowEmptyDomains] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
+  const [scanning, setScanning] = useState<boolean>(false);
+  const [scanProgress, setScanProgress] = useState<number>(0);
+  const [scanStage, setScanStage] = useState<string>("");
   const [selectedArtifact, setSelectedArtifact] = useState<ForensicTaxonomyArtifact | null>(null);
   const [previewEmail, setPreviewEmail] = useState<EmailMessage | null>(null);
   const [_loadingEmail, setLoadingEmail] = useState<boolean>(false);
@@ -118,6 +121,43 @@ export function ArtifactsView({ caseId }: Props) {
       console.error("Failed to load artifacts:", e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRescan = async () => {
+    setScanning(true);
+    setScanProgress(15);
+    setScanStage("Reading emails and headers from database...");
+    
+    const progressInterval = setInterval(() => {
+      setScanProgress(prev => {
+        if (prev < 40) return prev + 10;
+        if (prev < 75) return prev + 5;
+        if (prev < 90) return prev + 2;
+        return prev;
+      });
+    }, 250);
+
+    try {
+      setTimeout(() => setScanStage("Classifying financial, banking, crypto, credentials, and app accounts..."), 400);
+      setTimeout(() => setScanStage("Extracting attachment signatures and forensic IOCs..."), 1000);
+      
+      const count = await invoke<number>("rescan_case_artifacts", { caseId });
+      clearInterval(progressInterval);
+      setScanProgress(100);
+      setScanStage(`Completed! Indexed ${count} forensic artifacts.`);
+      showToast(`✓ Scanned and indexed ${count} artifacts`);
+      await Promise.all([loadTaxonomy(), loadArtifacts()]);
+    } catch (e: any) {
+      clearInterval(progressInterval);
+      console.error(e);
+      showToast(`❌ Error scanning artifacts: ${e}`);
+    } finally {
+      setTimeout(() => {
+        setScanning(false);
+        setScanProgress(0);
+        setScanStage("");
+      }, 1200);
     }
   };
 
@@ -246,11 +286,42 @@ export function ArtifactsView({ caseId }: Props) {
           <button className="btn btn-ghost btn-sm" onClick={exportArtifactsCSV} title="Export artifacts to CSV">
             📥 Export CSV
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={() => { loadTaxonomy(); loadArtifacts(); }}>
-            ↻ Refresh
+          <button 
+            className="btn btn-primary btn-sm" 
+            onClick={handleRescan} 
+            disabled={scanning}
+            style={{ fontWeight: 600 }}
+            title="Scan case emails and extract forensic taxonomy artifacts"
+          >
+            {scanning ? "⚡ Scanning..." : "⚡ Scan / Rescan Artifacts"}
           </button>
         </div>
       </div>
+
+      {/* Scanning Progress Bar with Percentage and Stage Text */}
+      {scanning && (
+        <div className="card mb-4" style={{ padding: "14px 18px", background: "var(--bg-2)", border: "1px solid var(--accent)", boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
+          <div className="row between mb-2">
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}>
+              ⚡ {scanStage || "Scanning and classifying forensic artifacts..."}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)" }}>
+              {scanProgress}%
+            </span>
+          </div>
+          <div style={{ width: "100%", height: 8, background: "var(--bg-0)", borderRadius: 4, overflow: "hidden" }}>
+            <div
+              style={{
+                width: `${scanProgress}%`,
+                height: "100%",
+                background: "linear-gradient(90deg, #3b82f6, #06b6d4, #10b981)",
+                transition: "width 0.25s ease-in-out",
+                borderRadius: 4,
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Main Two-Column Taxonomy Workspace */}
       <div style={{ display: "grid", gridTemplateColumns: "310px 1fr", gap: 16 }}>

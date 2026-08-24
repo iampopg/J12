@@ -318,7 +318,7 @@ pub async fn case_artifacts_summary(
         .to_string();
 
     let show_all = input["show_all"].as_bool().unwrap_or(false);
-    let all_artifacts = extract_all_taxonomy_artifacts(&state, &case_id).await?;
+    let all_artifacts = get_or_extract_artifacts(&state, &case_id, false).await?;
 
     let domain_defs = [
         // Digital Footprint & App Accounts (User Identified Priority)
@@ -409,7 +409,7 @@ pub async fn case_artifacts_list(
     let search = input["search"].as_str().unwrap_or("").to_lowercase();
     let artifact_type = input["artifact_type"].as_str().unwrap_or("all");
 
-    let all_artifacts = extract_all_taxonomy_artifacts(&state, &case_id).await?;
+    let all_artifacts = get_or_extract_artifacts(&state, &case_id, false).await?;
 
     let filtered = all_artifacts.into_iter().filter(|item| {
         if domain != "all" && item.domain_id != domain {
@@ -435,6 +435,80 @@ pub async fn case_artifacts_list(
     }).collect();
 
     Ok(filtered)
+}
+
+#[tauri::command]
+pub async fn rescan_case_artifacts(
+    state: State<'_, AppState>,
+    input: Value,
+) -> Result<usize, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let arts = get_or_extract_artifacts(&state, &case_id, true).await?;
+    Ok(arts.len())
+}
+
+async fn get_or_extract_artifacts(
+    state: &State<'_, AppState>,
+    case_id: &str,
+    force_rescan: bool,
+) -> Result<Vec<ForensicTaxonomyArtifact>, String> {
+    if !force_rescan {
+        let db = state.db.lock().await;
+        let mut stmt = db.conn.prepare("
+            SELECT id, domain_id, subcategory_id, title, primary_value, secondary_value,
+                   details, severity, artifact_type, confidence, email_id, email_subject, email_from, date_sent_utc
+            FROM forensic_artifacts
+            WHERE case_id = ?1
+        ").map_err(|e| e.to_string())?;
+
+        let cached = stmt.query_map([case_id], |row| {
+            Ok(ForensicTaxonomyArtifact {
+                id: row.get(0)?,
+                domain_id: row.get(1)?,
+                subcategory_id: row.get(2)?,
+                title: row.get(3)?,
+                primary_value: row.get(4)?,
+                secondary_value: row.get(5)?,
+                details: row.get(6)?,
+                severity: row.get(7)?,
+                artifact_type: row.get(8)?,
+                confidence: row.get(9)?,
+                email_id: row.get(10)?,
+                email_subject: row.get(11)?,
+                email_from: row.get(12)?,
+                date_sent_utc: row.get(13)?,
+            })
+        }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+        if !cached.is_empty() {
+            return Ok(cached);
+        }
+    }
+
+    let extracted = extract_all_taxonomy_artifacts(state, case_id).await?;
+
+    let db = state.db.lock().await;
+    let _ = db.conn.execute("DELETE FROM forensic_artifacts WHERE case_id = ?1", [case_id]);
+
+    for art in &extracted {
+        let _ = db.conn.execute(
+            "INSERT OR REPLACE INTO forensic_artifacts (id, case_id, domain_id, subcategory_id, title, primary_value, secondary_value, details, severity, artifact_type, confidence, email_id, email_subject, email_from, date_sent_utc)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            rusqlite::params![
+                art.id, case_id, art.domain_id, art.subcategory_id, art.title,
+                art.primary_value, art.secondary_value, art.details, art.severity,
+                art.artifact_type, art.confidence, art.email_id, art.email_subject,
+                art.email_from, art.date_sent_utc
+            ]
+        );
+    }
+
+    Ok(extracted)
 }
 
 async fn extract_all_taxonomy_artifacts(
