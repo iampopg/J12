@@ -257,7 +257,7 @@ pub async fn imap_fetch_emails(
                         if !att.data.is_empty() {
                             let att_dir = dirs::data_dir()
                                 .unwrap_or_else(|| std::path::PathBuf::from("."))
-                                .join("email-forensic")
+                                .join("j12-forensic")
                                 .join("evidence")
                                 .join(&case_id)
                                 .join("attachments");
@@ -332,14 +332,14 @@ pub async fn imap_fetch_emails(
 
     let custody_id = generate_id();
     let _ = db.conn.execute(
-        "INSERT INTO chain_of_custody (id, case_id, evidence_id, action, performed_by, timestamp, notes)
-         VALUES (?1, ?2, ?3, ?4, 'IMAP Streaming Engine', ?5, ?6)",
+        "INSERT INTO custody_events (id, evidence_id, action, actor, timestamp, tool, tool_version, hash_before, hash_after, detail)
+         VALUES (?1, ?2, ?3, 'Examiner', ?4, 'J12 IMAP Streaming Engine', '1.0.0', NULL, ?5, ?6)",
         rusqlite::params![
             custody_id,
-            case_id,
             evidence_id,
             if was_cancelled { "imap_acquisition_cancelled" } else { "imap_acquisition_completed" },
             Utc::now().to_rfc3339(),
+            sha256_hex,
             format!("Acquired and parsed {} messages (skipped {} duplicates) across folders ({:?}) from {}", ingested_count, duplicates_skipped, result.folders_acquired, username)
         ],
     );
