@@ -3399,7 +3399,7 @@ async fn extract_all_taxonomy_artifacts(
 
         let mut stmt = db.conn.prepare("
             SELECT id, from_addr, from_display, to_addrs, cc_addrs, reply_to, subject, body_text, body_html, headers_raw, 
-                   date_sent_utc, risk_score, is_deleted, soft_deleted, folder, message_id, in_reply_to, references_header
+                   date_sent_utc, risk_score, is_deleted, deleted_recovered, folder_category, message_id, in_reply_to, msg_references
             FROM emails
             WHERE case_id = ?1
             ORDER BY date_sent_utc DESC
@@ -3557,7 +3557,23 @@ async fn extract_all_taxonomy_artifacts(
             });
         }
 
-        // 2. PEOPLE & IDENTITIES (Phone numbers, Signatures, Contacts)
+        // 2. PEOPLE & IDENTITIES (Identities, Phone numbers, Signatures, Contacts)
+        artifacts.push(ForensicTaxonomyArtifact {
+            id: generate_id(),
+            domain_id: "people".to_string(),
+            subcategory_id: "identities".to_string(),
+            title: format!("Email Identity: {}", from_disp.as_deref().unwrap_or(&from_addr)),
+            primary_value: from_addr.clone(),
+            secondary_value: from_disp.clone(),
+            details: format!("Sender Identity | Display Name: {}", from_disp.as_deref().unwrap_or("None")),
+            severity: "info".to_string(),
+            artifact_type: "native".to_string(),
+            email_id: eid.clone(),
+            email_subject: subj_opt.clone(),
+            email_from: from_addr.clone(),
+            date_sent_utc: date_opt.clone(),
+        });
+
         if let Some(ref re) = re_phone {
             for cap in re.captures_iter(&body) {
                 let p = cap[1].trim().to_string();
@@ -3604,6 +3620,25 @@ async fn extract_all_taxonomy_artifacts(
                 });
                 break;
             }
+        }
+
+        // Calendar Meetings
+        if headers_raw_opt.as_deref().unwrap_or("").to_lowercase().contains("text/calendar") || full_text.contains("begin:vcalendar") || subj_lower.contains("invitation:") || subj_lower.contains("meeting request") {
+            artifacts.push(ForensicTaxonomyArtifact {
+                id: generate_id(),
+                domain_id: "people".to_string(),
+                subcategory_id: "calendar_meetings".to_string(),
+                title: "Calendar Meeting Invitation (.ics)".to_string(),
+                primary_value: if subj.is_empty() { "Calendar Event".to_string() } else { subj.to_string() },
+                secondary_value: Some(from_addr.clone()),
+                details: "iCalendar / Outlook meeting request object".to_string(),
+                severity: "info".to_string(),
+                artifact_type: "native".to_string(),
+                email_id: eid.clone(),
+                email_subject: subj_opt.clone(),
+                email_from: from_addr.clone(),
+                date_sent_utc: date_opt.clone(),
+            });
         }
 
         // 3. NETWORK & INFRASTRUCTURE (IPs & Hops)
