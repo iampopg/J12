@@ -487,28 +487,31 @@ async fn get_or_extract_artifacts(
             })
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
-        if !cached.is_empty() {
-            return Ok(cached);
-        }
+        return Ok(cached);
     }
 
     let extracted = extract_all_taxonomy_artifacts(state, case_id).await?;
 
-    let db = state.db.lock().await;
-    let _ = db.conn.execute("DELETE FROM forensic_artifacts WHERE case_id = ?1", [case_id]);
+    let mut db = state.db.lock().await;
+    let tx = db.conn.transaction().map_err(|e| e.to_string())?;
+    let _ = tx.execute("DELETE FROM forensic_artifacts WHERE case_id = ?1", [case_id]);
 
-    for art in &extracted {
-        let _ = db.conn.execute(
-            "INSERT OR REPLACE INTO forensic_artifacts (id, case_id, domain_id, subcategory_id, title, primary_value, secondary_value, details, severity, artifact_type, confidence, email_id, email_subject, email_from, date_sent_utc)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
-            rusqlite::params![
+    {
+        let mut stmt = tx.prepare("
+            INSERT OR REPLACE INTO forensic_artifacts (id, case_id, domain_id, subcategory_id, title, primary_value, secondary_value, details, severity, artifact_type, confidence, email_id, email_subject, email_from, date_sent_utc)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+        ").map_err(|e| e.to_string())?;
+
+        for art in &extracted {
+            let _ = stmt.execute(rusqlite::params![
                 art.id, case_id, art.domain_id, art.subcategory_id, art.title,
                 art.primary_value, art.secondary_value, art.details, art.severity,
                 art.artifact_type, art.confidence, art.email_id, art.email_subject,
                 art.email_from, art.date_sent_utc
-            ]
-        );
+            ]);
+        }
     }
+    tx.commit().map_err(|e| e.to_string())?;
 
     Ok(extracted)
 }
