@@ -1,9 +1,9 @@
 <div align="center">
 
-<img src="public/j12-logo.svg" alt="J12 Logo" width="120" />
+<img src="logo.png" alt="J12 Logo" width="380" />
 
 # <span style="color:#ffffff;">J</span><span style="color:#22c55e;">12</span> Email Forensic Suite
-### **Next-Gen Desktop Email Investigation, Artifact Carving & eDiscovery Intelligence Platform**
+### **Advanced Desktop Email Investigation, Artifact Carving & eDiscovery Intelligence Platform**
 
 [![Status](https://img.shields.io/badge/status-active%20production-22c55e?style=for-the-badge&logo=shield)]()
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-38bdf8?style=for-the-badge&logo=apple)]()
@@ -24,9 +24,47 @@
 
 **<span style="color:#ffffff;">J</span><span style="color:#22c55e;">12</span>** is a court-admissible, multi-user desktop email forensic investigation and eDiscovery platform. Built for digital forensic examiners, incident responders, corporate fraud investigators, and law enforcement agencies, **J12** delivers high-performance parsing of massive digital mail containers (`MBOX`, `PST`, `OST`, `EML`, `MSG`, `EMLX`) and live IMAP mailboxes with instant cryptographic provenance.
 
-> **⚖️ Legal Defensibility & Standards Compliance:**
+> **⚖️ Legal Defensibility & Standards:**
 > While no software can make evidence automatically "admissible," **J12** enforces rigorous **ISO/IEC 27037**, **NIST SP 800-86**, **SWGDE digital evidence protocols**, and **Daubert / FRE 702** standards. Every extracted header, timestamp, and body snippet maintains an immutable cryptographic trace:
 > $$\text{Field} \longrightarrow \text{Raw Bytes} \longrightarrow \text{Container Offset} \longrightarrow \text{SHA-256 Hash} \longrightarrow \text{Custody Audit Log}$$
+
+---
+
+## 🖥️ Live Platform Architecture & Previews
+
+### 1. Case Investigation Command Center & Dashboard
+The central investigation dashboard provides immediate situational awareness, target subject profiling, interactive KPI drilldowns, evidence container tallies, and active BEC/spoofing threat alerts.
+
+<div align="center">
+  <img src="dashboard-preview.svg" alt="J12 Case Dashboard Command Center" width="100%" />
+</div>
+
+---
+
+### 2. Forensic Header & Authentication Inspector
+Comprehensive cryptographic verification of email transmission headers, SPF/DKIM/DMARC alignment, received hops latency tracking, ARC validation, and brand impersonation detection.
+
+<div align="center">
+  <img src="email-detail-preview.svg" alt="Forensic Header & Authentication Analysis" width="100%" />
+</div>
+
+---
+
+### 3. Communication Network Graph & Chronological Timeline Feed
+Interactive sociometric network clustering, entity alias disambiguation (Exchange DN resolving), burst traffic anomaly detection, and after-hours communication heatmaps.
+
+<div align="center">
+  <img src="timeline-graph-preview.svg" alt="Communication Graph & Incident Timeline" width="100%" />
+</div>
+
+---
+
+### 4. Forensic Security Violations & Risk Matrix
+Real-time threat engine surfacing spoofing attempts, lookalike sender anomalies, high-entropy attachment warnings, and cryptocurrency extortion triggers.
+
+<div align="center">
+  <img src="findings-preview.svg" alt="Security Violations & Risk Matrix" width="100%" />
+</div>
 
 ---
 

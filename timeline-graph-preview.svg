@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="1200" height="680">
+  <defs>
+    <linearGradient id="bg2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0b0f17"/>
+      <stop offset="100%" style="stop-color:#090d14"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#131b28"/>
+      <stop offset="100%" style="stop-color:#0f1723"/>
+    </linearGradient>
+  </defs>
+
+  <style>
+    .font-sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    .font-mono { font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; }
+  </style>
+
+  <!-- Background -->
+  <rect width="1200" height="680" fill="url(#bg2)"/>
+
+  <!-- Left: Communication Network Graph -->
+  <g transform="translate(24, 24)">
+    <rect width="570" height="632" rx="10" fill="url(#card2)" stroke="#1e293b" stroke-width="1.5"/>
+    <text x="20" y="30" class="font-sans" font-size="16" font-weight="800" fill="#ffffff">
+      Communication Graph &amp; Cluster Analysis
+    </text>
+    <text x="20" y="48" class="font-sans" font-size="11" fill="#64748b">
+      Entity interaction density, bridge nodes, and anomaly clusters
+    </text>
+    <line x1="20" y1="62" x2="550" y2="62" stroke="#1e293b" stroke-width="1"/>
+
+    <!-- Graph Canvas Simulation -->
+    <g transform="translate(285, 340)">
+      
+      <!-- Edges -->
+      <line x1="0" y1="0" x2="-140" y2="-120" stroke="#38bdf8" stroke-width="5" opacity="0.6"/>
+      <line x1="0" y1="0" x2="150" y2="-110" stroke="#38bdf8" stroke-width="4" opacity="0.6"/>
+      <line x1="0" y1="0" x2="-160" y2="100" stroke="#38bdf8" stroke-width="3" opacity="0.5"/>
+      <line x1="0" y1="0" x2="160" y2="90" stroke="#38bdf8" stroke-width="2.5" opacity="0.4"/>
+      <line x1="0" y1="0" x2="0" y2="-180" stroke="#ef4444" stroke-width="2" stroke-dasharray="4 4"/>
+      <line x1="-140" y1="-120" x2="150" y2="-110" stroke="#64748b" stroke-width="1.5" opacity="0.3"/>
+
+      <!-- Center Node: Stacey White -->
+      <circle cx="0" cy="0" r="32" fill="#0284c7" stroke="#38bdf8" stroke-width="3"/>
+      <text x="0" y="5" class="font-sans" font-size="12" font-weight="800" fill="#ffffff" text-anchor="middle">STACEY</text>
+      <text x="0" y="48" class="font-sans" font-size="11" font-weight="700" fill="#ffffff" text-anchor="middle">Stacey W. White (Target)</text>
+      <text x="0" y="62" class="font-sans" font-size="9.5" fill="#38bdf8" text-anchor="middle">3,266 msgs · Target Centrality</text>
+
+      <!-- Partner Node 1: Casey Evans -->
+      <g transform="translate(-140, -120)">
+        <circle cx="0" cy="0" r="24" fill="#047857" stroke="#10b981" stroke-width="2.5"/>
+        <text x="0" y="4" class="font-sans" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">CE</text>
+        <text x="0" y="-32" class="font-sans" font-size="10.5" font-weight="600" fill="#e2e8f0" text-anchor="middle">Casey Evans</text>
+        <text x="0" y="-18" class="font-sans" font-size="9" fill="#10b981" text-anchor="middle">693 shared</text>
+      </g>
+
+      <!-- Partner Node 2: John Postlethwaite -->
+      <g transform="translate(150, -110)">
+        <circle cx="0" cy="0" r="22" fill="#047857" stroke="#10b981" stroke-width="2.5"/>
+        <text x="0" y="4" class="font-sans" font-size="10" font-weight="700" fill="#ffffff" text-anchor="middle">JP</text>
+        <text x="0" y="-30" class="font-sans" font-size="10.5" font-weight="600" fill="#e2e8f0" text-anchor="middle">John Postlethwaite</text>
+        <text x="0" y="-18" class="font-sans" font-size="9" fill="#10b981" text-anchor="middle">544 shared</text>
+      </g>
+
+      <!-- Partner Node 3: Fran Chang -->
+      <g transform="translate(-160, 100)">
+        <circle cx="0" cy="0" r="20" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+        <text x="0" y="4" class="font-sans" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle">FC</text>
+        <text x="0" y="32" class="font-sans" font-size="10.5" font-weight="600" fill="#e2e8f0" text-anchor="middle">Fran Chang</text>
+        <text x="0" y="45" class="font-sans" font-size="9" fill="#94a3b8" text-anchor="middle">350 shared</text>
+      </g>
+
+      <!-- Suspicious External Node -->
+      <g transform="translate(0, -180)">
+        <circle cx="0" cy="0" r="18" fill="#7f1d1d" stroke="#ef4444" stroke-width="2"/>
+        <text x="0" y="4" class="font-sans" font-size="9" font-weight="800" fill="#ffffff" text-anchor="middle">BEC</text>
+        <text x="0" y="-26" class="font-sans" font-size="10.5" font-weight="700" fill="#f87171" text-anchor="middle">wells-fargo-verify.com</text>
+        <text x="0" y="-14" class="font-sans" font-size="9" fill="#ef4444" text-anchor="middle">🚨 Impersonation Risk</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Right: Chronological Incident Timeline -->
+  <g transform="translate(606, 24)">
+    <rect width="570" height="632" rx="10" fill="url(#card2)" stroke="#1e293b" stroke-width="1.5"/>
+    <text x="20" y="30" class="font-sans" font-size="16" font-weight="800" fill="#ffffff">
+      Forensic Incident Timeline &amp; Volume Pulse
+    </text>
+    <text x="20" y="48" class="font-sans" font-size="11" fill="#64748b">
+      Temporal communication density with burst detection and after-hours flags
+    </text>
+    <line x1="20" y1="62" x2="550" y2="62" stroke="#1e293b" stroke-width="1"/>
+
+    <!-- Temporal Activity Bars -->
+    <g transform="translate(20, 80)">
+      <text x="0" y="14" class="font-sans" font-size="11" font-weight="700" fill="#64748b">MONTHLY ACTIVITY DISTRIBUTION (2001 - 2002)</text>
+      
+      <g transform="translate(0, 26)">
+        <!-- Jan -->
+        <rect x="0" y="40" width="36" height="60" rx="3" fill="#3b82f6"/>
+        <text x="18" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Jan '01</text>
+
+        <!-- Feb (Spike) -->
+        <rect x="44" y="10" width="36" height="90" rx="3" fill="#22c55e"/>
+        <text x="62" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Feb '01</text>
+        <text x="62" y="5" class="font-sans" font-size="9" font-weight="700" fill="#22c55e" text-anchor="middle">620</text>
+
+        <!-- Mar -->
+        <rect x="88" y="30" width="36" height="70" rx="3" fill="#3b82f6"/>
+        <text x="106" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Mar '01</text>
+
+        <!-- Apr (Critical BEC Incident) -->
+        <rect x="132" y="0" width="36" height="100" rx="3" fill="#ef4444"/>
+        <text x="150" y="115" class="font-sans" font-size="9" fill="#f87171" font-weight="700" text-anchor="middle">Apr '01</text>
+        <text x="150" y="-5" class="font-sans" font-size="9" font-weight="800" fill="#ef4444" text-anchor="middle">🚨 842</text>
+
+        <!-- May -->
+        <rect x="176" y="45" width="36" height="55" rx="3" fill="#3b82f6"/>
+        <text x="194" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">May '01</text>
+
+        <!-- Jun -->
+        <rect x="220" y="55" width="36" height="45" rx="3" fill="#3b82f6"/>
+        <text x="238" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Jun '01</text>
+
+        <!-- Jul -->
+        <rect x="264" y="60" width="36" height="40" rx="3" fill="#3b82f6"/>
+        <text x="282" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Jul '01</text>
+
+        <!-- Aug -->
+        <rect x="308" y="50" width="36" height="50" rx="3" fill="#3b82f6"/>
+        <text x="326" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Aug '01</text>
+
+        <!-- Sep -->
+        <rect x="352" y="65" width="36" height="35" rx="3" fill="#3b82f6"/>
+        <text x="370" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Sep '01</text>
+
+        <!-- Oct -->
+        <rect x="396" y="40" width="36" height="60" rx="3" fill="#3b82f6"/>
+        <text x="414" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Oct '01</text>
+
+        <!-- Nov -->
+        <rect x="440" y="35" width="36" height="65" rx="3" fill="#3b82f6"/>
+        <text x="458" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Nov '01</text>
+
+        <!-- Dec -->
+        <rect x="484" y="50" width="36" height="50" rx="3" fill="#3b82f6"/>
+        <text x="502" y="115" class="font-sans" font-size="9" fill="#64748b" text-anchor="middle">Dec '01</text>
+      </g>
+    </g>
+
+    <!-- Chronological Event Feed Itemized -->
+    <g transform="translate(20, 230)">
+      <text x="0" y="14" class="font-sans" font-size="11" font-weight="700" fill="#64748b">RECENT EVIDENTIARY EVENTS STREAM</text>
+
+      <!-- Event 1 (Threat) -->
+      <g transform="translate(0, 26)">
+        <rect width="530" height="56" rx="6" fill="#0b0f17" stroke="#ef4444" stroke-width="1"/>
+        <circle cx="16" cy="20" r="5" fill="#ef4444"/>
+        <text x="30" y="18" class="font-sans" font-size="11.5" font-weight="700" fill="#ffffff">Urgent: Wells Fargo Account Release</text>
+        <text x="515" y="18" class="font-sans" font-size="10" font-weight="700" fill="#ef4444" text-anchor="end">🚨 RISK: 92</text>
+        <text x="30" y="36" class="font-sans" font-size="10.5" fill="#94a3b8">From: notice@wells-fargo-verify.com · 2001-04-12 09:14 UTC · <tspan fill="#fbbf24">After-Hours</tspan></text>
+      </g>
+
+      <!-- Event 2 (Deleted Recovered) -->
+      <g transform="translate(0, 90)">
+        <rect width="530" height="56" rx="6" fill="#0b0f17" stroke="#f97316" stroke-width="1"/>
+        <circle cx="16" cy="20" r="5" fill="#f97316"/>
+        <text x="30" y="18" class="font-sans" font-size="11.5" font-weight="700" fill="#ffffff">Confidential Project Phoenix settlement discussion</text>
+        <text x="515" y="18" class="font-sans" font-size="10" font-weight="700" fill="#f97316" text-anchor="end">🗑️ RECOVERED</text>
+        <text x="30" y="36" class="font-sans" font-size="10.5" fill="#94a3b8">From: casey.evans@enron.com · 2001-04-10 17:42 UTC · Restored from Dumpster</text>
+      </g>
+
+      <!-- Event 3 (Routine Thread) -->
+      <g transform="translate(0, 154)">
+        <rect width="530" height="56" rx="6" fill="#0b0f17" stroke="#1e293b" stroke-width="1"/>
+        <circle cx="16" cy="20" r="5" fill="#3b82f6"/>
+        <text x="30" y="18" class="font-sans" font-size="11.5" font-weight="700" fill="#ffffff">Daily Power Schedule &amp; Pipeline Delivery Allocations</text>
+        <text x="515" y="18" class="font-sans" font-size="10" font-weight="600" fill="#64748b" text-anchor="end">INBOX</text>
+        <text x="30" y="36" class="font-sans" font-size="10.5" fill="#94a3b8">From: john.postlethwaite@enron.com · 2001-04-09 08:30 UTC</text>
+      </g>
+    </g>
+
+  </g>
+</svg>

@@ -1,0 +1,334 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 800" width="1200" height="800">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0b0f17"/>
+      <stop offset="100%" style="stop-color:#090d14"/>
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#131b28"/>
+      <stop offset="100%" style="stop-color:#0f1723"/>
+    </linearGradient>
+    <linearGradient id="greenGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#22c55e"/>
+      <stop offset="100%" style="stop-color:#16a34a"/>
+    </linearGradient>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <style>
+    .font-sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    .font-mono { font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; }
+  </style>
+
+  <!-- Canvas Background -->
+  <rect width="1200" height="800" fill="url(#bgGrad)"/>
+
+  <!-- Top Application Bar -->
+  <rect x="0" y="0" width="1200" height="54" fill="#0f1724"/>
+  <line x1="0" y1="54" x2="1200" y2="54" stroke="#1e293b" stroke-width="1"/>
+
+  <!-- J12 Brand Logo (J in White, 12 in Green) -->
+  <g transform="translate(18, 12)">
+    <rect width="30" height="30" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+    <circle cx="15" cy="15" r="7" fill="none" stroke="#22c55e" stroke-width="2"/>
+    <text x="38" y="22" class="font-sans" font-size="19" font-weight="900" letter-spacing="-0.5">
+      <tspan fill="#ffffff">J</tspan><tspan fill="#22c55e">12</tspan>
+      <tspan fill="#94a3b8" font-size="14" font-weight="500"> Forensic Platform</tspan>
+    </text>
+  </g>
+
+  <!-- Active Case Badge -->
+  <rect x="360" y="14" width="230" height="26" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+  <circle cx="374" cy="27" r="4" fill="#22c55e"/>
+  <text x="386" y="31" class="font-sans" font-size="12" font-weight="600" fill="#f8fafc">
+    CASE: Enron Fraud #J12-001
+  </text>
+
+  <!-- User / Status Badge -->
+  <g transform="translate(1010, 14)">
+    <rect width="170" height="26" rx="13" fill="rgba(34,197,94,0.12)" stroke="rgba(34,197,94,0.3)" stroke-width="1"/>
+    <circle cx="16" cy="13" r="4" fill="#22c55e"/>
+    <text x="28" y="17" class="font-sans" font-size="11.5" font-weight="600" fill="#4ade80">
+      ● 3,266 Items Processed
+    </text>
+  </g>
+
+  <!-- SIDEBAR -->
+  <g transform="translate(0, 54)">
+    <rect width="210" height="746" fill="#0c121d"/>
+    <line x1="210" y1="0" x2="210" y2="746" stroke="#1e293b" stroke-width="1"/>
+
+    <!-- Active item: Case Dashboard -->
+    <rect x="8" y="14" width="194" height="34" rx="6" fill="rgba(34,197,94,0.15)" stroke="rgba(34,197,94,0.3)" stroke-width="1"/>
+    <text x="24" y="36" class="font-sans" font-size="13" font-weight="700" fill="#22c55e">◫ Case Dashboard</text>
+
+    <!-- Nav Items -->
+    <g class="font-sans" font-size="12.5" fill="#94a3b8" font-weight="500">
+      <text x="24" y="74">📁 Evidence Sources (1)</text>
+      <text x="24" y="104">📥 Inbox (1,241)</text>
+      <text x="24" y="134">📤 Sent Messages (456)</text>
+      <text x="24" y="164">🗑️ Deleted Items (989)</text>
+      <text x="24" y="194">🔍 Forensic Search</text>
+      <text x="24" y="224">👥 Entity Profiles (3,571)</text>
+      <text x="24" y="254">📅 Incident Timeline</text>
+      <text x="24" y="284">🕸️ Communication Graph</text>
+      <text x="24" y="314">🛡️ Findings Matrix (3)</text>
+      <text x="24" y="344">🔒 Verify Evidence Integrity</text>
+      <text x="24" y="374">📋 Chain of Custody</text>
+      <text x="24" y="404">📄 Court-Ready Report</text>
+    </g>
+  </g>
+
+  <!-- MAIN WORKSPACE DASHBOARD -->
+  <g transform="translate(230, 68)">
+    
+    <!-- Title & Action Buttons -->
+    <text x="0" y="22" class="font-sans" font-size="22" font-weight="800" fill="#ffffff">
+      Case Investigation Command Center
+    </text>
+    <text x="0" y="40" class="font-sans" font-size="12" fill="#64748b">
+      Central intelligence hub for evidence triage, threat detection, entity profiling, and court reporting.
+    </text>
+
+    <g transform="translate(730, 6)">
+      <rect width="100" height="30" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+      <text x="14" y="20" class="font-sans" font-size="11.5" font-weight="600" fill="#f8fafc">⚡ Run Analysis</text>
+
+      <rect x="110" y="0" width="115" height="30" rx="6" fill="#22c55e"/>
+      <text x="124" y="20" class="font-sans" font-size="11.5" font-weight="700" fill="#0b0f17">📄 Export Report</text>
+    </g>
+
+    <!-- Quick Tools Action Bar -->
+    <g transform="translate(0, 56)">
+      <rect width="945" height="42" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="14" y="25" class="font-sans" font-size="11" font-weight="700" fill="#64748b" letter-spacing="0.5">QUICK TOOLS:</text>
+      
+      <!-- Quick Pills -->
+      <g class="font-sans" font-size="11" font-weight="600" fill="#94a3b8">
+        <rect x="105" y="8" width="125" height="26" rx="5" fill="#1e293b"/>
+        <text x="116" y="25">🔍 Advanced Search</text>
+
+        <rect x="238" y="8" width="115" height="26" rx="5" fill="#1e293b"/>
+        <text x="249" y="25">🕸️ Network Graph</text>
+
+        <rect x="361" y="8" width="125" height="26" rx="5" fill="#1e293b"/>
+        <text x="372" y="25">📅 Incident Timeline</text>
+
+        <rect x="494" y="8" width="115" height="26" rx="5" fill="#1e293b"/>
+        <text x="505" y="25">👤 Entity Profiles</text>
+
+        <rect x="617" y="8" width="125" height="26" rx="5" fill="#1e293b"/>
+        <text x="628" y="25">🛡️ Findings Matrix</text>
+
+        <rect x="750" y="8" width="175" height="26" rx="5" fill="rgba(34,197,94,0.12)" stroke="rgba(34,197,94,0.3)" stroke-width="1"/>
+        <text x="762" y="25" fill="#4ade80">📄 Court Dossier (50p) →</text>
+      </g>
+    </g>
+
+    <!-- 5 KPI COMMAND CARDS -->
+    <g transform="translate(0, 110)">
+      <!-- KPI 1: Emails -->
+      <g transform="translate(0, 0)">
+        <rect width="177" height="74" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1" filter="url(#shadow)"/>
+        <text x="16" y="36" class="font-sans" font-size="24" font-weight="800" fill="#ffffff">3,266</text>
+        <text x="16" y="56" class="font-sans" font-size="11" font-weight="600" fill="#64748b">✉️ Processed Emails →</text>
+      </g>
+
+      <!-- KPI 2: Entities -->
+      <g transform="translate(192, 0)">
+        <rect width="177" height="74" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1" filter="url(#shadow)"/>
+        <text x="16" y="36" class="font-sans" font-size="24" font-weight="800" fill="#38bdf8">3,571</text>
+        <text x="16" y="56" class="font-sans" font-size="11" font-weight="600" fill="#64748b">👥 Discovered Entities →</text>
+      </g>
+
+      <!-- KPI 3: Deleted -->
+      <g transform="translate(384, 0)">
+        <rect width="177" height="74" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1" filter="url(#shadow)"/>
+        <text x="16" y="36" class="font-sans" font-size="24" font-weight="800" fill="#fb923c">989</text>
+        <text x="16" y="56" class="font-sans" font-size="11" font-weight="600" fill="#64748b">🗑️ Deleted Recovered →</text>
+      </g>
+
+      <!-- KPI 4: Findings -->
+      <g transform="translate(576, 0)">
+        <rect width="177" height="74" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1" filter="url(#shadow)"/>
+        <text x="16" y="36" class="font-sans" font-size="24" font-weight="800" fill="#f87171">3</text>
+        <text x="16" y="56" class="font-sans" font-size="11" font-weight="600" fill="#64748b">🚨 Security Findings →</text>
+      </g>
+
+      <!-- KPI 5: Evidence -->
+      <g transform="translate(768, 0)">
+        <rect width="177" height="74" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1" filter="url(#shadow)"/>
+        <text x="16" y="36" class="font-sans" font-size="24" font-weight="800" fill="#4ade80">1</text>
+        <text x="16" y="56" class="font-sans" font-size="11" font-weight="600" fill="#64748b">📁 Evidence Sources →</text>
+      </g>
+    </g>
+
+    <!-- TWO-COLUMN INTELLIGENCE SECTION -->
+    <g transform="translate(0, 196)">
+      
+      <!-- LEFT: Target Subject Dossier -->
+      <g transform="translate(0, 0)">
+        <rect width="464" height="210" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="0" x2="0" y2="210" stroke="#38bdf8" stroke-width="4"/>
+        
+        <text x="16" y="24" class="font-sans" font-size="11" font-weight="700" fill="#38bdf8" letter-spacing="0.5">🎯 CASE TARGET DOSSIER</text>
+        <rect x="360" y="10" width="88" height="18" rx="4" fill="rgba(56,189,248,0.15)"/>
+        <text x="370" y="23" class="font-sans" font-size="9.5" font-weight="600" fill="#38bdf8">CASE #J12-001</text>
+
+        <text x="16" y="52" class="font-sans" font-size="17" font-weight="700" fill="#ffffff">Stacey W. White</text>
+        <text x="16" y="70" class="font-mono" font-size="12" fill="#38bdf8">swhite@enron.com</text>
+        <text x="16" y="88" class="font-sans" font-size="11.5" fill="#94a3b8">Organization: <tspan fill="#f1f5f9" font-weight="600">Enron North America (Wholesale Energy)</tspan></text>
+
+        <!-- Frequent Correspondents -->
+        <text x="16" y="114" class="font-sans" font-size="10.5" font-weight="700" fill="#64748b">TOP FREQUENT CORRESPONDENTS:</text>
+        
+        <g transform="translate(16, 122)" class="font-sans" font-size="11">
+          <!-- Item 1 -->
+          <rect width="432" height="22" rx="4" fill="#0b0f17"/>
+          <text x="8" y="15" fill="#e2e8f0">Casey Evans</text>
+          <text x="420" y="15" fill="#38bdf8" text-anchor="end" font-weight="600">693 msgs</text>
+
+          <!-- Item 2 -->
+          <g transform="translate(0, 26)">
+            <rect width="432" height="22" rx="4" fill="#0b0f17"/>
+            <text x="8" y="15" fill="#e2e8f0">John Postlethwaite</text>
+            <text x="420" y="15" fill="#38bdf8" text-anchor="end" font-weight="600">544 msgs</text>
+          </g>
+
+          <!-- Item 3 -->
+          <g transform="translate(0, 52)">
+            <rect width="432" height="22" rx="4" fill="#0b0f17"/>
+            <text x="8" y="15" fill="#e2e8f0">Fran Chang</text>
+            <text x="420" y="15" fill="#38bdf8" text-anchor="end" font-weight="600">350 msgs</text>
+          </g>
+        </g>
+      </g>
+
+      <!-- RIGHT: Critical Security & Tampering Findings -->
+      <g transform="translate(480, 0)">
+        <rect width="465" height="210" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1"/>
+        <line x1="0" y1="0" x2="0" y2="210" stroke="#f87171" stroke-width="4"/>
+
+        <text x="16" y="24" class="font-sans" font-size="11" font-weight="700" fill="#f87171" letter-spacing="0.5">🚨 CRITICAL SECURITY FINDINGS (3)</text>
+        <text x="445" y="24" class="font-sans" font-size="10.5" fill="#94a3b8" text-anchor="end">View All →</text>
+
+        <!-- Finding 1 -->
+        <g transform="translate(16, 40)">
+          <rect width="433" height="46" rx="6" fill="#0b0f17" stroke="#334155" stroke-width="0.5"/>
+          <line x1="0" y1="0" x2="0" y2="46" stroke="#ef4444" stroke-width="3"/>
+          <text x="12" y="18" class="font-sans" font-size="12" font-weight="700" fill="#ffffff">Possible Brand Impersonation (Wells Fargo)</text>
+          <rect x="365" y="6" width="58" height="16" rx="3" fill="#dc2626"/>
+          <text x="394" y="18" class="font-sans" font-size="9" font-weight="800" fill="#ffffff" text-anchor="middle">CRITICAL</text>
+          <text x="12" y="34" class="font-sans" font-size="10.5" fill="#94a3b8">Subject: Notice from Wells Fargo Bank regarding unauthorized wire release</text>
+        </g>
+
+        <!-- Finding 2 -->
+        <g transform="translate(16, 94)">
+          <rect width="433" height="46" rx="6" fill="#0b0f17" stroke="#334155" stroke-width="0.5"/>
+          <line x1="0" y1="0" x2="0" y2="46" stroke="#ea580c" stroke-width="3"/>
+          <text x="12" y="18" class="font-sans" font-size="12" font-weight="700" fill="#ffffff">SPF Authentication Failure &amp; Return-Path Mismatch</text>
+          <rect x="385" y="6" width="38" height="16" rx="3" fill="#ea580c"/>
+          <text x="404" y="18" class="font-sans" font-size="9" font-weight="800" fill="#ffffff" text-anchor="middle">HIGH</text>
+          <text x="12" y="34" class="font-sans" font-size="10.5" fill="#94a3b8">Originating IP 198.51.100.24 is not authorized by SPF record</text>
+        </g>
+
+        <!-- Finding 3 -->
+        <g transform="translate(16, 148)">
+          <rect width="433" height="46" rx="6" fill="#0b0f17" stroke="#334155" stroke-width="0.5"/>
+          <line x1="0" y1="0" x2="0" y2="46" stroke="#ca8a04" stroke-width="3"/>
+          <text x="12" y="18" class="font-sans" font-size="12" font-weight="700" fill="#ffffff">Lookalike Domain: enr0n-corp.net</text>
+          <rect x="372" y="6" width="51" height="16" rx="3" fill="#ca8a04"/>
+          <text x="397" y="18" class="font-sans" font-size="9" font-weight="800" fill="#ffffff" text-anchor="middle">MEDIUM</text>
+          <text x="12" y="34" class="font-sans" font-size="10.5" fill="#94a3b8">Typosquatting domain detected in Reply-To header</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- FOLDER DISTRIBUTION MATRIX -->
+    <g transform="translate(0, 418)">
+      <rect width="945" height="96" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1"/>
+      <text x="16" y="22" class="font-sans" font-size="12.5" font-weight="700" fill="#ffffff">
+        Mailbox Folder Breakdown (Interactive Jump)
+      </text>
+
+      <g transform="translate(16, 34)">
+        <!-- Inbox -->
+        <rect width="144" height="48" rx="6" fill="#0b0f17"/>
+        <text x="72" y="24" class="font-sans" font-size="18" font-weight="800" fill="#3b82f6" text-anchor="middle">1,241</text>
+        <text x="72" y="40" class="font-sans" font-size="10.5" fill="#64748b" text-anchor="middle">Inbox →</text>
+
+        <!-- Sent -->
+        <g transform="translate(154, 0)">
+          <rect width="144" height="48" rx="6" fill="#0b0f17"/>
+          <text x="72" y="24" class="font-sans" font-size="18" font-weight="800" fill="#22c55e" text-anchor="middle">456</text>
+          <text x="72" y="40" class="font-sans" font-size="10.5" fill="#64748b" text-anchor="middle">Sent Items →</text>
+        </g>
+
+        <!-- Deleted -->
+        <g transform="translate(308, 0)">
+          <rect width="144" height="48" rx="6" fill="#0b0f17"/>
+          <text x="72" y="24" class="font-sans" font-size="18" font-weight="800" fill="#f97316" text-anchor="middle">989</text>
+          <text x="72" y="40" class="font-sans" font-size="10.5" fill="#64748b" text-anchor="middle">Deleted / Trash →</text>
+        </g>
+
+        <!-- Drafts -->
+        <g transform="translate(462, 0)">
+          <rect width="144" height="48" rx="6" fill="#0b0f17"/>
+          <text x="72" y="24" class="font-sans" font-size="18" font-weight="800" fill="#a855f7" text-anchor="middle">18</text>
+          <text x="72" y="40" class="font-sans" font-size="10.5" fill="#64748b" text-anchor="middle">Drafts →</text>
+        </g>
+
+        <!-- Spam -->
+        <g transform="translate(616, 0)">
+          <rect width="144" height="48" rx="6" fill="#0b0f17"/>
+          <text x="72" y="24" class="font-sans" font-size="18" font-weight="800" fill="#ef4444" text-anchor="middle">0</text>
+          <text x="72" y="40" class="font-sans" font-size="10.5" fill="#64748b" text-anchor="middle">Spam / Junk →</text>
+        </g>
+
+        <!-- Other -->
+        <g transform="translate(770, 0)">
+          <rect width="143" height="48" rx="6" fill="#0b0f17"/>
+          <text x="71" y="24" class="font-sans" font-size="18" font-weight="800" fill="#94a3b8" text-anchor="middle">562</text>
+          <text x="71" y="40" class="font-sans" font-size="10.5" fill="#64748b" text-anchor="middle">Other Folders →</text>
+        </g>
+      </g>
+    </g>
+
+    <!-- EVIDENCE PROVENANCE & INTEGRITY TABLE -->
+    <g transform="translate(0, 524)">
+      <rect width="945" height="152" rx="8" fill="url(#cardGrad)" stroke="#1e293b" stroke-width="1"/>
+      <text x="16" y="24" class="font-sans" font-size="13" font-weight="700" fill="#ffffff">
+        Evidence Sources &amp; Cryptographic Provenance
+      </text>
+
+      <!-- Table Header -->
+      <g transform="translate(16, 38)" class="font-sans" font-size="10.5" font-weight="700" fill="#64748b">
+        <text x="0" y="10">SOURCE CONTAINER</text>
+        <text x="220" y="10">FORMAT</text>
+        <text x="310" y="10">STATUS</text>
+        <text x="400" y="10">MESSAGES</text>
+        <text x="500" y="10">SHA-256 ACQUISITION HASH</text>
+      </g>
+      <line x1="16" y1="56" x2="929" y2="56" stroke="#1e293b" stroke-width="1"/>
+
+      <!-- Table Row -->
+      <g transform="translate(16, 72)" class="font-sans" font-size="12">
+        <text x="0" y="14" font-weight="700" fill="#ffffff">enron_sample.mbox</text>
+        <text x="0" y="28" font-size="10" fill="#64748b">Acquired: 2026-08-24 13:51 UTC · 5.96 MB</text>
+        
+        <rect x="216" y="2" width="56" height="18" rx="4" fill="rgba(59,130,246,0.15)"/>
+        <text x="244" y="15" font-size="10" font-weight="700" fill="#60a5fa" text-anchor="middle">MBOX</text>
+
+        <rect x="306" y="2" width="56" height="18" rx="4" fill="rgba(34,197,94,0.15)"/>
+        <text x="334" y="15" font-size="10" font-weight="700" fill="#4ade80" text-anchor="middle">PARSED</text>
+
+        <text x="400" y="14" font-weight="700" fill="#f8fafc">3,266 items</text>
+
+        <text x="500" y="14" class="font-mono" font-size="10.5" fill="#38bdf8">4a32ed50e131b5e884abd5dee2e4a633815eb688dc112f11f9895b67a297b40b</text>
+      </g>
+    </g>
+
+  </g>
+</svg>
