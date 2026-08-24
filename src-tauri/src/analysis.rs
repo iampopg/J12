@@ -651,20 +651,41 @@ pub fn detect_spoofing(
         }
         
         // Check for brand impersonation in display name
-        let brands = ["paypal", "apple", "microsoft", "google", "amazon", "netflix", "bank", "wells fargo", "chase"];
-        for brand in &brands {
-            if display_lower.contains(brand) && !from_domain.contains(brand) {
-                findings.push(SpoofingFinding {
-                    finding_type: "brand_impersonation".to_string(),
-                    severity: "critical".to_string(),
-                    confidence: "high".to_string(),
-                    title: format!("Possible {} brand impersonation", brand),
-                    description: format!(
-                        "Display name '{}' contains brand '{}' but sender domain is '{}'",
-                        display, brand, from_domain
-                    ),
-                    indicator: format!("{} in display name, not in domain {}", brand, from_domain),
-                });
+        let brands = [
+            ("paypal", "paypal.com"),
+            ("apple", "apple.com"),
+            ("microsoft", "microsoft.com"),
+            ("google", "google.com"),
+            ("amazon", "amazon.com"),
+            ("netflix", "netflix.com"),
+            ("wells fargo", "wellsfargo.com"),
+            ("chase", "chase.com"),
+            ("bank of america", "bankofamerica.com"),
+            ("citibank", "citi.com"),
+        ];
+        
+        for (brand, canonical_domain) in &brands {
+            let brand_clean = brand.replace([' ', '-', '_'], "");
+            let domain_clean = from_domain.replace(['-', '_'], "");
+            
+            if display_lower.contains(brand) {
+                let is_legit_brand_domain = from_domain.ends_with(canonical_domain) 
+                    || from_domain == *canonical_domain
+                    || domain_clean.contains(&brand_clean);
+
+                if !is_legit_brand_domain {
+                    findings.push(SpoofingFinding {
+                        finding_type: "brand_impersonation".to_string(),
+                        severity: "critical".to_string(),
+                        confidence: "high".to_string(),
+                        title: format!("Possible {} brand impersonation", brand),
+                        description: format!(
+                            "Display name '{}' contains brand '{}' but sender domain is '{}'",
+                            display, brand, from_domain
+                        ),
+                        indicator: format!("{} in display name, not in domain {}", brand, from_domain),
+                    });
+                }
             }
         }
     }
