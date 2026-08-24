@@ -34,6 +34,21 @@ export function AttachmentsView({ caseId }: Props) {
   const [zoomImage, setZoomImage] = useState<{ src: string; filename: string } | null>(null);
   const [previewEmail, setPreviewEmail] = useState<EmailModalData | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [counts, setCounts] = useState<{
+    all: number;
+    dangerous: number;
+    documents: number;
+    images: number;
+    archives: number;
+    media: number;
+  }>({
+    all: 0,
+    dangerous: 0,
+    documents: 0,
+    images: 0,
+    archives: 0,
+    media: 0,
+  });
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -41,8 +56,30 @@ export function AttachmentsView({ caseId }: Props) {
   };
 
   useEffect(() => {
+    loadSummary();
+  }, [caseId]);
+
+  useEffect(() => {
     loadData();
   }, [caseId, category]);
+
+  const loadSummary = async () => {
+    try {
+      const c = await invoke<{
+        all: number;
+        dangerous: number;
+        documents: number;
+        images: number;
+        archives: number;
+        media: number;
+      }>("case_attachments_summary", { input: { case_id: caseId } });
+      if (c) {
+        setCounts(c);
+      }
+    } catch (e) {
+      console.error("Failed to load attachment summary counts:", e);
+    }
+  };
 
   const openEmailModal = async (emailId: string) => {
     if (!emailId) return;
@@ -131,16 +168,6 @@ export function AttachmentsView({ caseId }: Props) {
     if (cat === "archives") return "📦";
     if (cat === "media") return "🎵";
     return "📎";
-  };
-
-  // Metrics for categories
-  const counts = {
-    all: attachments.length,
-    dangerous: attachments.filter(a => a.category === "dangerous").length,
-    documents: attachments.filter(a => a.category === "documents").length,
-    images: attachments.filter(a => a.category === "images").length,
-    archives: attachments.filter(a => a.category === "archives").length,
-    media: attachments.filter(a => a.category === "media").length,
   };
 
   return (
@@ -247,7 +274,7 @@ export function AttachmentsView({ caseId }: Props) {
               🖼️ Photo &amp; Scan Gallery
             </button>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={loadData}>
+          <button className="btn btn-ghost btn-sm" onClick={() => { loadSummary(); loadData(); }}>
             ↻ Refresh
           </button>
         </div>

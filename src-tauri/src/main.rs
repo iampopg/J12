@@ -88,6 +88,7 @@ fn main() {
             commands::imap_list_mailboxes,
             commands::imap_fetch_emails,
             commands::imap_cancel_acquisition,
+            commands::case_attachments_summary,
             commands::case_attachments_list,
             commands::export_attachment,
             commands::get_attachment_preview,

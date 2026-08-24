@@ -96,6 +96,66 @@ pub async fn email_attachments(state: State<'_, AppState>, input: Value) -> Resu
     Ok(attachments)
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AttachmentCategoryCounts {
+    pub all: usize,
+    pub dangerous: usize,
+    pub documents: usize,
+    pub images: usize,
+    pub archives: usize,
+    pub media: usize,
+}
+
+#[tauri::command]
+pub async fn case_attachments_summary(state: State<'_, AppState>, input: Value) -> Result<AttachmentCategoryCounts, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let db = state.db.lock().await;
+    let mut stmt = db.conn.prepare(
+        "SELECT a.filename, a.mime_type, a.entropy, a.risk_flags
+         FROM attachments a
+         JOIN emails e ON a.email_id = e.id
+         WHERE e.case_id = ?1"
+    ).map_err(|e| e.to_string())?;
+
+    let mut counts = AttachmentCategoryCounts {
+        all: 0,
+        dangerous: 0,
+        documents: 0,
+        images: 0,
+        archives: 0,
+        media: 0,
+    };
+
+    let rows = stmt.query_map([&case_id], |row| {
+        let filename: String = row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "attachment.bin".to_string());
+        let mime: String = row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "application/octet-stream".to_string());
+        let entropy: Option<f64> = row.get(2)?;
+        let risk_flags: Option<String> = row.get(3)?;
+        Ok(classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref()))
+    }).map_err(|e| e.to_string())?;
+
+    for r in rows.flatten() {
+        counts.all += 1;
+        match r.as_str() {
+            "dangerous" => counts.dangerous += 1,
+            "images" => counts.images += 1,
+            "documents" => counts.documents += 1,
+            "archives" => counts.archives += 1,
+            "media" => counts.media += 1,
+            _ => counts.documents += 1,
+        }
+    }
+
+    Ok(counts)
+}
+
 #[tauri::command]
 pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> Result<Vec<CaseAttachmentItem>, String> {
     let case_id = input["case_id"].as_str()
