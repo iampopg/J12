@@ -13,6 +13,7 @@ pub struct Case {
     pub target_name: Option<String>,
     pub target_organization: Option<String>,
     pub investigation_type: String,
+    pub working_dir: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -143,6 +144,7 @@ pub struct CaseCreateInput {
     pub target_name: Option<String>,
     pub target_organization: Option<String>,
     pub investigation_type: Option<String>,
+    pub working_dir: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

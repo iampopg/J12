@@ -54,6 +54,7 @@ impl Database {
                 target_name TEXT,
                 target_organization TEXT,
                 investigation_type TEXT DEFAULT 'general',
+                working_dir TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -252,6 +253,8 @@ impl Database {
         self.conn.execute("ALTER TABLE cases ADD COLUMN target_organization TEXT", []).ok();
         // Migration: add investigation_type column if missing
         self.conn.execute("ALTER TABLE cases ADD COLUMN investigation_type TEXT DEFAULT 'general'", []).ok();
+        // Migration: add working_dir column if missing
+        self.conn.execute("ALTER TABLE cases ADD COLUMN working_dir TEXT", []).ok();
         // Migration: add folder_name column if missing
         self.conn.execute("ALTER TABLE emails ADD COLUMN folder_name TEXT", []).ok();
         // Migration: add folder_category column if missing

@@ -12,6 +12,7 @@ interface Case {
   target_name: string | null;
   target_organization: string | null;
   investigation_type: string;
+  working_dir: string | null;
   created_at: string;
 }
 
@@ -26,7 +27,8 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
     target_email: "",
     target_name: "",
     target_organization: "",
-    investigation_type: "general"
+    investigation_type: "general",
+    working_dir: ""
   });
 
   const load = async () => {
@@ -41,6 +43,17 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
 
   useEffect(() => { load(); }, []);
 
+  const handleBrowseFolder = async () => {
+    try {
+      const selected = await invoke<string | null>("open_folder_dialog");
+      if (selected) {
+        setForm(prev => ({ ...prev, working_dir: selected }));
+      }
+    } catch (e) {
+      console.error("Failed to open folder dialog:", e);
+    }
+  };
+
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -53,10 +66,20 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
           target_name: form.target_name || null,
           target_organization: form.target_organization || null,
           investigation_type: form.investigation_type || null,
+          working_dir: form.working_dir || null,
         }
       });
       setShowCreate(false);
-      setForm({ title: "", case_number: "", description: "", target_email: "", target_name: "", target_organization: "", investigation_type: "general" });
+      setForm({ 
+        title: "", 
+        case_number: "", 
+        description: "", 
+        target_email: "", 
+        target_name: "", 
+        target_organization: "", 
+        investigation_type: "general",
+        working_dir: "" 
+      });
       onSelectCase(newCase.id);
     } catch (e) {
       console.error(e);
@@ -69,7 +92,7 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
       fraud: "Fraud",
       bec: "BEC",
       phishing: "Phishing",
-      harassment: "Harharment",
+      harassment: "Harassment",
       ip: "IP Theft",
       compliance: "Compliance",
       litigation: "Litigation"
@@ -98,7 +121,7 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
         </div>
 
         {showCreate && (
-          <div className="card" style={{ maxWidth: 600, marginBottom: 24 }}>
+          <div className="card" style={{ maxWidth: 640, marginBottom: 24 }}>
             <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 20 }}>Create New Case</h3>
             <form onSubmit={create}>
               <div className="field">
@@ -126,6 +149,31 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
                     <option value="litigation">Litigation</option>
                   </select>
                 </div>
+              </div>
+
+              {/* Working Folder / Storage Location */}
+              <div className="field" style={{ marginTop: 12 }}>
+                <label className="label">Case Storage / Working Directory</label>
+                <div className="row gap-2">
+                  <input 
+                    className="input" 
+                    placeholder="e.g. /Users/username/Documents/J12_Cases/CASE-001 (Auto-generated if empty)" 
+                    value={form.working_dir}
+                    onChange={(e) => setForm({ ...form, working_dir: e.target.value })} 
+                    style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12 }}
+                  />
+                  <button 
+                    type="button" 
+                    className="btn btn-ghost" 
+                    style={{ whiteSpace: "nowrap" }}
+                    onClick={handleBrowseFolder}
+                  >
+                    📂 Browse Folder
+                  </button>
+                </div>
+                <span className="muted" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
+                  Destination folder where carved evidence, parsed attachments, reports, and audit logs are saved.
+                </span>
               </div>
 
               <div style={{ margin: "20px 0", padding: "16px", background: "var(--bg-3)", borderRadius: "var(--r-md)" }}>
@@ -181,6 +229,13 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
                 </div>
                 <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-0)", marginBottom: 6 }}>{c.title}</h3>
                 {c.case_number && <p className="mono muted" style={{ fontSize: 12, marginBottom: 8 }}>{c.case_number}</p>}
+                
+                {c.working_dir && (
+                  <div style={{ fontSize: 11, fontFamily: "var(--mono)", color: "var(--text-3)", marginBottom: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    📂 {c.working_dir}
+                  </div>
+                )}
+
                 {(c.target_name || c.target_email) && (
                   <div style={{ padding: "10px 12px", background: "var(--bg-3)", borderRadius: "var(--r-sm)", marginBottom: 12 }}>
                     <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 2 }}>TARGET</div>

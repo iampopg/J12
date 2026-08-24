@@ -38,6 +38,7 @@ fn main() {
             commands::evidence_status,
             commands::write_temp_file,
             commands::open_file_dialog,
+            commands::open_folder_dialog,
             commands::read_file,
             commands::parse_evidence,
             commands::email_list,

@@ -18,11 +18,28 @@ pub async fn case_create(state: State<'_, AppState>, input: CaseCreateInput) -> 
     let target_name = input.target_name.clone().unwrap_or_default();
     let target_org = input.target_organization.clone().unwrap_or_default();
     let inv_type = input.investigation_type.clone().unwrap_or_else(|| "general".to_string());
+    let working_dir = input.working_dir.clone().unwrap_or_else(|| {
+        if let Some(doc_dir) = dirs::document_dir() {
+            doc_dir.join("J12_Cases").join(&cn).to_string_lossy().to_string()
+        } else {
+            format!("./cases/{}", cn)
+        }
+    });
+
+    // Automatically create directory hierarchy inside working folder
+    if !working_dir.is_empty() {
+        let p = std::path::Path::new(&working_dir);
+        let _ = std::fs::create_dir_all(p);
+        let _ = std::fs::create_dir_all(p.join("evidence"));
+        let _ = std::fs::create_dir_all(p.join("attachments"));
+        let _ = std::fs::create_dir_all(p.join("exports"));
+        let _ = std::fs::create_dir_all(p.join("reports"));
+    }
     
     db.conn.execute(
-        "INSERT INTO cases (id,name,case_number,examiner_name,investigation_type,description,status,target_email,target_name,target_organization,created_at,updated_at)
-         VALUES (?1,?2,?3,'Examiner',?4,?5,'active',?6,?7,?8,?9,?9)",
-        rusqlite::params![id, input.title, cn, inv_type, desc, target_email, target_name, target_org, now.to_rfc3339()],
+        "INSERT INTO cases (id,title,case_number,investigation_type,description,status,target_email,target_name,target_organization,working_dir,created_at,updated_at)
+         VALUES (?1,?2,?3,?4,?5,'open',?6,?7,?8,?9,?10,?10)",
+        rusqlite::params![id, input.title, cn, inv_type, desc, target_email, target_name, target_org, working_dir, now.to_rfc3339()],
     ).map_err(|e| e.to_string())?;
 
     // Create initial custody log event
@@ -30,7 +47,7 @@ pub async fn case_create(state: State<'_, AppState>, input: CaseCreateInput) -> 
     let _ = db.conn.execute(
         "INSERT INTO chain_of_custody (id, case_id, evidence_id, action, performed_by, timestamp, notes)
          VALUES (?1, ?2, NULL, 'case_created', 'Examiner', ?3, ?4)",
-        rusqlite::params![custody_id, id, now.to_rfc3339(), format!("Case {} created for target {}", input.title, target_email)],
+        rusqlite::params![custody_id, id, now.to_rfc3339(), format!("Case '{}' created with working directory '{}'", input.title, working_dir)],
     );
 
     Ok(Case {
@@ -38,12 +55,13 @@ pub async fn case_create(state: State<'_, AppState>, input: CaseCreateInput) -> 
         title: input.title,
         case_number: cn,
         description: desc,
-        status: "active".to_string(),
+        status: "open".to_string(),
         owner_id: "default".to_string(),
         target_email: input.target_email,
         target_name: input.target_name,
         target_organization: input.target_organization,
         investigation_type: inv_type,
+        working_dir: Some(working_dir),
         created_at: now,
         updated_at: now,
     })
@@ -52,7 +70,7 @@ pub async fn case_create(state: State<'_, AppState>, input: CaseCreateInput) -> 
 #[tauri::command]
 pub async fn case_list(state: State<'_, AppState>) -> Result<Vec<Case>, String> {
     let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare("SELECT id,name,case_number,description,status,target_email,target_name,target_organization,investigation_type,created_at,updated_at FROM cases ORDER BY created_at DESC").map_err(|e| e.to_string())?;
+    let mut stmt = db.conn.prepare("SELECT id,title,case_number,description,status,target_email,target_name,target_organization,investigation_type,working_dir,created_at,updated_at FROM cases ORDER BY created_at DESC").map_err(|e| e.to_string())?;
     let cases = stmt.query_map([], |row| {
         Ok(Case {
             id: row.get(0)?, 
@@ -65,8 +83,9 @@ pub async fn case_list(state: State<'_, AppState>) -> Result<Vec<Case>, String> 
             target_name: row.get(6)?, 
             target_organization: row.get(7)?,
             investigation_type: row.get(8)?,
-            created_at: parse_dt(row.get::<_,String>(9)?.as_str()),
-            updated_at: parse_dt(row.get::<_,String>(10)?.as_str()),
+            working_dir: row.get(9)?,
+            created_at: parse_dt(row.get::<_,String>(10)?.as_str()),
+            updated_at: parse_dt(row.get::<_,String>(11)?.as_str()),
         })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     Ok(cases)
@@ -75,7 +94,9 @@ pub async fn case_list(state: State<'_, AppState>) -> Result<Vec<Case>, String> 
 #[tauri::command]
 pub async fn case_get(state: State<'_, AppState>, input: EmptyInput) -> Result<Option<Case>, String> {
     let db = state.db.lock().await;
-    let r = db.conn.query_row("SELECT id,name,case_number,description,status,target_email,target_name,target_organization,investigation_type,created_at,updated_at FROM cases WHERE id=?1", [&input.case_id],
+    let r = db.conn.query_row(
+        "SELECT id,title,case_number,description,status,target_email,target_name,target_organization,investigation_type,working_dir,created_at,updated_at FROM cases WHERE id=?1",
+        [&input.case_id],
         |row| Ok(Case { 
             id: row.get(0)?, 
             title: row.get(1)?, 
@@ -87,10 +108,16 @@ pub async fn case_get(state: State<'_, AppState>, input: EmptyInput) -> Result<O
             target_name: row.get(6)?, 
             target_organization: row.get(7)?, 
             investigation_type: row.get(8)?, 
-            created_at: parse_dt(row.get::<_,String>(9)?.as_str()), 
-            updated_at: parse_dt(row.get::<_,String>(10)?.as_str()) 
-        }));
-    match r { Ok(c) => Ok(Some(c)), Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None), Err(e) => Err(e.to_string()) }
+            working_dir: row.get(9)?,
+            created_at: parse_dt(row.get::<_,String>(10)?.as_str()), 
+            updated_at: parse_dt(row.get::<_,String>(11)?.as_str()) 
+        })
+    );
+    match r {
+        Ok(c) => Ok(Some(c)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -98,7 +125,7 @@ pub async fn case_update(state: State<'_, AppState>, input: CaseUpdateInput) -> 
     let db = state.db.lock().await;
     let now = Utc::now().to_rfc3339();
     let mut sets = Vec::new();
-    if !input.title.is_empty() { sets.push(format!("name='{}'", input.title.replace('\'',"''"))); }
+    if !input.title.is_empty() { sets.push(format!("title='{}'", input.title.replace('\'',"''"))); }
     if let Some(ref v) = input.description { sets.push(format!("description='{}'", v.replace('\'',"''"))); }
     if let Some(ref v) = input.status { sets.push(format!("status='{}'", v.replace('\'',"''"))); }
     if sets.is_empty() { return Ok(()); }

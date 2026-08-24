@@ -270,7 +270,23 @@ pub async fn read_file(path: String) -> Result<String, String> {
 
 #[tauri::command]
 pub async fn open_file_dialog() -> Result<Option<String>, String> {
-    Ok(None)
+    let file = rfd::AsyncFileDialog::new()
+        .add_filter("Email Evidence (*.pst, *.ost, *.mbox, *.eml, *.msg)", &["pst", "ost", "mbox", "eml", "msg", "txt", "db"])
+        .set_title("Select Email Forensic Evidence File")
+        .pick_file()
+        .await;
+
+    Ok(file.map(|f| f.path().to_string_lossy().to_string()))
+}
+
+#[tauri::command]
+pub async fn open_folder_dialog() -> Result<Option<String>, String> {
+    let folder = rfd::AsyncFileDialog::new()
+        .set_title("Select Case Working Directory / Storage Location")
+        .pick_folder()
+        .await;
+
+    Ok(folder.map(|f| f.path().to_string_lossy().to_string()))
 }
 
 #[tauri::command]

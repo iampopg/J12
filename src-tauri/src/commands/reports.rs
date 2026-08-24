@@ -19,8 +19,8 @@ pub async fn generate_report_data(state: State<'_, AppState>, input: Value) -> R
     let db = state.db.lock().await;
 
     let case: Case = db.conn.query_row(
-        "SELECT id, name, case_number, description, status,
-                target_email, target_name, target_organization, investigation_type, created_at, updated_at
+        "SELECT id, title, case_number, description, status,
+                target_email, target_name, target_organization, investigation_type, working_dir, created_at, updated_at
          FROM cases WHERE id = ?1",
         [&case_id],
         |row| {
@@ -35,8 +35,9 @@ pub async fn generate_report_data(state: State<'_, AppState>, input: Value) -> R
                 target_name: row.get(6)?,
                 target_organization: row.get(7)?,
                 investigation_type: row.get(8)?,
-                created_at: parse_dt(&row.get::<_, String>(9)?),
-                updated_at: parse_dt(&row.get::<_, String>(10)?),
+                working_dir: row.get(9)?,
+                created_at: parse_dt(&row.get::<_, String>(10)?),
+                updated_at: parse_dt(&row.get::<_, String>(11)?),
             })
         },
     ).map_err(|e| format!("Case not found: {}", e))?;
