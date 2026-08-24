@@ -141,6 +141,79 @@ pub async fn imap_fetch_emails(
                     if is_del { 1 } else { 0 },
                 ],
             );
+            
+            // Save attachments with full forensic metadata & disk extraction
+            for att in &parsed.attachments {
+                let att_id = generate_id();
+                let sha256 = {
+                    let mut hasher = Sha256::new();
+                    hasher.update(&att.data);
+                    format!("{:x}", hasher.finalize())
+                };
+
+                let entropy = if !att.data.is_empty() {
+                    let mut counts = [0u64; 256];
+                    for &b in &att.data { counts[b as usize] += 1; }
+                    let len = att.data.len() as f64;
+                    let mut ent = 0.0f64;
+                    for &c in &counts {
+                        if c > 0 {
+                            let p = c as f64 / len;
+                            ent -= p * p.log2();
+                        }
+                    }
+                    ent
+                } else { 0.0 };
+
+                // Risk flags calculation
+                let mut risk_flags = Vec::new();
+                let lower_name = att.filename.as_deref().unwrap_or("").to_lowercase();
+                if lower_name.ends_with(".exe") || lower_name.ends_with(".bat") || lower_name.ends_with(".cmd") || lower_name.ends_with(".ps1") || lower_name.ends_with(".vbs") || lower_name.ends_with(".js") {
+                    risk_flags.push("executable");
+                }
+                if lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm") || lower_name.ends_with(".pptm") {
+                    risk_flags.push("macro_enabled");
+                }
+                if entropy > 7.5 {
+                    risk_flags.push("high_entropy_encrypted");
+                }
+                let risk_flags_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
+
+                // Save attachment payload to disk
+                let mut stored_path = String::new();
+                if !att.data.is_empty() {
+                    let att_dir = dirs::data_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("email-forensic")
+                        .join("evidence")
+                        .join(&case_id)
+                        .join("attachments");
+                    let _ = std::fs::create_dir_all(&att_dir);
+                    let safe_name = att.filename.as_deref().unwrap_or("attachment.bin")
+                        .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+                    let att_file = att_dir.join(format!("{}_{}", &att_id[..8], safe_name));
+                    if std::fs::write(&att_file, &att.data).is_ok() {
+                        stored_path = att_file.to_string_lossy().to_string();
+                    }
+                }
+
+                let _ = db.conn.execute(
+                    "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    rusqlite::params![
+                        att_id,
+                        email_id,
+                        att.filename,
+                        sha256,
+                        att.content_type,
+                        att.data.len() as i64,
+                        stored_path,
+                        entropy,
+                        risk_flags_json
+                    ],
+                );
+            }
+            
             parsed_count += 1;
         }
     }
