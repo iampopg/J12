@@ -54,9 +54,9 @@ export function TargetProfileView({ caseId, caseData }: Props) {
       // First ensure entities exist
       const existing = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
       if (existing.length === 0) {
-        await invoke<number>("extract_entities", { caseId });
+        await invoke<number>("extract_entities", { input: { case_id: caseId } });
       }
-      const det = await invoke<any>("auto_detect_targets", { caseId });
+      const det = await invoke<any>("auto_detect_targets", { input: { case_id: caseId } });
       const targets: DetectedTarget[] = det.targets || [];
       setDetected(targets);
       if (targets.length > 0 && !selectedEmail) {
@@ -73,7 +73,7 @@ export function TargetProfileView({ caseId, caseData }: Props) {
   const reExtract = async () => {
     setLoading(true);
     try {
-      await invoke<number>("extract_entities", { caseId });
+      await invoke<number>("extract_entities", { input: { case_id: caseId } });
       await loadData();
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -81,7 +81,7 @@ export function TargetProfileView({ caseId, caseData }: Props) {
 
   const loadProfile = async (email: string) => {
     try {
-      const prof = await invoke<TargetProfile>("target_profile", { caseId, targetEmail: email });
+      const prof = await invoke<TargetProfile>("target_profile", { input: { case_id: caseId, target_email: email } });
       setProfile(prof);
     } catch (e) { console.error(e); }
   };

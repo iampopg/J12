@@ -857,6 +857,200 @@ pub fn analyze_attachment(
     }
 }
 
+/// Analyze an attachment from database record metadata (entropy, filename, declared mime, risk_flags)
+pub fn analyze_attachment_metadata(
+    filename: Option<&str>,
+    declared_mime: Option<&str>,
+    _size_bytes: u64,
+    entropy: Option<f64>,
+    existing_flags: Option<&str>,
+) -> AttachmentAnalysis {
+    let mut risk_flags = Vec::new();
+    let mut risk_score: u8 = 0;
+
+    let mime = declared_mime.unwrap_or("application/octet-stream");
+    let ent = entropy.unwrap_or(0.0);
+
+    if let Some(name) = filename {
+        let lower = name.to_lowercase();
+        let dangerous_exts = [
+            ".exe", ".scr", ".pif", ".cmd", ".bat", ".com", ".vbs", ".js", ".wsf", 
+            ".ps1", ".msi", ".iso", ".hta", ".cpl", ".jar", ".reg"
+        ];
+        for ext in &dangerous_exts {
+            if lower.ends_with(ext) {
+                risk_flags.push(format!("dangerous_executable_extension: {}", ext));
+                risk_score += 45;
+                break;
+            }
+        }
+
+        // Office macro extensions
+        let macro_exts = [".docm", ".xlsm", ".pptm", ".dotm", ".xltm"];
+        for ext in &macro_exts {
+            if lower.ends_with(ext) {
+                risk_flags.push("macro_enabled_office_document".to_string());
+                risk_score += 35;
+                break;
+            }
+        }
+
+        // Double extension
+        let parts: Vec<&str> = lower.split('.').collect();
+        if parts.len() > 2 {
+            let second_ext = format!(".{}", parts[parts.len() - 2]);
+            if dangerous_exts.contains(&second_ext.as_str()) || second_ext == ".pdf" || second_ext == ".doc" || second_ext == ".xls" {
+                risk_flags.push(format!("double_extension_lure ({})", second_ext));
+                risk_score += 45;
+            }
+        }
+    }
+
+    if ent > 7.5 {
+        risk_flags.push(format!("high_entropy ({:.2}): probable packed/encrypted payload", ent));
+        risk_score += 35;
+    } else if ent > 7.1 {
+        risk_flags.push(format!("elevated_entropy ({:.2})", ent));
+        risk_score += 15;
+    }
+
+    if let Some(flags) = existing_flags {
+        if !flags.trim().is_empty() && flags != "[]" {
+            risk_flags.push(format!("risk_indicator: {}", flags));
+            risk_score += 20;
+        }
+    }
+
+    AttachmentAnalysis {
+        filename: filename.map(|s| s.to_string()),
+        declared_mime: mime.to_string(),
+        detected_type: mime.to_string(),
+        extension_match: true,
+        entropy: ent,
+        risk_flags,
+        risk_score: risk_score.min(100),
+    }
+}
+
+/// Detect deep content threats including BEC wire fraud, credential lures, and confidentiality leaks
+pub fn detect_content_threats(
+    from_addr: &str,
+    from_display: Option<&str>,
+    subject: Option<&str>,
+    body_text: Option<&str>,
+) -> Vec<SpoofingFinding> {
+    let mut findings = Vec::new();
+    let subj = subject.unwrap_or("").to_lowercase();
+    let body = body_text.unwrap_or("").to_lowercase();
+    let full_content = format!("{} {}", subj, body);
+
+    let from_domain = extract_domain(from_addr).to_lowercase();
+    let display_str = from_display.unwrap_or("").to_lowercase();
+
+    // 1. BEC & Wire Transfer / Financial Fraud
+    let wire_triggers = [
+        "wire transfer", "updated bank details", "new bank account", "swift code", 
+        "routing number", "ach transfer", "direct deposit change", "urgent payment", 
+        "invoice overdue wire", "settlement fund payment", "remittance instruction",
+        "fund transfer instruction", "account verification for wire"
+    ];
+    let urgency_triggers = [
+        "urgent", "immediately", "asap", "confidential", "before end of day", 
+        "do not call", "strictly private", "keep this between us", "wire today", "wire promptly"
+    ];
+
+    let has_wire = wire_triggers.iter().any(|&w| full_content.contains(w));
+    let has_urgency = urgency_triggers.iter().any(|&u| full_content.contains(u));
+
+    if has_wire {
+        let severity = if has_urgency { "critical" } else { "high" };
+        let matched_trigger = wire_triggers.iter().find(|&&w| full_content.contains(w)).unwrap_or(&"wire transfer");
+        findings.push(SpoofingFinding {
+            finding_type: "bec_wire_fraud".to_string(),
+            severity: severity.to_string(),
+            confidence: "high".to_string(),
+            title: format!("BEC / Wire Transfer Request: '{}'", matched_trigger),
+            description: format!(
+                "Financial payment redirection pattern detected ('{}'). Urgency flagged: {}",
+                matched_trigger, if has_urgency { "HIGH (Immediate action demanded)" } else { "Standard" }
+            ),
+            indicator: format!("wire_trigger: {}", matched_trigger),
+        });
+    }
+
+    // 2. Gift Card & Errand Extortion Fraud
+    let giftcard_triggers = [
+        "apple gift card", "itunes gift card", "google play card", "steam card", 
+        "buy gift cards", "need you to run an errand", "discreet task for me"
+    ];
+    if let Some(&gc) = giftcard_triggers.iter().find(|&&g| full_content.contains(g)) {
+        findings.push(SpoofingFinding {
+            finding_type: "gift_card_fraud".to_string(),
+            severity: "high".to_string(),
+            confidence: "high".to_string(),
+            title: format!("Gift Card Scam Pattern: '{}'", gc),
+            description: format!("Message requests gift card purchasing or non-standard executive procurement ('{}')", gc),
+            indicator: format!("gift_card: {}", gc),
+        });
+    }
+
+    // 3. Credential Harvesting & Phishing Lures
+    let cred_triggers = [
+        "verify your account", "password reset requested", "mailbox size exceeded", 
+        "account suspended", "mfa reset required", "login attempt blocked", 
+        "update your credentials", "microsoft 365 security notice", "re-authenticate now",
+        "verify banking details", "unlock your account"
+    ];
+    if let Some(&lure) = cred_triggers.iter().find(|&&c| full_content.contains(c)) {
+        findings.push(SpoofingFinding {
+            finding_type: "credential_phishing".to_string(),
+            severity: "high".to_string(),
+            confidence: "high".to_string(),
+            title: format!("Credential Phishing Lure: '{}'", lure),
+            description: format!("Phishing pattern detected attempting to harvest credentials or manipulate authentication ('{}')", lure),
+            indicator: format!("phishing_lure: {}", lure),
+        });
+    }
+
+    // 4. Confidentiality & Legal Privilege Marker
+    let legal_triggers = [
+        "attorney-client privilege", "privileged and confidential", "strictly confidential", 
+        "trade secret", "internal use only", "non-disclosure agreement", "material non-public"
+    ];
+    if let Some(&legal) = legal_triggers.iter().find(|&&l| full_content.contains(l)) {
+        findings.push(SpoofingFinding {
+            finding_type: "confidential_exfiltration".to_string(),
+            severity: "medium".to_string(),
+            confidence: "high".to_string(),
+            title: format!("Privileged / Confidential Information: '{}'", legal),
+            description: format!("Message contains legal privilege or corporate confidentiality notice ('{}')", legal),
+            indicator: format!("confidential_marker: {}", legal),
+        });
+    }
+
+    // 5. Executive / VIP Impersonation on Public Providers
+    let free_webmail = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "protonmail.com"];
+    let vip_titles = ["ceo", "cfo", "chief executive", "president", "managing director", "general counsel", "vp", "vice president"];
+    let is_webmail = free_webmail.iter().any(|&d| from_domain.contains(d));
+    let has_vip_title = vip_titles.iter().any(|&v| display_str.contains(v));
+
+    if is_webmail && has_vip_title {
+        findings.push(SpoofingFinding {
+            finding_type: "executive_impersonation".to_string(),
+            severity: "critical".to_string(),
+            confidence: "high".to_string(),
+            title: "Executive Impersonation via Public Webmail Domain".to_string(),
+            description: format!(
+                "Display name '{}' claims executive rank but sender domain is public webmail ('{}')",
+                from_display.unwrap_or(""), from_domain
+            ),
+            indicator: format!("{} on {}", display_str, from_domain),
+        });
+    }
+
+    findings
+}
+
 /// Detect file type from magic bytes
 fn detect_file_type(data: &[u8]) -> String {
     if data.len() < 4 {
@@ -1031,10 +1225,10 @@ pub fn generate_findings(
         };
         
         let type_ = match spoof.finding_type.as_str() {
-            "spf_failure" | "dkim_failure" | "dmarc_failure" => "SPOOFING",
-            "display_name_spoofing" | "brand_impersonation" => "BEC",
-            "homoglyph_domain" => "SPOOFING",
-            "return_path_mismatch" | "reply_to_mismatch" => "SPOOFING",
+            "spf_failure" | "dkim_failure" | "dmarc_failure" | "homoglyph_domain" | "return_path_mismatch" | "reply_to_mismatch" => "SPOOFING",
+            "display_name_spoofing" | "brand_impersonation" | "bec_wire_fraud" | "gift_card_fraud" | "executive_impersonation" => "BEC",
+            "credential_phishing" => "PHISHING",
+            "confidential_exfiltration" => "EXFILTRATION",
             "message_id_anomaly" => "ANOMALY",
             _ => "ANOMALY",
         };

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 interface Finding {
@@ -40,14 +40,16 @@ interface Props {
   onGoToEvidence?: () => void;
 }
 
-export function FindingsView({ caseId, onGoToEvidence }: Props) {
+export function FindingsView({ caseId }: Props) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
+  const [searchTerm, setSearchTerm] = useState("");
   const [filterSeverity, setFilterSeverity] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
   
   // Related emails state
   const [relatedEmails, setRelatedEmails] = useState<EmailItem[]>([]);
@@ -59,6 +61,11 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
   const [authorName, setAuthorName] = useState("Investigator");
   const [savingNote, setSavingNote] = useState(false);
 
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
   const loadFindings = useCallback(async () => {
     setLoading(true);
     try {
@@ -68,8 +75,11 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
         const updated = data.find(f => f.id === selectedFinding.id);
         if (updated) setSelectedFinding(updated);
       }
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      setLoading(false); 
+    }
   }, [caseId, selectedFinding?.id]);
 
   useEffect(() => { loadFindings(); }, [caseId]);
@@ -83,7 +93,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
     }
 
     setLoadingEmails(true);
-    invoke<EmailItem[]>("finding_emails", { findingId: selectedFinding.id })
+    invoke<EmailItem[]>("finding_emails", { input: { finding_id: selectedFinding.id } })
       .then(emails => {
         setRelatedEmails(emails);
         if (emails.length > 0) {
@@ -103,9 +113,11 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
     setAnalyzing(true);
     try {
       const count = await invoke<number>("run_analysis", { input: { case_id: caseId } });
-      loadFindings();
+      showToast(`⚡ Forensic analysis complete: ${count} threat findings indexed!`);
+      await loadFindings();
     } catch (e: any) {
       console.error("Analysis failed:", e);
+      showToast(`Analysis failed: ${e}`);
     } finally {
       setAnalyzing(false);
     }
@@ -113,7 +125,14 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {
-      await invoke("update_finding_status", { findingId: id, newStatus, reviewedBy: authorName });
+      await invoke("update_finding_status", { 
+        input: { 
+          finding_id: id, 
+          new_status: newStatus, 
+          reviewed_by: authorName 
+        } 
+      });
+      showToast(`Finding marked as ${newStatus.toUpperCase()}`);
       loadFindings();
     } catch (e: any) {
       console.error("Update failed:", e);
@@ -126,11 +145,14 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
     setSavingNote(true);
     try {
       await invoke("add_finding_note", {
-        findingId: selectedFinding.id,
-        note: noteText.trim(),
-        author: authorName.trim() || "Investigator",
+        input: {
+          finding_id: selectedFinding.id,
+          note: noteText.trim(),
+          author: authorName.trim() || "Investigator",
+        }
       });
       setNoteText("");
+      showToast("Investigator note recorded in chain of custody");
       loadFindings();
     } catch (e: any) {
       console.error("Note failed:", e);
@@ -140,12 +162,21 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
   };
 
   // Filter findings
-  const filtered = findings.filter(f => {
-    if (filterSeverity !== "all" && f.severity !== filterSeverity) return false;
-    if (filterType !== "all" && f.type_ !== filterType) return false;
-    if (filterStatus !== "all" && f.status !== filterStatus) return false;
-    return true;
-  });
+  const filtered = useMemo(() => {
+    return findings.filter(f => {
+      if (filterSeverity !== "all" && f.severity !== filterSeverity) return false;
+      if (filterType !== "all" && f.type_ !== filterType) return false;
+      if (filterStatus !== "all" && f.status !== filterStatus) return false;
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchTitle = f.title.toLowerCase().includes(q);
+        const matchDesc = (f.description || "").toLowerCase().includes(q);
+        const matchType = f.type_.toLowerCase().includes(q);
+        if (!matchTitle && !matchDesc && !matchType) return false;
+      }
+      return true;
+    });
+  }, [findings, filterSeverity, filterType, filterStatus, searchTerm]);
 
   // Severity breakdown
   const severityCounts = {
@@ -158,16 +189,19 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
   const typeCounts = {
     BEC: findings.filter(f => f.type_ === "BEC").length,
     SPOOFING: findings.filter(f => f.type_ === "SPOOFING").length,
-    ANOMALY: findings.filter(f => f.type_ === "ANOMALY").length,
+    PHISHING: findings.filter(f => f.type_ === "PHISHING").length,
+    EXFILTRATION: findings.filter(f => f.type_ === "EXFILTRATION").length,
     ATTACHMENT: findings.filter(f => f.type_ === "ATTACHMENT").length,
     ROUTING: findings.filter(f => f.type_ === "ROUTING").length,
+    ANOMALY: findings.filter(f => f.type_ === "ANOMALY").length,
   };
 
   const severityColor = (severity: string) => {
     switch (severity.toLowerCase()) {
       case "critical": return "var(--danger)";
-      case "high": return "var(--warning)";
-      case "medium": return "#ca8a04";
+      case "high": return "#f97316";
+      case "medium": return "#eab308";
+      case "low": return "#3b82f6";
       default: return "#6b7280";
     }
   };
@@ -182,58 +216,193 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
     }
   };
 
+  // Export filtered findings as CSV
+  const exportFindingsCSV = () => {
+    const headers = ["Finding ID", "Severity", "Category", "Title", "Description", "Status", "Messages Count", "Reviewed By", "Created At"];
+    const rows = filtered.map(f => {
+      let msgCount = 0;
+      try { msgCount = JSON.parse(f.email_ids || "[]").length; } catch { msgCount = 0; }
+      return [
+        f.id,
+        f.severity.toUpperCase(),
+        f.type_,
+        `"${f.title.replace(/"/g, '""')}"`,
+        `"${(f.description || "").replace(/"/g, '""')}"`,
+        f.status.toUpperCase(),
+        msgCount,
+        f.reviewed_by || "",
+        f.created_at,
+      ].join(",");
+    });
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `findings_matrix_${caseId.slice(0,8)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    showToast("📁 Findings matrix exported as CSV");
+  };
+
   // Parse notes list
   const parsedNotes = (selectedFinding?.notes || "").split("\n---\n").filter(Boolean);
 
   return (
     <div>
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div 
+          className="card"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            zIndex: 9999,
+            background: "#1e293b",
+            border: "1px solid #22c55e",
+            color: "#4ade80",
+            padding: "12px 20px",
+            fontWeight: 600,
+            fontSize: 13,
+            boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span>✓</span>
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="row between mb-4">
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Forensic Findings</h2>
-          <p className="muted">Automated threat analysis results, evidence verification, and investigator review</p>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
+            Forensic Findings &amp; Threat Matrix
+          </h2>
+          <p className="muted">
+            Automated BEC, spoofing, phishing, and evidence integrity analysis with reviewer chain of custody
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
-          {analyzing ? "Analyzing..." : "▶ Run Analysis"}
-        </button>
+        <div className="row gap-2">
+          {findings.length > 0 && (
+            <button className="btn btn-ghost" onClick={exportFindingsCSV} title="Export CSV for court exhibit">
+              📥 Export CSV
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
+            {analyzing ? "Analyzing Evidence..." : "▶ Re-Run Deep Analysis"}
+          </button>
+        </div>
       </div>
 
       {/* Severity Summary Cards */}
       <div className="row gap-4 mb-4" style={{ flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid var(--danger)" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "var(--danger)" }}>{severityCounts.critical}</div>
-          <div className="muted text-sm">Critical</div>
+        <div 
+          style={{ 
+            flex: 1, 
+            minWidth: 140, 
+            padding: 16, 
+            background: "var(--bg-3)", 
+            borderRadius: "var(--r-md)", 
+            textAlign: "center", 
+            borderLeft: "4px solid var(--danger)",
+            cursor: "pointer"
+          }}
+          onClick={() => setFilterSeverity(filterSeverity === "critical" ? "all" : "critical")}
+        >
+          <div style={{ fontSize: 26, fontWeight: 800, color: "var(--danger)" }}>{severityCounts.critical}</div>
+          <div className="muted text-sm" style={{ fontWeight: 600 }}>Critical Severity</div>
         </div>
-        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid var(--warning)" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "var(--warning)" }}>{severityCounts.high}</div>
-          <div className="muted text-sm">High</div>
+
+        <div 
+          style={{ 
+            flex: 1, 
+            minWidth: 140, 
+            padding: 16, 
+            background: "var(--bg-3)", 
+            borderRadius: "var(--r-md)", 
+            textAlign: "center", 
+            borderLeft: "4px solid #f97316",
+            cursor: "pointer"
+          }}
+          onClick={() => setFilterSeverity(filterSeverity === "high" ? "all" : "high")}
+        >
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#f97316" }}>{severityCounts.high}</div>
+          <div className="muted text-sm" style={{ fontWeight: 600 }}>High Threats</div>
         </div>
-        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #ca8a04" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#ca8a04" }}>{severityCounts.medium}</div>
-          <div className="muted text-sm">Medium</div>
+
+        <div 
+          style={{ 
+            flex: 1, 
+            minWidth: 140, 
+            padding: 16, 
+            background: "var(--bg-3)", 
+            borderRadius: "var(--r-md)", 
+            textAlign: "center", 
+            borderLeft: "4px solid #eab308",
+            cursor: "pointer"
+          }}
+          onClick={() => setFilterSeverity(filterSeverity === "medium" ? "all" : "medium")}
+        >
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#eab308" }}>{severityCounts.medium}</div>
+          <div className="muted text-sm" style={{ fontWeight: 600 }}>Medium Risks</div>
         </div>
-        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #6b7280" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#6b7280" }}>{severityCounts.low}</div>
-          <div className="muted text-sm">Low</div>
+
+        <div 
+          style={{ 
+            flex: 1, 
+            minWidth: 140, 
+            padding: 16, 
+            background: "var(--bg-3)", 
+            borderRadius: "var(--r-md)", 
+            textAlign: "center", 
+            borderLeft: "4px solid #3b82f6",
+            cursor: "pointer"
+          }}
+          onClick={() => setFilterSeverity(filterSeverity === "low" ? "all" : "low")}
+        >
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#3b82f6" }}>{severityCounts.low}</div>
+          <div className="muted text-sm" style={{ fontWeight: 600 }}>Low / Info</div>
         </div>
       </div>
 
-      {/* Type Breakdown Pills */}
+      {/* Category Breakdown Pills */}
       <div className="row gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+        <button
+          className={`btn btn-sm ${filterType === "all" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => setFilterType("all")}
+        >
+          All Categories ({findings.length})
+        </button>
         {Object.entries(typeCounts).map(([type, count]) => (
           <button
             key={type}
             className={`btn btn-sm ${filterType === type ? "btn-primary" : "btn-ghost"}`}
             onClick={() => setFilterType(filterType === type ? "all" : type)}
+            style={{ opacity: count === 0 ? 0.5 : 1 }}
           >
             {type}: {count}
           </button>
         ))}
       </div>
 
-      {/* Filter Toolbar */}
+      {/* Filter & Search Toolbar */}
       <div className="card mb-4" style={{ padding: "12px 16px" }}>
         <div className="row between" style={{ flexWrap: "wrap", gap: 12 }}>
+          <div style={{ flex: 1, minWidth: 260 }}>
+            <input
+              className="input"
+              style={{ width: "100%", padding: "6px 12px", fontSize: 13 }}
+              placeholder="Search findings by keyword, indicator, brand, domain..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+            />
+          </div>
+
           <div className="row gap-2" style={{ flexWrap: "wrap" }}>
             <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>Severity:</span>
             {["all", "critical", "high", "medium", "low"].map(s => (
@@ -247,6 +416,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
               </button>
             ))}
           </div>
+
           <div className="row gap-2" style={{ flexWrap: "wrap" }}>
             <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>Status:</span>
             {["all", "open", "confirmed", "rejected", "reviewed"].map(st => (
@@ -268,12 +438,14 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
         <div className="empty">Loading forensic findings...</div>
       ) : filtered.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: "50px 30px" }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
-          <h3 style={{ fontSize: 18, color: "var(--text-0)", marginBottom: 6 }}>No findings match criteria</h3>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🛡️</div>
+          <h3 style={{ fontSize: 18, color: "var(--text-0)", marginBottom: 6 }}>
+            {findings.length === 0 ? "No Findings Generated Yet" : "No findings match your filter criteria"}
+          </h3>
           <p className="muted mb-4">
             {findings.length === 0
-              ? "Run automated analysis to detect BEC, spoofing, anomalies, and routing deviations."
-              : "Try adjusting your filters above."}
+              ? "Run automated deep analysis to scan email headers, wire fraud indicators, brand spoofing, and file attachments."
+              : "Try resetting your search query or severity filters above."}
           </p>
           {findings.length === 0 && (
             <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
@@ -283,19 +455,24 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
         </div>
       ) : (
         <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
-          <div style={{ padding: "10px 16px", background: "var(--bg-3)", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>
-            {filtered.length} Forensic Finding{filtered.length === 1 ? "" : "s"} — Click any row to review evidence & related email body
+          <div className="row between" style={{ padding: "10px 16px", background: "var(--bg-3)", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>
+            <div>
+              {filtered.length} Forensic Finding{filtered.length === 1 ? "" : "s"} — Select a finding to inspect evidentiary emails &amp; record notes
+            </div>
+            <div className="muted text-sm">
+              Showing {filtered.length} of {findings.length} total
+            </div>
           </div>
           <div style={{ overflowX: "auto" }}>
             <table>
               <thead>
                 <tr>
-                  <th className="th" style={{ width: 90 }}>Severity</th>
-                  <th className="th" style={{ width: 100 }}>Type</th>
-                  <th className="th">Finding Summary</th>
-                  <th className="th" style={{ width: 100 }}>Status</th>
-                  <th className="th" style={{ width: 70 }}>Emails</th>
-                  <th className="th" style={{ width: 140 }}>Actions</th>
+                  <th className="th" style={{ width: 95 }}>Severity</th>
+                  <th className="th" style={{ width: 110 }}>Category</th>
+                  <th className="th">Finding Description &amp; Indicator</th>
+                  <th className="th" style={{ width: 105 }}>Status</th>
+                  <th className="th" style={{ width: 75 }}>Evidentiary</th>
+                  <th className="th" style={{ width: 150 }}>Review Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -304,8 +481,8 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
                     key={f.id}
                     className="tr-click"
                     style={{
-                      background: selectedFinding?.id === f.id ? "rgba(59,130,246,0.08)" : undefined,
-                      borderLeft: selectedFinding?.id === f.id ? "4px solid var(--accent)" : undefined,
+                      background: selectedFinding?.id === f.id ? "rgba(59,130,246,0.12)" : undefined,
+                      borderLeft: selectedFinding?.id === f.id ? "4px solid var(--accent)" : "4px solid transparent",
                     }}
                     onClick={() => setSelectedFinding(f)}
                   >
@@ -314,8 +491,15 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
                         {f.severity.toUpperCase()}
                       </span>
                     </td>
-                    <td><span className="badge badge-gray">{f.type_}</span></td>
-                    <td style={{ maxWidth: 360, fontWeight: 500, color: "var(--text-0)" }}>{f.title}</td>
+                    <td><span className="badge badge-gray" style={{ fontWeight: 600 }}>{f.type_}</span></td>
+                    <td style={{ maxWidth: 380 }}>
+                      <div style={{ fontWeight: 600, color: "var(--text-0)", fontSize: 13 }}>{f.title}</div>
+                      {f.description && (
+                        <div className="muted text-sm" style={{ marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {f.description}
+                        </div>
+                      )}
+                    </td>
                     <td><span className={`badge ${statusBadge(f.status)}`}>{f.status.toUpperCase()}</span></td>
                     <td className="mono" style={{ fontSize: 12 }}>
                       {(() => {
@@ -359,13 +543,13 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
 
       {/* Comprehensive Finding Investigation & Email Inspector Panel */}
       {selectedFinding && (
-        <div className="card" style={{ border: "1px solid var(--accent)", boxShadow: "0 8px 30px rgba(0,0,0,0.15)" }}>
+        <div className="card" style={{ border: "1px solid var(--accent)", boxShadow: "0 8px 30px rgba(0,0,0,0.25)" }}>
           <div className="row between mb-4" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
-            <div className="row gap-2" style={{ alignItems: "center" }}>
+            <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
               <span className="badge" style={{ background: `${severityColor(selectedFinding.severity)}22`, color: severityColor(selectedFinding.severity), border: `1px solid ${severityColor(selectedFinding.severity)}44`, fontWeight: 700 }}>
                 {selectedFinding.severity.toUpperCase()}
               </span>
-              <span className="badge badge-gray">{selectedFinding.type_}</span>
+              <span className="badge badge-gray" style={{ fontWeight: 700 }}>{selectedFinding.type_}</span>
               <span className={`badge ${statusBadge(selectedFinding.status)}`}>{selectedFinding.status.toUpperCase()}</span>
               <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
                 {selectedFinding.title}
@@ -375,8 +559,8 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
           </div>
 
           {/* Top Quick Actions Bar */}
-          <div className="row between mb-4" style={{ background: "var(--bg-0)", padding: "10px 14px", borderRadius: "var(--r-md)", border: "1px solid var(--border)" }}>
-            <div className="row gap-2" style={{ alignItems: "center", fontSize: 12, color: "var(--text-2)" }}>
+          <div className="row between mb-4" style={{ background: "var(--bg-0)", padding: "10px 14px", borderRadius: "var(--r-md)", border: "1px solid var(--border)", flexWrap: "wrap", gap: 10 }}>
+            <div className="row gap-2" style={{ alignItems: "center", fontSize: 12, color: "var(--text-2)", flexWrap: "wrap" }}>
               <span>Investigator Decision:</span>
               <button
                 className={`btn btn-sm ${selectedFinding.status === "confirmed" ? "btn-primary" : "btn-ghost"}`}
@@ -401,14 +585,16 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
               </button>
             </div>
             <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-              Created: {new Date(selectedFinding.created_at).toLocaleString()}
+              Recorded: {new Date(selectedFinding.created_at).toLocaleString()}
               {selectedFinding.reviewed_by && ` · Reviewed by: ${selectedFinding.reviewed_by}`}
             </div>
           </div>
 
-          {/* Analysis Reason */}
-          <div className="mb-4" style={{ padding: 14, background: "rgba(239, 68, 68, 0.04)", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: "var(--r-md)" }}>
-            <h4 style={{ fontSize: 13, fontWeight: 600, color: "var(--danger)", marginBottom: 6 }}>Automated Detection Rationale</h4>
+          {/* Analysis Rationale Box */}
+          <div className="mb-4" style={{ padding: 14, background: "rgba(239, 68, 68, 0.05)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: "var(--r-md)" }}>
+            <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--danger)", marginBottom: 6 }}>
+              🛡️ Automated Forensic Detection Rationale
+            </h4>
             <p style={{ fontSize: 13, color: "var(--text-1)", lineHeight: 1.6, margin: 0 }}>
               {selectedFinding.description || "No automated rationale specified."}
             </p>
@@ -417,7 +603,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
           {/* Related Emails Section */}
           <div className="mb-4">
             <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 8 }}>
-              Associated Email Messages ({relatedEmails.length})
+              Associated Evidentiary Email Messages ({relatedEmails.length})
             </h4>
             <p className="muted mb-3" style={{ fontSize: 12 }}>
               Inspect the exact email body, headers, and sender details that triggered this finding:
@@ -475,7 +661,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
                         padding: 14,
                         fontSize: 12,
                         color: "var(--text-1)",
-                        maxHeight: 220,
+                        maxHeight: 240,
                         overflowY: "auto",
                         whiteSpace: "pre-wrap",
                         lineHeight: 1.5,
@@ -517,10 +703,10 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
           {/* Investigator Notes on Finding */}
           <div>
             <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 8 }}>
-              Investigator Review Notes
+              Investigator Review Notes &amp; Justification
             </h4>
             <p className="muted mb-3" style={{ fontSize: 12 }}>
-              Document why this finding was confirmed or rejected for the forensic report:
+              Document why this finding was confirmed, rejected, or flagged for inclusion in the final court report:
             </p>
 
             {/* Note Composer */}
@@ -536,7 +722,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
                 <input
                   className="input"
                   style={{ flex: 1, padding: "6px 12px", fontSize: 12 }}
-                  placeholder="Record your observation or justification (e.g. 'Domain wellsfargo.m0.net verified as legit marketing subvendor')..."
+                  placeholder="Record your observation or justification..."
                   value={noteText}
                   onChange={e => setNoteText(e.target.value)}
                 />

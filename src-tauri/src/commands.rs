@@ -1,7 +1,10 @@
 use crate::models::*;
 use crate::db::{compute_sha256, compute_sha512, detect_format, generate_id, parse_dt};
 use crate::AppState;
-use crate::analysis::{analyze_headers, analyze_authentication, detect_spoofing, generate_findings, calculate_risk_score, NewFinding};
+use crate::analysis::{
+    analyze_headers, analyze_authentication, detect_spoofing, detect_content_threats,
+    analyze_attachment_metadata, generate_findings, calculate_risk_score, NewFinding
+};
 use std::path::PathBuf;
 use std::fs;
 use tauri::State;
@@ -144,10 +147,29 @@ pub async fn search(state: State<'_, AppState>, input: SearchInput) -> Result<Ve
 }
 
 #[tauri::command]
-pub async fn findings_list(state: State<'_, AppState>, input: EmptyInput) -> Result<Vec<Finding>, String> {
+pub async fn findings_list(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<Finding>, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare("SELECT id,case_id,type,severity,confidence,title,description,evidence_refs,email_ids,status,created_at,reviewed_by,reviewed_at,notes FROM findings WHERE case_id=?1 ORDER BY created_at DESC").map_err(|e| e.to_string())?;
-    let findings = stmt.query_map([&input.case_id], |row| {
+    let mut stmt = db.conn.prepare(
+        "SELECT id,case_id,type,severity,confidence,title,description,evidence_refs,email_ids,status,created_at,reviewed_by,reviewed_at,notes 
+         FROM findings WHERE case_id=?1 
+         ORDER BY 
+           CASE severity 
+             WHEN 'critical' THEN 1 
+             WHEN 'high' THEN 2 
+             WHEN 'medium' THEN 3 
+             WHEN 'low' THEN 4 
+             ELSE 5 
+           END, 
+           created_at DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let findings = stmt.query_map([&case_id], |row| {
         Ok(Finding { 
             id: row.get(0)?, 
             case_id: row.get(1)?, 
@@ -469,83 +491,183 @@ pub async fn run_analysis(state: State<'_, AppState>, input: serde_json::Value) 
         .unwrap_or("")
         .to_string();
 
-    // Clear existing findings for this case to avoid duplicates
-    {
-        let db = state.db.lock().await;
-        db.conn.execute("DELETE FROM findings WHERE case_id=?1", [&case_id]).map_err(|e| format!("Clear findings: {}", e))?;
+    if case_id.is_empty() {
+        return Err("Case ID cannot be empty".to_string());
     }
 
-    // Fetch all emails for this case
-    let emails = {
-        let db = state.db.lock().await;
-        let mut stmt = db.conn.prepare(
-            "SELECT id, from_addr, from_display, headers_raw FROM emails WHERE case_id=?1"
+    let mut db = state.db.lock().await;
+
+    // 1. Fetch all emails for this case
+    struct EmailToAnalyze {
+        id: String,
+        from_addr: String,
+        from_display: Option<String>,
+        subject: Option<String>,
+        body_text: Option<String>,
+        headers_raw: Option<String>,
+        folder_category: String,
+        deleted_recovered: bool,
+    }
+
+    let emails: Vec<EmailToAnalyze> = {
+        let mut emails_stmt = db.conn.prepare(
+            "SELECT id, from_addr, from_display, subject, body_text, headers_raw, folder_category, deleted_recovered 
+             FROM emails WHERE case_id=?1"
         ).map_err(|e| e.to_string())?;
-        
-        let rows = stmt.query_map([&case_id], |row| {
-            Ok((
-                row.get::<_, String>(0)?,      // id
-                row.get::<_, String>(1)?,      // from_addr
-                row.get::<_, Option<String>>(2)?, // from_display
-                row.get::<_, Option<String>>(3)?, // headers_raw
-            ))
-        }).map_err(|e| e.to_string())?
-          .collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
-        
-        rows
+
+        let collected: Result<Vec<_>, _> = emails_stmt.query_map([&case_id], |row| {
+            Ok(EmailToAnalyze {
+                id: row.get(0)?,
+                from_addr: row.get(1)?,
+                from_display: row.get(2)?,
+                subject: row.get(3)?,
+                body_text: row.get(4)?,
+                headers_raw: row.get(5)?,
+                folder_category: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                deleted_recovered: boolv(row, 7),
+            })
+        }).map_err(|e| e.to_string())?.collect();
+
+        collected.map_err(|e| e.to_string())?
     };
-    
+
+    // 2. Fetch all attachments for this case and group by email_id
+    let attachments_by_email = {
+        let mut att_stmt = db.conn.prepare(
+            "SELECT a.email_id, a.filename, a.mime_type, a.size_bytes, a.entropy, a.risk_flags 
+             FROM attachments a 
+             JOIN emails e ON a.email_id = e.id 
+             WHERE e.case_id = ?1"
+        ).map_err(|e| e.to_string())?;
+
+        let mut map: std::collections::HashMap<String, Vec<(Option<String>, Option<String>, u64, Option<f64>, Option<String>)>> = std::collections::HashMap::new();
+
+        let collected: Result<Vec<_>, _> = att_stmt.query_map([&case_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?, // email_id
+                row.get::<_, Option<String>>(1)?, // filename
+                row.get::<_, Option<String>>(2)?, // mime_type
+                row.get::<_, i64>(3)? as u64,     // size_bytes
+                row.get::<_, Option<f64>>(4)?,    // entropy
+                row.get::<_, Option<String>>(5)?, // risk_flags
+            ))
+        }).map_err(|e| e.to_string())?.collect();
+
+        for item in collected.unwrap_or_default() {
+            map.entry(item.0).or_default().push((item.1, item.2, item.3, item.4, item.5));
+        }
+        map
+    };
+
+    // 3. Clear old findings inside transaction and batch process
+    let tx = db.conn.transaction().map_err(|e| format!("Transaction error: {}", e))?;
+    tx.execute("DELETE FROM findings WHERE case_id=?1", [&case_id]).map_err(|e| format!("Clear findings: {}", e))?;
+
     let mut total_findings: u32 = 0;
-    
-    // Analyze each email
-    for (email_id, from_addr, from_display, headers_raw) in &emails {
-        let headers = headers_raw.as_deref().unwrap_or("");
-        let from_domain = from_addr.split('@').nth(1).unwrap_or("");
-        
-        // Run analyses
+    let mut findings_to_insert: Vec<NewFinding> = Vec::new();
+    let mut email_risk_updates: Vec<(u8, String)> = Vec::new();
+
+    for email in &emails {
+        let headers = email.headers_raw.as_deref().unwrap_or("");
+        let from_domain = email.from_addr.split('@').nth(1).unwrap_or("");
+
+        // Run forensic engines
         let header_analysis = analyze_headers(headers);
         let source_ip = header_analysis.originating_ip.as_deref();
         let auth_results = analyze_authentication(headers, from_domain, source_ip);
-        let spoof_findings = detect_spoofing(from_addr, from_display.as_deref(), headers, &auth_results);
-        let risk_score = calculate_risk_score(&header_analysis, &auth_results, &spoof_findings, &[]);
         
-        // Generate findings
+        let mut spoof_findings = detect_spoofing(&email.from_addr, email.from_display.as_deref(), headers, &auth_results);
+
+        // Run deep content threat detection (BEC wire fraud, lures, credential exfiltration)
+        let content_threats = detect_content_threats(
+            &email.from_addr,
+            email.from_display.as_deref(),
+            email.subject.as_deref(),
+            email.body_text.as_deref(),
+        );
+        spoof_findings.extend(content_threats);
+
+        // Run attachment forensic inspections
+        let mut attachment_analyses = Vec::new();
+        if let Some(att_list) = attachments_by_email.get(&email.id) {
+            for (fname, fmime, fsize, fent, fflags) in att_list {
+                let att_analysis = analyze_attachment_metadata(
+                    fname.as_deref(),
+                    fmime.as_deref(),
+                    *fsize,
+                    *fent,
+                    fflags.as_deref(),
+                );
+                attachment_analyses.push(att_analysis);
+            }
+        }
+
+        // Anti-forensics / Recovered deletion check
+        if email.deleted_recovered || email.folder_category == "soft_deleted" {
+            let has_threat = !spoof_findings.is_empty() || !attachment_analyses.iter().all(|a| a.risk_flags.is_empty());
+            if has_threat {
+                spoof_findings.push(crate::analysis::SpoofingFinding {
+                    finding_type: "recovered_deleted_threat".to_string(),
+                    severity: "high".to_string(),
+                    confidence: "high".to_string(),
+                    title: "Evidentiary Purge: High-Threat Email Recovered From Dumpster".to_string(),
+                    description: format!(
+                        "Subject '{}' was intentionally deleted/purged from active mailbox and recovered during forensic extraction.",
+                        email.subject.as_deref().unwrap_or("[No Subject]")
+                    ),
+                    indicator: "anti_forensics_purged_message".to_string(),
+                });
+            }
+        }
+
+        let risk_score = calculate_risk_score(&header_analysis, &auth_results, &spoof_findings, &attachment_analyses);
+
         let new_findings = generate_findings(
-            email_id,
+            &email.id,
             &header_analysis,
             &auth_results,
             &spoof_findings,
-            &[], // No attachment data in memory
+            &attachment_analyses,
         );
-        
-        // Store findings in database
-        {
-            let db = state.db.lock().await;
-            for finding in &new_findings {
-                let id = generate_id();
-                let email_ids_json = serde_json::to_string(&finding.email_ids).unwrap_or_default();
-                let evidence_refs = "[]".to_string();
-                
-                db.conn.execute(
-                    "INSERT INTO findings (id, case_id, type, severity, confidence, title, description, evidence_refs, email_ids, status, created_at)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'open',?10)",
-                    rusqlite::params![
-                        &id, &case_id, &finding.type_, &finding.severity, &finding.confidence,
-                        &finding.title, &finding.description, &evidence_refs, &email_ids_json, &Utc::now().to_rfc3339()
-                    ],
-                ).map_err(|e| format!("Insert finding: {}", e))?;
-            }
-            
-            // Update risk score on email
-            db.conn.execute(
-                "UPDATE emails SET risk_score = ?1 WHERE id = ?2",
-                rusqlite::params![risk_score as i64, email_id],
-            ).ok();
-        }
-        
+
         total_findings += new_findings.len() as u32;
+        findings_to_insert.extend(new_findings);
+        email_risk_updates.push((risk_score, email.id.clone()));
     }
-    
+
+    // 4. Batch insert findings into database
+    {
+        let mut insert_finding = tx.prepare_cached(
+            "INSERT INTO findings (id, case_id, type, severity, confidence, title, description, evidence_refs, email_ids, status, created_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'open',?10)"
+        ).map_err(|e| e.to_string())?;
+
+        let now_str = Utc::now().to_rfc3339();
+        for finding in &findings_to_insert {
+            let id = generate_id();
+            let email_ids_json = serde_json::to_string(&finding.email_ids).unwrap_or_default();
+            let evidence_refs = "[]".to_string();
+
+            insert_finding.execute(rusqlite::params![
+                &id, &case_id, &finding.type_, &finding.severity, &finding.confidence,
+                &finding.title, &finding.description, &evidence_refs, &email_ids_json, &now_str
+            ]).map_err(|e| format!("Insert finding: {}", e))?;
+        }
+    }
+
+    // 5. Batch update email risk scores
+    {
+        let mut update_email = tx.prepare_cached(
+            "UPDATE emails SET risk_score = ?1 WHERE id = ?2"
+        ).map_err(|e| e.to_string())?;
+
+        for (score, eid) in email_risk_updates {
+            update_email.execute(rusqlite::params![score as i64, &eid]).ok();
+        }
+    }
+
+    tx.commit().map_err(|e| format!("Commit findings: {}", e))?;
+
     Ok(total_findings)
 }
 
@@ -1567,10 +1689,22 @@ pub async fn entity_emails(state: State<'_, AppState>, input: serde_json::Value)
 #[tauri::command]
 pub async fn update_finding_status(
     state: State<'_, AppState>,
-    finding_id: String,
-    new_status: String,
-    reviewed_by: String,
+    input: serde_json::Value,
 ) -> Result<(), String> {
+    let finding_id = input["finding_id"].as_str()
+        .or_else(|| input["findingId"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let new_status = input["new_status"].as_str()
+        .or_else(|| input["newStatus"].as_str())
+        .or_else(|| input["status"].as_str())
+        .unwrap_or("open")
+        .to_string();
+    let reviewed_by = input["reviewed_by"].as_str()
+        .or_else(|| input["reviewedBy"].as_str())
+        .unwrap_or("Investigator")
+        .to_string();
+
     let db = state.db.lock().await;
     db.conn.execute(
         "UPDATE findings SET status = ?1, reviewed_by = ?2, reviewed_at = ?3 WHERE id = ?4",
@@ -1591,10 +1725,21 @@ pub async fn update_finding_status(
 #[tauri::command]
 pub async fn add_finding_note(
     state: State<'_, AppState>,
-    finding_id: String,
-    note: String,
-    author: String,
+    input: serde_json::Value,
 ) -> Result<(), String> {
+    let finding_id = input["finding_id"].as_str()
+        .or_else(|| input["findingId"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let note = input["note"].as_str()
+        .or_else(|| input["text"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let author = input["author"].as_str()
+        .or_else(|| input["author_name"].as_str())
+        .unwrap_or("Investigator")
+        .to_string();
+
     let db = state.db.lock().await;
     
     // Get existing notes and append
@@ -1628,7 +1773,13 @@ pub async fn add_finding_note(
 
 /// Retrieve full emails attached to a specific finding
 #[tauri::command]
-pub async fn finding_emails(state: State<'_, AppState>, finding_id: String) -> Result<Vec<EmailMessage>, String> {
+pub async fn finding_emails(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<EmailMessage>, String> {
+    let finding_id = input["finding_id"].as_str()
+        .or_else(|| input["findingId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let db = state.db.lock().await;
     let email_ids_str: String = db.conn.query_row(
         "SELECT email_ids FROM findings WHERE id = ?1",

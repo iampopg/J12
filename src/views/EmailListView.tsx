@@ -1448,7 +1448,7 @@ function EmailAttachments({ emailId }: { emailId: string }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    invoke<any[]>("email_attachments", { emailId })
+    invoke<any[]>("email_attachments", { input: { email_id: emailId } })
       .then((data) => setAttachments(data))
       .catch(() => setAttachments([]))
       .finally(() => setLoading(false));
