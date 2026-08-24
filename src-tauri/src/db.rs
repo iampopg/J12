@@ -313,7 +313,14 @@ impl Database {
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_case_id ON evidence_items(case_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_case_notes_case_id ON case_notes(case_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_email_tags_case_id ON email_tags(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_email_tags_email_id ON email_tags(email_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_email_notes_case_id ON email_notes(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_email_notes_email_id ON email_notes(email_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attachments_email_id ON attachments(email_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attachments_sha256 ON attachments(sha256)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_chain_of_custody_case ON chain_of_custody(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_chain_of_custody_evidence ON chain_of_custody(evidence_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_case_id ON communication_edges(case_id)", []).ok();
         
         // Migration: update existing emails with folder_category from headers_raw X-Folder
         self.migrate_folder_categories();
