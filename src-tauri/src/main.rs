@@ -8,6 +8,7 @@ mod commands;
 mod parser;
 mod pst;
 mod analysis;
+mod imap_acquisition;
 
 use db::Database;
 use models::*;
@@ -80,6 +81,12 @@ fn main() {
             commands::verify_evidence_hashes,
             commands::export_audit_log,
             commands::check_custody_chain,
+            commands::imap_list_mailboxes,
+            commands::imap_fetch_emails,
+            commands::case_attachments_list,
+            commands::export_attachment,
+            commands::case_artifacts_summary,
+            commands::case_artifacts_list,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

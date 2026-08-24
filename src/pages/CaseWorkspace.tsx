@@ -9,13 +9,15 @@ import { TimelineView } from "../views/TimelineView";
 import { GraphView } from "../views/GraphView";
 import { NotesView } from "../views/NotesView";
 import { ReportView } from "../views/ReportView";
+import { ArtifactsView } from "../views/ArtifactsView";
+import { AttachmentsView } from "../views/AttachmentsView";
 import { J12Logo } from "../components/J12Logo";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
 interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
 
-type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity";
+type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity" | "artifacts" | "attachments";
 type FolderFilter = "all" | "inbox" | "sent" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other";
 
 function cleanDisplayName(name: string | null): string {
@@ -300,6 +302,12 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
                 <button className={`sb-item ${view === "entities" ? "active" : ""}`} onClick={() => hasDone && setView("entities")} style={{ opacity: hasDone ? 1 : 0.4 }}>
                   <span className="sb-icon">◉</span> Entities
                 </button>
+                <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")}>
+                  <span className="sb-icon">🧩</span> Artifacts Hub
+                </button>
+                <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")}>
+                  <span className="sb-icon">📎</span> Attachments
+                </button>
                 <button className={`sb-item ${view === "findings" ? "active" : ""}`} onClick={() => setView("findings")}>
                   <span className="sb-icon">⚠</span> Findings
                   {dashboard && dashboard.finding_count > 0 && <span className="sb-count">{dashboard.finding_count}</span>}
@@ -385,6 +393,8 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
            {view === "timeline" && <TimelineView caseId={caseId} />}
            {view === "graph" && <GraphView caseId={caseId} />}
            {view === "findings" && <FindingsView caseId={caseId} onGoToEvidence={() => setView("evidence")} />}
+           {view === "artifacts" && <ArtifactsView caseId={caseId} onSelectEmail={() => { setView("emails"); }} />}
+           {view === "attachments" && <AttachmentsView caseId={caseId} onSelectEmail={() => { setView("emails"); }} />}
            {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
             {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
             {view === "notes" && <NotesView caseId={caseId} onNotesCountChange={setNotesCount} />}
@@ -1016,34 +1026,9 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
         )}
 
         {/* 2. Direct Mail Server / Cloud (Coming Soon) */}
+        {/* 2. Mail Server Acquisition (IMAP) */}
         {acqMethod === "server" && (
-          <div style={{ textAlign: "center", padding: "40px 20px" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>☁️</div>
-            <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Direct Mail Server Acquisition</h4>
-            <p className="muted mb-4" style={{ fontSize: 12 }}>
-              Connect directly to email accounts to download mailboxes with full headers preserved
-            </p>
-            <div className="row gap-2" style={{ justifyContent: "center", flexWrap: "wrap" }}>
-              <div className="card" style={{ padding: 16, minWidth: 180 }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>📧</div>
-                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>IMAP / POP3</h5>
-                <p className="muted" style={{ fontSize: 11 }}>Gmail, Yahoo, self-hosted</p>
-                <span className="badge badge-gray mt-2">Coming Soon</span>
-              </div>
-              <div className="card" style={{ padding: 16, minWidth: 180 }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>🔷</div>
-                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Microsoft 365</h5>
-                <p className="muted" style={{ fontSize: 11 }}>Graph API, Exchange EWS</p>
-                <span className="badge badge-gray mt-2">Coming Soon</span>
-              </div>
-              <div className="card" style={{ padding: 16, minWidth: 180 }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>🔴</div>
-                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Google Workspace</h5>
-                <p className="muted" style={{ fontSize: 11 }}>Gmail API, OAuth 2.0</p>
-                <span className="badge badge-gray mt-2">Coming Soon</span>
-              </div>
-            </div>
-          </div>
+          <ImapAcquisition caseId={caseId} onComplete={onRefresh} />
         )}
 
         {/* 3. Local Mail Client Extraction (Coming Soon) */}
@@ -1450,12 +1435,146 @@ function IntegrityView({ caseId }: { caseId: string }) {
             <div style={{ marginTop: 12 }}>
               <strong>Gaps Found:</strong>
               <ul style={{ paddingLeft: 20, marginTop: 8 }}>
-                {chainCheck.gaps.map((g: any, i: number) => (
+                 {chainCheck.gaps.map((g: any, i: number) => (
                   <li key={i}>{g.evidence}: {g.issue}</li>
                 ))}
               </ul>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: () => void }) {
+  const [server, setServer] = useState("imap.gmail.com");
+  const [port, setPort] = useState("993");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [useSsl, setUseSsl] = useState(true);
+  const [mailbox, setMailbox] = useState("INBOX");
+  const [maxMessages, setMaxMessages] = useState("100");
+  const [mailboxes, setMailboxes] = useState<string[]>([]);
+  const [connecting, setConnecting] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+
+  const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+
+  const connect = async () => {
+    setConnecting(true);
+    setLogs([]);
+    addLog(`Connecting to ${server}:${port}...`);
+    try {
+      const boxes = await invoke<string[]>("imap_list_mailboxes", {
+        server, port: parseInt(port), username, password, useSsl
+      });
+      setMailboxes(boxes);
+      addLog(`Connected! Found ${boxes.length} mailboxes`);
+    } catch (e: any) {
+      addLog(`Connection failed: ${e}`);
+    }
+    setConnecting(false);
+  };
+
+  const fetch = async () => {
+    setFetching(true);
+    setLogs([]);
+    addLog(`Fetching from ${mailbox} (max ${maxMessages})...`);
+    try {
+      const res = await invoke<any>("imap_fetch_emails", {
+        caseId,
+        evidence_id: `imap_${Date.now()}`,
+        server, port: parseInt(port), username, password, useSsl,
+        mailbox, maxMessages: parseInt(maxMessages)
+      });
+      setResult(res);
+      addLog(`Done! Downloaded ${res.downloaded}/${res.total_found} emails`);
+      if (res.errors > 0) addLog(`${res.errors} errors`);
+      onComplete();
+    } catch (e: any) {
+      addLog(`Fetch failed: ${e}`);
+    }
+    setFetching(false);
+  };
+
+  return (
+    <div>
+      <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>IMAP Mail Server Acquisition</h3>
+      
+      <div className="card mb-4">
+        <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Server Settings</h4>
+        <div className="grid-2">
+          <div className="field">
+            <label className="label">IMAP Server</label>
+            <input className="input" value={server} onChange={e => setServer(e.target.value)} placeholder="imap.gmail.com" />
+          </div>
+          <div className="field">
+            <label className="label">Port</label>
+            <input className="input" value={port} onChange={e => setPort(e.target.value)} placeholder="993" />
+          </div>
+          <div className="field">
+            <label className="label">Username / Email</label>
+            <input className="input" value={username} onChange={e => setUsername(e.target.value)} placeholder="user@gmail.com" />
+          </div>
+          <div className="field">
+            <label className="label">Password / App Password</label>
+            <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="App Password" />
+          </div>
+          <div className="field">
+            <label className="label">Mailbox</label>
+            <select className="input" value={mailbox} onChange={e => setMailbox(e.target.value)}>
+              <option value="INBOX">INBOX</option>
+              {mailboxes.map(b => <option key={b} value={b}>{b}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label className="label">Max Messages</label>
+            <input className="input" value={maxMessages} onChange={e => setMaxMessages(e.target.value)} placeholder="100" />
+          </div>
+        </div>
+        <label className="row gap-2 mb-4">
+          <input type="checkbox" checked={useSsl} onChange={e => setUseSsl(e.target.checked)} />
+          <span style={{ fontSize: 13 }}>Use SSL/TLS</span>
+        </label>
+        <div className="row gap-2">
+          <button className="btn btn-ghost" onClick={connect} disabled={connecting || !username || !password}>
+            {connecting ? "Connecting..." : "🔗 Test Connection"}
+          </button>
+          <button className="btn btn-primary" onClick={fetch} disabled={fetching || !username || !password}>
+            {fetching ? "Fetching..." : "📥 Fetch Emails"}
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <div className="card mb-4">
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Results</h4>
+          <div className="grid-3">
+            <div className="card" style={{ textAlign: "center", padding: 12 }}>
+              <div style={{ fontSize: 20, fontWeight: 700 }}>{result.total_found}</div>
+              <div className="muted text-sm">Total Found</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: 12 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--success)" }}>{result.downloaded}</div>
+              <div className="muted text-sm">Downloaded</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: 12 }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--red)" }}>{result.errors}</div>
+              <div className="muted text-sm">Errors</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {logs.length > 0 && (
+        <div className="card" style={{ maxHeight: 200, overflowY: "auto", background: "var(--bg-0)" }}>
+          <h4 style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Activity Log</h4>
+          {logs.map((log, i) => (
+            <div key={i} style={{ fontSize: 11, fontFamily: "var(--mono)", marginBottom: 2 }}>{log}</div>
+          ))}
         </div>
       )}
     </div>
