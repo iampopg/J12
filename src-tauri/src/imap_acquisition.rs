@@ -296,6 +296,11 @@ pub fn fetch_emails(
                                 errors += 1;
                             }
                         }
+                        
+                        // Rate limiting: be nice to IMAP server (Gmail allows ~250 commands/min)
+                        if seq % 25 == 0 {
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
                     }
                 }
             }

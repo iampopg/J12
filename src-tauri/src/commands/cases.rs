@@ -162,33 +162,94 @@ pub async fn auto_detect_targets(state: State<'_, AppState>, input: Value) -> Re
 
     let db = state.db.lock().await;
 
+    // Check configured target from cases table
+    let case_target: Option<(Option<String>, Option<String>, Option<String>)> = db.conn.query_row(
+        "SELECT target_email, target_name, target_organization FROM cases WHERE id = ?1",
+        [&case_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    ).ok();
+
     let mut stmt = db.conn.prepare(
         "SELECT from_addr, from_display, COUNT(*) as sent_count 
          FROM emails 
          WHERE case_id = ?1 AND from_addr != ''
          GROUP BY from_addr 
          ORDER BY sent_count DESC 
-         LIMIT 10"
+         LIMIT 20"
     ).map_err(|e| e.to_string())?;
 
-    let candidates = stmt.query_map([&case_id], |row| {
+    let mut targets = Vec::new();
+    let mut seen_emails = std::collections::HashSet::new();
+
+    // If case has target_email, put it first
+    if let Some((Some(t_email), t_name, t_org)) = case_target {
+        if !t_email.trim().is_empty() {
+            let sent: i64 = db.conn.query_row(
+                "SELECT COUNT(*) FROM emails WHERE case_id = ?1 AND from_addr LIKE ?2",
+                rusqlite::params![&case_id, format!("%{}%", t_email)],
+                |r| r.get(0)
+            ).unwrap_or(0);
+
+            let recvd: i64 = db.conn.query_row(
+                "SELECT COUNT(*) FROM emails WHERE case_id = ?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
+                rusqlite::params![&case_id, format!("%{}%", t_email)],
+                |r| r.get(0)
+            ).unwrap_or(0);
+
+            seen_emails.insert(t_email.to_lowercase());
+            targets.push(serde_json::json!({
+                "email": t_email.clone(),
+                "display_name": t_name.unwrap_or_else(|| t_email.split('@').next().unwrap_or("").to_string()),
+                "organization": t_org.unwrap_or_default(),
+                "total_emails": sent + recvd,
+                "sent": sent,
+                "received": recvd,
+                "confidence": "high",
+                "is_primary_target": true
+            }));
+        }
+    }
+
+    let candidate_rows = stmt.query_map([&case_id], |row| {
         let email: String = row.get(0)?;
         let name: Option<String> = row.get(1)?;
         let count: i64 = row.get(2)?;
-        
-        let org = email.split('@').nth(1).unwrap_or("").to_string();
-        
-        Ok(serde_json::json!({
-            "email": email,
-            "name": name.unwrap_or_else(|| email.split('@').next().unwrap_or("").to_string()),
-            "organization": org,
-            "sent_count": count,
-            "confidence": if count > 20 { "high" } else if count > 5 { "medium" } else { "low" }
-        }))
+        Ok((email, name, count))
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
+    for (email, name, sent_count) in candidate_rows {
+        if !seen_emails.contains(&email.to_lowercase()) {
+            seen_emails.insert(email.to_lowercase());
+            let org = email.split('@').nth(1).unwrap_or("").to_string();
+            let recvd: i64 = db.conn.query_row(
+                "SELECT COUNT(*) FROM emails WHERE case_id = ?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
+                rusqlite::params![&case_id, format!("%{}%", email)],
+                |r| r.get(0)
+            ).unwrap_or(0);
+
+            targets.push(serde_json::json!({
+                "email": email.clone(),
+                "display_name": name.unwrap_or_else(|| email.split('@').next().unwrap_or("").to_string()),
+                "organization": org,
+                "total_emails": sent_count + recvd,
+                "sent": sent_count,
+                "received": recvd,
+                "confidence": if sent_count > 20 { "high" } else if sent_count > 5 { "medium" } else { "low" },
+                "is_primary_target": false
+            }));
+        }
+    }
+
+    let total_entities: i64 = db.conn.query_row(
+        "SELECT COUNT(DISTINCT from_addr) FROM emails WHERE case_id = ?1",
+        [&case_id],
+        |r| r.get(0)
+    ).unwrap_or(0);
+
     Ok(serde_json::json!({
-        "candidates": candidates
+        "targets": targets.clone(),
+        "candidates": targets,
+        "total_case_entities": total_entities
     }))
 }
 
@@ -200,22 +261,36 @@ pub async fn target_profile(state: State<'_, AppState>, input: Value) -> Result<
         .unwrap_or("")
         .to_string();
 
+    let specified_email = input["target_email"].as_str()
+        .or_else(|| input["targetEmail"].as_str())
+        .map(|s| s.trim().to_string());
+
     let db = state.db.lock().await;
 
     let case_row = db.conn.query_row(
-        "SELECT target_email, target_name, target_organization FROM cases WHERE id = ?1",
+        "SELECT title, case_number, target_email, target_name, target_organization FROM cases WHERE id = ?1",
         [&case_id],
-        |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?))
+        |row| Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            row.get::<_, Option<String>>(4)?.unwrap_or_default()
+        ))
     );
 
-    let (mut target_email, mut target_name, mut target_org) = match case_row {
-        Ok((e, n, o)) => (e.unwrap_or_default(), n.unwrap_or_default(), o.unwrap_or_default()),
-        Err(_) => (String::new(), String::new(), String::new()),
+    let (case_title, case_number, case_target_email, case_target_name, case_target_org) = match case_row {
+        Ok((t, num, e, n, o)) => (t, num, e, n, o),
+        Err(_) => ("Investigation".to_string(), "J12-001".to_string(), String::new(), String::new(), String::new()),
     };
+
+    let mut target_email = specified_email.unwrap_or(case_target_email);
+    let mut target_name = case_target_name;
+    let mut target_org = case_target_org;
 
     if target_email.is_empty() {
         let top_sender: Result<(String, Option<String>), _> = db.conn.query_row(
-            "SELECT from_addr, from_display FROM emails WHERE case_id = ?1 GROUP BY from_addr ORDER BY COUNT(*) DESC LIMIT 1",
+            "SELECT from_addr, from_display FROM emails WHERE case_id = ?1 AND from_addr != '' GROUP BY from_addr ORDER BY COUNT(*) DESC LIMIT 1",
             [&case_id],
             |row| Ok((row.get(0)?, row.get(1)?))
         );
@@ -224,24 +299,37 @@ pub async fn target_profile(state: State<'_, AppState>, input: Value) -> Result<
             target_email = email.clone();
             target_name = name.unwrap_or_else(|| email.split('@').next().unwrap_or("").to_string());
             target_org = email.split('@').nth(1).unwrap_or("").to_string();
-
-            let _ = db.conn.execute(
-                "UPDATE cases SET target_email = ?1, target_name = ?2, target_organization = ?3 WHERE id = ?4",
-                rusqlite::params![&target_email, &target_name, &target_org, &case_id]
-            );
         }
     }
 
     if target_email.is_empty() {
         return Ok(serde_json::json!({
-            "target": null,
-            "stats": {},
-            "top_contacts": [],
-            "threat_breakdown": {}
+            "case_id": case_id,
+            "case_title": case_title,
+            "case_number": case_number,
+            "target_email": null,
+            "target_name": null,
+            "target_organization": null,
+            "sent_count": 0,
+            "received_count": 0,
+            "total_emails": 0,
+            "first_seen": null,
+            "last_seen": null,
+            "top_correspondents": [],
+            "top_subjects": [],
+            "display_names": [],
+            "x_mailers": [],
+            "originating_ips": [],
+            "risk_score": 0,
+            "flagged_count": 0,
+            "attachment_count": 0,
+            "recent_communications": []
         }));
     }
 
     let target_like = format!("%{}%", target_email);
+
+    // 1. Sent & Received Counts
     let sent_count: i64 = db.conn.query_row(
         "SELECT COUNT(*) FROM emails WHERE case_id = ?1 AND from_addr LIKE ?2",
         rusqlite::params![&case_id, &target_like],
@@ -254,67 +342,130 @@ pub async fn target_profile(state: State<'_, AppState>, input: Value) -> Result<
         |r| r.get(0)
     ).unwrap_or(0);
 
-    let flagged_count: i64 = db.conn.query_row(
-        "SELECT COUNT(*) FROM emails WHERE case_id = ?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2) AND risk_score > 30",
-        rusqlite::params![&case_id, &target_like],
-        |r| r.get(0)
-    ).unwrap_or(0);
+    let total_emails = sent_count + received_count;
 
+    // 2. First and Last Seen Timestamps
+    let (first_seen, last_seen): (Option<String>, Option<String>) = db.conn.query_row(
+        "SELECT MIN(date_sent_utc), MAX(date_sent_utc) FROM emails WHERE case_id = ?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2)",
+        rusqlite::params![&case_id, &target_like],
+        |r| Ok((r.get(0)?, r.get(1)?))
+    ).unwrap_or((None, None));
+
+    // 3. Max Risk Score & Flagged Count
+    let (risk_score, flagged_count): (i64, i64) = db.conn.query_row(
+        "SELECT COALESCE(MAX(risk_score), 0), COUNT(CASE WHEN risk_score > 25 THEN 1 END) 
+         FROM emails WHERE case_id = ?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2)",
+        rusqlite::params![&case_id, &target_like],
+        |r| Ok((r.get(0)?, r.get(1)?))
+    ).unwrap_or((0, 0));
+
+    // 4. Attachments Count
     let attachment_count: i64 = db.conn.query_row(
-        "SELECT COUNT(*) FROM attachments a JOIN emails e ON a.email_id = e.id WHERE e.case_id = ?1 AND e.from_addr LIKE ?2",
+        "SELECT COUNT(*) FROM attachments a JOIN emails e ON a.email_id = e.id 
+         WHERE e.case_id = ?1 AND (e.from_addr LIKE ?2 OR e.to_addrs LIKE ?2)",
         rusqlite::params![&case_id, &target_like],
         |r| r.get(0)
     ).unwrap_or(0);
 
-    let mut stmt = db.conn.prepare(
-        "SELECT to_addrs, COUNT(*) as contact_count 
-         FROM emails 
-         WHERE case_id = ?1 AND from_addr LIKE ?2 AND to_addrs != '' 
-         GROUP BY to_addrs 
-         ORDER BY contact_count DESC 
+    // 5. Display Names / Aliases
+    let mut name_stmt = db.conn.prepare(
+        "SELECT DISTINCT from_display FROM emails 
+         WHERE case_id = ?1 AND from_addr LIKE ?2 AND from_display IS NOT NULL AND from_display != '' 
+         LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+    let display_names: Vec<String> = name_stmt.query_map(rusqlite::params![&case_id, &target_like], |r| r.get(0))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    // 6. X-Mailers (Client Software Used)
+    let mut mailer_stmt = db.conn.prepare(
+        "SELECT DISTINCT x_mailer FROM emails 
+         WHERE case_id = ?1 AND from_addr LIKE ?2 AND x_mailer IS NOT NULL AND x_mailer != '' 
          LIMIT 6"
     ).map_err(|e| e.to_string())?;
+    let x_mailers: Vec<String> = mailer_stmt.query_map(rusqlite::params![&case_id, &target_like], |r| r.get(0))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
 
-    let top_contacts = stmt.query_map(rusqlite::params![&case_id, &target_like], |row| {
-        let addr: String = row.get(0)?;
-        let count: i64 = row.get(1)?;
-        Ok(serde_json::json!({
-            "email": addr,
-            "message_count": count
-        }))
-    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+    // 7. Originating IPs
+    let mut ip_stmt = db.conn.prepare(
+        "SELECT DISTINCT x_originating_ip FROM emails 
+         WHERE case_id = ?1 AND from_addr LIKE ?2 AND x_originating_ip IS NOT NULL AND x_originating_ip != '' 
+         LIMIT 6"
+    ).map_err(|e| e.to_string())?;
+    let originating_ips: Vec<String> = ip_stmt.query_map(rusqlite::params![&case_id, &target_like], |r| r.get(0))
+        .map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
 
-    let mut threat_stmt = db.conn.prepare(
-        "SELECT type, severity, COUNT(*) as count 
-         FROM findings 
-         WHERE case_id = ?1 
-         GROUP BY type, severity 
-         ORDER BY count DESC"
+    // 8. Top Direct Correspondents (Tuples [email, count])
+    let mut corr_stmt = db.conn.prepare(
+        "SELECT from_addr as peer_email, COUNT(*) as cnt FROM emails WHERE case_id = ?1 AND to_addrs LIKE ?2 AND from_addr NOT LIKE ?2 AND from_addr != '' GROUP BY from_addr
+         UNION ALL
+         SELECT to_addrs as peer_email, COUNT(*) as cnt FROM emails WHERE case_id = ?1 AND from_addr LIKE ?2 AND to_addrs NOT LIKE ?2 AND to_addrs != '' GROUP BY to_addrs
+         ORDER BY cnt DESC LIMIT 10"
     ).map_err(|e| e.to_string())?;
 
-    let threat_summary = threat_stmt.query_map([&case_id], |row| {
+    let mut corr_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    let rows = corr_stmt.query_map(rusqlite::params![&case_id, &target_like], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok());
+
+    for (peer, cnt) in rows {
+        let clean = peer.trim_matches(|c| c == '[' || c == ']' || c == '"' || c == '\'').trim().to_string();
+        if !clean.is_empty() && !clean.contains(&target_email) {
+            *corr_map.entry(clean).or_insert(0) += cnt;
+        }
+    }
+    let mut top_correspondents: Vec<(String, i64)> = corr_map.into_iter().collect();
+    top_correspondents.sort_by(|a, b| b.1.cmp(&a.1));
+    top_correspondents.truncate(8);
+
+    // 9. Top Subject Topics
+    let mut subj_stmt = db.conn.prepare(
+        "SELECT subject, COUNT(*) as cnt FROM emails 
+         WHERE case_id = ?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2) AND subject IS NOT NULL AND subject != ''
+         GROUP BY subject ORDER BY cnt DESC LIMIT 8"
+    ).map_err(|e| e.to_string())?;
+    let top_subjects: Vec<(String, i64)> = subj_stmt.query_map(rusqlite::params![&case_id, &target_like], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    // 10. Recent Communications Preview
+    let mut comm_stmt = db.conn.prepare(
+        "SELECT id, subject, date_sent_utc, from_addr, to_addrs, risk_score 
+         FROM emails 
+         WHERE case_id = ?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2) 
+         ORDER BY date_sent_utc DESC LIMIT 8"
+    ).map_err(|e| e.to_string())?;
+    let recent_communications = comm_stmt.query_map(rusqlite::params![&case_id, &target_like], |row| {
         Ok(serde_json::json!({
-            "type": row.get::<_, String>(0)?,
-            "severity": row.get::<_, String>(1)?,
-            "count": row.get::<_, i64>(2)?
+            "id": row.get::<_, String>(0)?,
+            "subject": row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "(No Subject)".to_string()),
+            "date": row.get::<_, Option<String>>(2)?,
+            "from": row.get::<_, String>(3)?,
+            "to": row.get::<_, String>(4)?,
+            "risk_score": row.get::<_, i64>(5)?
         }))
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
     Ok(serde_json::json!({
-        "target": {
-            "email": target_email,
-            "name": target_name,
-            "organization": target_org
-        },
-        "stats": {
-            "sent_count": sent_count,
-            "received_count": received_count,
-            "flagged_count": flagged_count,
-            "attachment_count": attachment_count,
-            "total_interactions": sent_count + received_count
-        },
-        "top_contacts": top_contacts,
-        "threat_summary": threat_summary
+        "case_id": case_id,
+        "case_title": case_title,
+        "case_number": case_number,
+        "target_email": target_email,
+        "target_name": if target_name.is_empty() { target_email.split('@').next().unwrap_or("").to_string() } else { target_name },
+        "target_organization": if target_org.is_empty() { target_email.split('@').nth(1).unwrap_or("").to_string() } else { target_org },
+        "sent_count": sent_count,
+        "received_count": received_count,
+        "total_emails": total_emails,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "top_correspondents": top_correspondents,
+        "top_subjects": top_subjects,
+        "display_names": display_names,
+        "x_mailers": x_mailers,
+        "originating_ips": originating_ips,
+        "risk_score": risk_score,
+        "flagged_count": flagged_count,
+        "attachment_count": attachment_count,
+        "recent_communications": recent_communications
     }))
 }
 
