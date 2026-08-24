@@ -3169,51 +3169,55 @@ pub async fn case_attachments_list(
     let category_filter = input["category"].as_str().unwrap_or("all").to_lowercase();
     let search_filter = input["search"].as_str().unwrap_or("").to_lowercase();
 
-    let db = state.db.lock().await;
+    let rows = {
+        let db = state.db.lock().await;
 
-    let mut stmt = db.conn.prepare("
-        SELECT a.id, a.email_id, a.filename, a.sha256, a.mime_type, a.size_bytes, a.stored_path, a.entropy, a.risk_flags,
-               e.subject, e.from_addr, e.date_sent_utc, e.risk_score
-        FROM attachments a
-        JOIN emails e ON a.email_id = e.id
-        WHERE e.case_id = ?1
-        ORDER BY a.size_bytes DESC
-    ").map_err(|e| e.to_string())?;
+        let mut stmt = db.conn.prepare("
+            SELECT a.id, a.email_id, a.filename, a.sha256, a.mime_type, a.size_bytes, a.stored_path, a.entropy, a.risk_flags,
+                   e.subject, e.from_addr, e.date_sent_utc, e.risk_score
+            FROM attachments a
+            JOIN emails e ON a.email_id = e.id
+            WHERE e.case_id = ?1
+            ORDER BY a.size_bytes DESC
+        ").map_err(|e| e.to_string())?;
 
-    let rows = stmt.query_map([&case_id], |row| {
-        let id: String = row.get(0)?;
-        let email_id: String = row.get(1)?;
-        let filename: String = row.get(2)?;
-        let sha256: String = row.get(3)?;
-        let mime_type: String = row.get(4)?;
-        let size_bytes: i64 = row.get(5)?;
-        let stored_path: Option<String> = row.get(6)?;
-        let entropy: Option<f64> = row.get(7)?;
-        let risk_flags: Option<String> = row.get(8)?;
-        let email_subject: Option<String> = row.get(9)?;
-        let email_from: String = row.get(10)?;
-        let email_date: Option<String> = row.get(11)?;
-        let email_risk_score: i64 = row.get(12).unwrap_or(0);
+        let r = stmt.query_map([&case_id], |row| {
+            let id: String = row.get(0)?;
+            let email_id: String = row.get(1)?;
+            let filename: String = row.get(2)?;
+            let sha256: String = row.get(3)?;
+            let mime_type: String = row.get(4)?;
+            let size_bytes: i64 = row.get(5)?;
+            let stored_path: Option<String> = row.get(6)?;
+            let entropy: Option<f64> = row.get(7)?;
+            let risk_flags: Option<String> = row.get(8)?;
+            let email_subject: Option<String> = row.get(9)?;
+            let email_from: String = row.get(10)?;
+            let email_date: Option<String> = row.get(11)?;
+            let email_risk_score: i64 = row.get(12).unwrap_or(0);
 
-        let category = classify_attachment_category(&filename, &mime_type, entropy, risk_flags.as_deref());
+            let category = classify_attachment_category(&filename, &mime_type, entropy, risk_flags.as_deref());
 
-        Ok(CaseAttachmentItem {
-            id,
-            email_id,
-            filename,
-            sha256,
-            mime_type,
-            size_bytes: size_bytes as u64,
-            stored_path,
-            entropy,
-            risk_flags,
-            email_subject,
-            email_from,
-            email_date,
-            email_risk_score: email_risk_score as u8,
-            category,
-        })
-    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+            Ok(CaseAttachmentItem {
+                id,
+                email_id,
+                filename,
+                sha256,
+                mime_type,
+                size_bytes: size_bytes as u64,
+                stored_path,
+                entropy,
+                risk_flags,
+                email_subject,
+                email_from,
+                email_date,
+                email_risk_score: email_risk_score as u8,
+                category,
+            })
+        }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+        r
+    };
 
     let filtered = rows.into_iter().filter(|item| {
         if category_filter != "all" && item.category != category_filter {
@@ -3342,12 +3346,23 @@ pub async fn case_artifacts_summary(
 /// Case Artifacts List filtered by domain, subcategory, search, or severity
 #[tauri::command]
 pub async fn case_artifacts_list(
-    _state: State<'_, AppState>,
-    _input: serde_json::Value,
+    state: State<'_, AppState>,
+    input: serde_json::Value,
 ) -> Result<Vec<ForensicTaxonomyArtifact>, String> {
-    // TODO: Fix borrow checker issue with extract_all_taxonomy_artifacts
-    Ok(vec![])
-}
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let domain = input["domain"].as_str()
+        .or_else(|| input["category"].as_str())
+        .unwrap_or("all");
+    let subcategory = input["subcategory"].as_str().unwrap_or("all");
+    let search = input["search"].as_str().unwrap_or("").to_lowercase();
+    let artifact_type = input["artifact_type"].as_str().unwrap_or("all");
+
+    let all_artifacts = extract_all_taxonomy_artifacts(&state, &case_id).await?;
 
     let filtered = all_artifacts.into_iter().filter(|item| {
         if domain != "all" && item.domain_id != domain {
