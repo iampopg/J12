@@ -651,6 +651,8 @@ async fn extract_all_taxonomy_artifacts(
         }
     }
 
+    let mut seen: HashSet<String> = HashSet::new();
+
     for (eid, from_addr, _from_disp, to_addrs, _cc_addrs, _reply_to, subj_opt, body_opt, html_opt, headers_raw_opt, date_opt, _risk, is_del, is_soft_del, folder_opt, msg_id_opt, _in_reply_to_opt, _ref_opt) in emails {
         let from_lower = from_addr.to_lowercase();
         let subj = subj_opt.as_deref().unwrap_or("");
@@ -662,8 +664,6 @@ async fn extract_all_taxonomy_artifacts(
         let folder = folder_opt.as_deref().unwrap_or("inbox");
         let full_text = format!("{} {}", subj, body);
         let full_text_lower = full_text.to_lowercase();
-
-        let mut seen: HashSet<String> = HashSet::new();
 
         // ─────────────────────────────────────────────────────────────────────────
         // 0. APPS, SOCIAL MEDIA, MESSENGERS & CLOUD SERVICES SIGNATURE ENGINE
