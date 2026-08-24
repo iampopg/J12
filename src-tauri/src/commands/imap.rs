@@ -103,23 +103,24 @@ pub async fn imap_fetch_emails(
     };
 
     let now = Utc::now();
+    let now_str = now.to_rfc3339();
     let ev_filename = format!("IMAP Live Acquisition ({})", username);
 
     let mut db = state.db.lock().await;
 
     let _ = db.conn.execute(
-        "INSERT OR IGNORE INTO evidence_items (
+        "INSERT OR REPLACE INTO evidence_items (
             id, case_id, filename, original_path, stored_path, format, sha256,
             size_bytes, source_description, acquired_by, acquired_at, acquisition_method,
-            integrity_level, parse_status, message_count, deleted_recovered
-        ) VALUES (?1, ?2, ?3, ?4, ?4, 'imap', 'in_progress', 0, ?5, 'Examiner', ?6, 'imap_live_acquisition', 'verified', 'ingesting', 0, 0)",
+            integrity_level, parse_status, message_count, deleted_recovered, created_at
+        ) VALUES (?1, ?2, ?3, ?4, ?4, 'imap', 'in_progress', 0, ?5, 'Examiner', ?6, 'imap_live_acquisition', 'verified', 'ingesting', 0, 0, ?6)",
         rusqlite::params![
             evidence_id,
             case_id,
             ev_filename,
             format!("imap://{}:{}@{}", username, port, server),
             format!("Live IMAP acquisition for account {}", username),
-            now.to_rfc3339()
+            now_str
         ],
     );
 
@@ -161,6 +162,7 @@ pub async fn imap_fetch_emails(
                     let ref_str = serde_json::to_string(&parsed.references).unwrap_or_else(|_| "[]".to_string());
                     let date_str = parsed.date_sent.as_ref().map(|d| d.to_rfc3339());
                     let is_del = msg.folder_category == "trash";
+                    let item_now = Utc::now().to_rfc3339();
 
                     // Deduplication check
                     let is_duplicate = if !parsed.message_id.trim().is_empty() {
@@ -190,8 +192,8 @@ pub async fn imap_fetch_emails(
                             id, evidence_id, case_id, message_id, in_reply_to, msg_references,
                             from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, reply_to,
                             subject, date_sent, date_sent_utc, headers_raw, body_text, body_html,
-                            folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
-                        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0,'[]')",
+                            folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags, created_at
+                        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0,'[]',?23)",
                         rusqlite::params![
                             email_id,
                             evidence_id,
@@ -214,6 +216,7 @@ pub async fn imap_fetch_emails(
                             msg.folder_name,
                             msg.folder_category,
                             if is_del { 1 } else { 0 },
+                            item_now,
                         ],
                     );
 
@@ -271,8 +274,8 @@ pub async fn imap_fetch_emails(
                         }
 
                         let _ = db.conn.execute(
-                            "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags)
-                             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                            "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags, created_at)
+                             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
                             rusqlite::params![
                                 att_id,
                                 email_id,
@@ -282,7 +285,8 @@ pub async fn imap_fetch_emails(
                                 att.data.len() as i64,
                                 stored_path,
                                 entropy,
-                                risk_flags_json
+                                risk_flags_json,
+                                item_now
                             ],
                         );
                     }
