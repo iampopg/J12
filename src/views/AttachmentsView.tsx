@@ -28,7 +28,9 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
   const [category, setCategory] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
+  const [viewMode, setViewMode] = useState<"table" | "grid">("table");
   const [selectedAtt, setSelectedAtt] = useState<CaseAttachmentItem | null>(null);
+  const [zoomImage, setZoomImage] = useState<{ src: string; filename: string } | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -106,6 +108,59 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
 
   return (
     <div>
+      {/* Image Zoom Modal */}
+      {zoomImage && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.85)",
+            backdropFilter: "blur(6px)",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 10000,
+            padding: 24,
+          }}
+          onClick={() => setZoomImage(null)}
+        >
+          <div
+            style={{
+              maxWidth: "90vw",
+              maxHeight: "85vh",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              background: "var(--bg-1)",
+              borderRadius: "var(--r-md)",
+              padding: 16,
+              border: "1px solid var(--border)",
+              boxShadow: "0 25px 50px rgba(0,0,0,0.7)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row between" style={{ width: "100%", marginBottom: 12 }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: "var(--text-0)" }}>
+                🖼️ {zoomImage.filename}
+              </span>
+              <button className="btn btn-ghost btn-sm" onClick={() => setZoomImage(null)}>✕ Close</button>
+            </div>
+            <img
+              src={zoomImage.src}
+              alt={zoomImage.filename}
+              style={{
+                maxWidth: "100%",
+                maxHeight: "75vh",
+                objectFit: "contain",
+                borderRadius: 4,
+                border: "1px solid var(--border)",
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toastMessage && (
         <div 
@@ -135,10 +190,26 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
             Evidence Attachments &amp; Payloads Gallery
           </h2>
           <p className="muted" style={{ margin: 0 }}>
-            Forensic catalog of all extracted files, cryptographic hashes, entropy levels, and dangerous executable lures.
+            Forensic catalog of all extracted files, photographic evidence, cryptographic hashes, and dangerous payloads.
           </p>
         </div>
         <div className="row gap-2">
+          <div className="row" style={{ background: "var(--bg-2)", borderRadius: "var(--r-sm)", padding: 2, border: "1px solid var(--border)" }}>
+            <button
+              className={`btn btn-sm ${viewMode === "table" ? "btn-primary" : "btn-ghost"}`}
+              style={{ padding: "4px 10px", fontSize: 12 }}
+              onClick={() => setViewMode("table")}
+            >
+              📄 List
+            </button>
+            <button
+              className={`btn btn-sm ${viewMode === "grid" ? "btn-primary" : "btn-ghost"}`}
+              style={{ padding: "4px 10px", fontSize: 12 }}
+              onClick={() => setViewMode("grid")}
+            >
+              🖼️ Photo &amp; Scan Gallery
+            </button>
+          </div>
           <button className="btn btn-ghost btn-sm" onClick={loadData}>
             ↻ Refresh
           </button>
@@ -161,16 +232,16 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
           🚨 Dangerous / Executables ({counts.dangerous})
         </button>
         <button
+          className={`btn ${category === "images" ? "btn-primary" : "btn-ghost"} btn-sm`}
+          onClick={() => { setCategory("images"); setViewMode("grid"); }}
+        >
+          🖼️ Images &amp; Scans ({counts.images})
+        </button>
+        <button
           className={`btn ${category === "documents" ? "btn-primary" : "btn-ghost"} btn-sm`}
           onClick={() => setCategory("documents")}
         >
           📄 Documents &amp; PDFs ({counts.documents})
-        </button>
-        <button
-          className={`btn ${category === "images" ? "btn-primary" : "btn-ghost"} btn-sm`}
-          onClick={() => setCategory("images")}
-        >
-          🖼️ Images &amp; Scans ({counts.images})
         </button>
         <button
           className={`btn ${category === "archives" ? "btn-primary" : "btn-ghost"} btn-sm`}
@@ -186,6 +257,27 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
         </button>
       </div>
 
+      {/* Loading Progress Bar */}
+      {loading && (
+        <div className="card mb-4" style={{ padding: "14px 18px", background: "var(--bg-2)", border: "1px solid var(--accent)", boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
+          <div className="row between mb-2">
+            <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}>
+              ⚡ Loading and verifying cryptographic attachment signatures...
+            </span>
+          </div>
+          <div style={{ width: "100%", height: 6, background: "var(--bg-0)", borderRadius: 3, overflow: "hidden" }}>
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                background: "linear-gradient(90deg, #3b82f6, #06b6d4, #10b981)",
+                borderRadius: 3,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       {/* Filter & Search Bar */}
       <div className="card mb-4" style={{ padding: "12px 16px" }}>
         <form onSubmit={handleSearchSubmit} className="row between gap-4">
@@ -193,7 +285,7 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
             <input
               className="input"
               style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
-              placeholder="Search by filename, extension (.exe, .pdf, .zip), or SHA-256 hash..."
+              placeholder="Search by filename, extension (.exe, .pdf, .jpg), or SHA-256 hash..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -216,117 +308,177 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
 
       {/* Main Grid: Attachment List & Inspector Drawer */}
       <div style={{ display: "grid", gridTemplateColumns: selectedAtt ? "1fr 380px" : "1fr", gap: 16 }}>
-        {/* Table View */}
-        <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-          {loading ? (
-            <div className="empty" style={{ padding: 32 }}>Loading and verifying attachment signatures...</div>
-          ) : attachments.length === 0 ? (
-            <div className="empty" style={{ padding: 32 }}>
+        
+        {/* Content: Table or Photo Grid */}
+        <div>
+          {attachments.length === 0 && !loading ? (
+            <div className="card empty" style={{ padding: 40 }}>
               No attachments found matching the current filter.
             </div>
-          ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
-              <thead>
-                <tr style={{ background: "var(--bg-1)", borderBottom: "1px solid var(--border)" }}>
-                  <th className="th" style={{ width: 40 }}></th>
-                  <th className="th">Filename &amp; Type</th>
-                  <th className="th">Size</th>
-                  <th className="th">SHA-256 Hash</th>
-                  <th className="th">Entropy &amp; Risk</th>
-                  <th className="th">Source Email</th>
-                  <th className="th" style={{ textAlign: "right" }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {attachments.map((att) => {
-                  const isDangerous = att.category === "dangerous";
-                  const entropyVal = att.entropy || 0;
-                  const isSelected = selectedAtt?.id === att.id;
-
-                  return (
-                    <tr 
-                      key={att.id}
-                      className="tr tr-click"
-                      style={{ 
-                        background: isSelected ? "var(--bg-3)" : isDangerous ? "rgba(239, 68, 68, 0.05)" : undefined,
-                        borderBottom: "1px solid var(--border)"
-                      }}
-                      onClick={() => setSelectedAtt(att)}
+          ) : viewMode === "grid" ? (
+            /* Photo / Scan Thumbnail Gallery Grid */
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16 }}>
+              {attachments.map((att) => (
+                <div
+                  key={att.id}
+                  className="card"
+                  style={{
+                    padding: 12,
+                    display: "flex",
+                    flexDirection: "column",
+                    cursor: "pointer",
+                    border: selectedAtt?.id === att.id ? "2px solid var(--accent)" : "1px solid var(--border)",
+                    background: selectedAtt?.id === att.id ? "var(--bg-3)" : "var(--bg-1)",
+                    transition: "transform 0.15s ease, border-color 0.15s ease",
+                  }}
+                  onClick={() => setSelectedAtt(att)}
+                >
+                  <div style={{ width: "100%", height: 140, marginBottom: 10, position: "relative" }}>
+                    <AttachmentThumbnail 
+                      attachmentId={att.id} 
+                      filename={att.filename} 
+                      category={att.category}
+                      onZoom={(src) => setZoomImage({ src, filename: att.filename })}
+                    />
+                  </div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text-0)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={att.filename}>
+                    {att.filename}
+                  </div>
+                  <div className="row between mt-1" style={{ fontSize: 11, color: "var(--text-3)" }}>
+                    <span>{formatSize(att.size_bytes)}</span>
+                    <span className="badge" style={{ fontSize: 9 }}>{att.category}</span>
+                  </div>
+                  <div className="row gap-1 mt-2" style={{ justifyContent: "flex-end" }}>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ padding: "2px 6px", fontSize: 10 }}
+                      onClick={(e) => { e.stopPropagation(); exportSingleAttachment(att); }}
                     >
-                      <td className="td" style={{ fontSize: 18, textAlign: "center" }}>
-                        {getFileIcon(att.category, att.filename)}
-                      </td>
-                      <td className="td">
-                        <div style={{ fontWeight: 600, color: isDangerous ? "var(--danger)" : "var(--text-0)" }}>
-                          {att.filename}
-                        </div>
-                        <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
-                          {att.mime_type}
-                        </div>
-                      </td>
-                      <td className="td" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
-                        {formatSize(att.size_bytes)}
-                      </td>
-                      <td className="td">
-                        <div 
-                          style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--accent)", cursor: "pointer" }}
-                          onClick={(e) => { e.stopPropagation(); copyToClipboard(att.sha256); }}
-                          title="Click to copy SHA-256 hash"
-                        >
-                          {att.sha256.slice(0, 16)}...
-                        </div>
-                      </td>
-                      <td className="td">
-                        <div className="row gap-2" style={{ alignItems: "center" }}>
-                          {entropyVal > 0 && (
-                            <span 
-                              className="badge" 
-                              style={{ 
-                                background: entropyVal > 7.4 ? "rgba(239,68,68,0.15)" : entropyVal > 6.5 ? "rgba(249,115,22,0.15)" : "rgba(34,197,94,0.15)",
-                                color: entropyVal > 7.4 ? "var(--danger)" : entropyVal > 6.5 ? "var(--warning)" : "var(--success)"
-                              }}
-                            >
-                              H: {entropyVal.toFixed(2)}
-                            </span>
+                      📥 Export
+                    </button>
+                    {onSelectEmail && (
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ padding: "2px 6px", fontSize: 10 }}
+                        onClick={(e) => { e.stopPropagation(); onSelectEmail(att.email_id); }}
+                      >
+                        ✉️ Email
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            /* Table View */
+            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+                <thead>
+                  <tr style={{ background: "var(--bg-1)", borderBottom: "1px solid var(--border)" }}>
+                    <th className="th" style={{ width: 50 }}></th>
+                    <th className="th">Filename &amp; Type</th>
+                    <th className="th">Size</th>
+                    <th className="th">SHA-256 Hash</th>
+                    <th className="th">Entropy &amp; Risk</th>
+                    <th className="th">Source Email</th>
+                    <th className="th" style={{ textAlign: "right" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attachments.map((att) => {
+                    const isDangerous = att.category === "dangerous";
+                    const entropyVal = att.entropy || 0;
+                    const isSelected = selectedAtt?.id === att.id;
+
+                    return (
+                      <tr 
+                        key={att.id} 
+                        className="tr tr-click"
+                        style={{ 
+                          background: isSelected ? "var(--bg-3)" : isDangerous ? "rgba(239, 68, 68, 0.05)" : undefined,
+                          borderBottom: "1px solid var(--border)"
+                        }}
+                        onClick={() => setSelectedAtt(att)}
+                      >
+                        <td className="td" style={{ fontSize: 18, textAlign: "center", width: 50 }}>
+                          {att.category === "images" ? (
+                            <MiniThumbnail attachmentId={att.id} filename={att.filename} />
+                          ) : (
+                            getFileIcon(att.category, att.filename)
                           )}
-                          {isDangerous && <span className="badge badge-red">RISK</span>}
-                        </div>
-                      </td>
-                      <td className="td">
-                        <div style={{ fontSize: 12, color: "var(--text-1)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {att.email_subject || "(No Subject)"}
-                        </div>
-                        <div style={{ fontSize: 10, color: "var(--text-3)" }}>
-                          {att.email_from}
-                        </div>
-                      </td>
-                      <td className="td" style={{ textAlign: "right" }}>
-                        <div className="row gap-1" style={{ justifyContent: "flex-end" }}>
-                          <button 
-                            className="btn btn-ghost btn-sm" 
-                            style={{ padding: "3px 8px", fontSize: 11 }}
-                            onClick={(e) => { e.stopPropagation(); exportSingleAttachment(att); }}
-                            title="Export attachment to Downloads"
+                        </td>
+                        <td className="td">
+                          <div style={{ fontWeight: 600, color: isDangerous ? "var(--danger)" : "var(--text-0)" }}>
+                            {att.filename}
+                          </div>
+                          <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
+                            {att.mime_type}
+                          </div>
+                        </td>
+                        <td className="td" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+                          {formatSize(att.size_bytes)}
+                        </td>
+                        <td className="td">
+                          <div 
+                            style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--accent)", cursor: "pointer" }}
+                            onClick={(e) => { e.stopPropagation(); copyToClipboard(att.sha256); }}
+                            title="Click to copy SHA-256 hash"
                           >
-                            📥 Export
-                          </button>
-                          {onSelectEmail && (
+                            {att.sha256.slice(0, 16)}...
+                          </div>
+                        </td>
+                        <td className="td">
+                          <div className="row gap-2" style={{ alignItems: "center" }}>
+                            {entropyVal > 0 && (
+                              <span 
+                                className="badge" 
+                                style={{ 
+                                  background: entropyVal > 7.4 ? "rgba(239,68,68,0.15)" : entropyVal > 6.5 ? "rgba(249,115,22,0.15)" : "rgba(34,197,94,0.15)",
+                                  color: entropyVal > 7.4 ? "var(--danger)" : entropyVal > 6.5 ? "var(--warning)" : "var(--success)"
+                                }}
+                              >
+                                H: {entropyVal.toFixed(2)}
+                              </span>
+                            )}
+                            {isDangerous && <span className="badge badge-red">RISK</span>}
+                          </div>
+                        </td>
+                        <td className="td">
+                          <div style={{ fontSize: 12, color: "var(--text-1)", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {att.email_subject || "(No Subject)"}
+                          </div>
+                          <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                            {att.email_from}
+                          </div>
+                        </td>
+                        <td className="td" style={{ textAlign: "right" }}>
+                          <div className="row gap-1" style={{ justifyContent: "flex-end" }}>
                             <button 
                               className="btn btn-ghost btn-sm" 
                               style={{ padding: "3px 8px", fontSize: 11 }}
-                              onClick={(e) => { e.stopPropagation(); onSelectEmail(att.email_id); }}
-                              title="Jump to parent email"
+                              onClick={(e) => { e.stopPropagation(); exportSingleAttachment(att); }}
+                              title="Export attachment to Downloads"
                             >
-                              ✉️ Email
+                              📥 Export
                             </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+                            {onSelectEmail && (
+                              <button 
+                                className="btn btn-ghost btn-sm" 
+                                style={{ padding: "3px 8px", fontSize: 11 }}
+                                onClick={(e) => { e.stopPropagation(); onSelectEmail(att.email_id); }}
+                                title="Jump to parent email"
+                              >
+                                ✉️ Email
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
 
@@ -339,6 +491,17 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
               </h3>
               <button className="btn btn-ghost btn-sm" onClick={() => setSelectedAtt(null)}>✕</button>
             </div>
+
+            {/* Photo Preview in Inspector */}
+            {selectedAtt.category === "images" && (
+              <div style={{ marginBottom: 16, borderRadius: "var(--r-md)", overflow: "hidden", border: "1px solid var(--border)", background: "#000" }}>
+                <InspectorPhotoViewer 
+                  attachmentId={selectedAtt.id} 
+                  filename={selectedAtt.filename} 
+                  onZoom={(src) => setZoomImage({ src, filename: selectedAtt.filename })}
+                />
+              </div>
+            )}
 
             <div style={{ marginBottom: 14 }}>
               <div className="label">FILENAME</div>
@@ -425,4 +588,137 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
       </div>
     </div>
   );
+}
+
+function AttachmentThumbnail({ 
+  attachmentId, 
+  filename, 
+  category, 
+  onZoom 
+}: { 
+  attachmentId: string; 
+  filename: string; 
+  category: string; 
+  onZoom?: (src: string) => void;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(category === "images");
+
+  useEffect(() => {
+    if (category === "images") {
+      invoke<string | null>("get_attachment_preview", { input: { attachment_id: attachmentId } })
+        .then((data) => {
+          if (data) setSrc(data);
+        })
+        .catch(console.error)
+        .finally(() => setLoading(false));
+    }
+  }, [attachmentId, category]);
+
+  if (loading) {
+    return (
+      <div style={{ width: "100%", height: "100%", background: "var(--bg-0)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-3)" }}>
+        <span style={{ fontSize: 11 }}>Loading...</span>
+      </div>
+    );
+  }
+
+  if (src) {
+    return (
+      <div 
+        style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", borderRadius: 6, cursor: "zoom-in" }}
+        onClick={(e) => { e.stopPropagation(); onZoom?.(src); }}
+        title="Click to zoom image"
+      >
+        <img 
+          src={src} 
+          alt={filename} 
+          style={{ width: "100%", height: "100%", objectFit: "cover" }} 
+        />
+        <span style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(0,0,0,0.6)", color: "#fff", padding: "2px 6px", borderRadius: 4, fontSize: 9 }}>
+          🔍 Zoom
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ width: "100%", height: "100%", background: "var(--bg-2)", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
+      <span style={{ fontSize: 36 }}>
+        {category === "dangerous" ? "🚨" : category === "documents" ? "📄" : category === "archives" ? "📦" : "📎"}
+      </span>
+      <span style={{ fontSize: 10, color: "var(--text-3)", textTransform: "uppercase" }}>{category}</span>
+    </div>
+  );
+}
+
+function MiniThumbnail({ attachmentId, filename }: { attachmentId: string; filename: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<string | null>("get_attachment_preview", { input: { attachment_id: attachmentId } })
+      .then((data) => {
+        if (data) setSrc(data);
+      })
+      .catch(console.error);
+  }, [attachmentId]);
+
+  if (src) {
+    return (
+      <img 
+        src={src} 
+        alt={filename} 
+        style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4, border: "1px solid var(--border)", verticalAlign: "middle" }} 
+      />
+    );
+  }
+
+  return <span>🖼️</span>;
+}
+
+function InspectorPhotoViewer({ 
+  attachmentId, 
+  filename, 
+  onZoom 
+}: { 
+  attachmentId: string; 
+  filename: string; 
+  onZoom?: (src: string) => void;
+}) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    invoke<string | null>("get_attachment_preview", { input: { attachment_id: attachmentId } })
+      .then((data) => {
+        if (data) setSrc(data);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [attachmentId]);
+
+  if (loading) {
+    return <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-3)", fontSize: 12 }}>Loading preview...</div>;
+  }
+
+  if (src) {
+    return (
+      <div 
+        style={{ position: "relative", cursor: "zoom-in", textAlign: "center" }}
+        onClick={() => onZoom?.(src)}
+        title="Click to zoom image"
+      >
+        <img 
+          src={src} 
+          alt={filename} 
+          style={{ maxWidth: "100%", maxHeight: 200, objectFit: "contain", display: "block", margin: "0 auto" }} 
+        />
+        <div style={{ padding: "4px 8px", background: "rgba(0,0,0,0.7)", color: "#fff", fontSize: 10 }}>
+          🔍 Click image to expand full resolution
+        </div>
+      </div>
+    );
+  }
+
+  return <div style={{ height: 80, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-3)", fontSize: 12 }}>No visual preview available</div>;
 }

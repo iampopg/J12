@@ -259,6 +259,24 @@ impl Database {
                 notes TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS artifacts_cache (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                domain_id TEXT NOT NULL,
+                subcategory_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                primary_value TEXT NOT NULL,
+                secondary_value TEXT,
+                details TEXT,
+                severity TEXT DEFAULT 'info',
+                artifact_type TEXT DEFAULT 'native',
+                email_id TEXT,
+                email_subject TEXT,
+                email_from TEXT,
+                date_sent_utc TEXT,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS forensic_artifacts (
                 id TEXT PRIMARY KEY,
                 case_id TEXT NOT NULL REFERENCES cases(id),

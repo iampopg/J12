@@ -444,6 +444,8 @@ pub async fn rescan_case_artifacts(
 ) -> Result<usize, String> {
     let case_id = input["case_id"].as_str()
         .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
         .or_else(|| input.as_str())
         .unwrap_or("")
         .to_string();

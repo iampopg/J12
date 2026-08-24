@@ -90,6 +90,7 @@ fn main() {
             commands::imap_cancel_acquisition,
             commands::case_attachments_list,
             commands::export_attachment,
+            commands::get_attachment_preview,
             commands::case_artifacts_summary,
             commands::case_artifacts_list,
             commands::rescan_case_artifacts,

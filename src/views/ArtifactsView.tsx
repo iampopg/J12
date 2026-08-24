@@ -142,7 +142,7 @@ export function ArtifactsView({ caseId }: Props) {
       setTimeout(() => setScanStage("Classifying financial, banking, crypto, credentials, and app accounts..."), 400);
       setTimeout(() => setScanStage("Extracting attachment signatures and forensic IOCs..."), 1000);
       
-      const count = await invoke<number>("rescan_case_artifacts", { caseId });
+      const count = await invoke<number>("rescan_case_artifacts", { input: { case_id: caseId } });
       clearInterval(progressInterval);
       setScanProgress(100);
       setScanStage(`Completed! Indexed ${count} forensic artifacts.`);
