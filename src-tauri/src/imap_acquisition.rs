@@ -213,6 +213,66 @@ impl ImapClient {
         Ok(exists_count)
     }
 
+    fn fetch_chunk_messages<F>(
+        &mut self,
+        start_seq: u32,
+        end_seq: u32,
+        mut on_raw_msg: F,
+    ) -> Result<u32, String>
+    where
+        F: FnMut(u32, String) -> Result<(), String>,
+    {
+        let tag = self.next_tag();
+        let cmd = format!("{} FETCH {}:{} (BODY.PEEK[])\r\n", tag, start_seq, end_seq);
+        self.stream.get_mut().write_all(cmd.as_bytes()).map_err(|e| e.to_string())?;
+        self.stream.get_mut().flush().map_err(|e| e.to_string())?;
+
+        let mut received = 0;
+        loop {
+            let mut line = String::new();
+            let n = self.stream.read_line(&mut line).map_err(|e| e.to_string())?;
+            if n == 0 {
+                return Err("Connection closed during chunk fetch".to_string());
+            }
+
+            if line.starts_with(&tag) {
+                break;
+            }
+
+            if line.contains('{') && line.contains('}') {
+                let seq = line
+                    .split_whitespace()
+                    .nth(1)
+                    .and_then(|s| s.parse::<u32>().ok())
+                    .unwrap_or(start_seq + received);
+
+                let byte_count = if let Some(open) = line.rfind('{') {
+                    if let Some(close) = line[open..].find('}') {
+                        line[open + 1..open + close].parse::<usize>().unwrap_or(0)
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
+                let mut body_bytes = vec![0u8; byte_count];
+                if byte_count > 0 {
+                    use std::io::Read;
+                    self.stream.read_exact(&mut body_bytes).map_err(|e| e.to_string())?;
+                }
+
+                let raw_str = String::from_utf8(body_bytes.clone())
+                    .unwrap_or_else(|_| String::from_utf8_lossy(&body_bytes).to_string());
+
+                received += 1;
+                let _ = on_raw_msg(seq, raw_str);
+            }
+        }
+
+        Ok(received)
+    }
+
     fn fetch_raw_message(&mut self, seq_id: u32) -> Result<String, String> {
         let tag = self.next_tag();
         let cmd = format!("{} FETCH {} (BODY.PEEK[])\r\n", tag, seq_id);
@@ -277,7 +337,7 @@ pub fn list_mailboxes(config: &ImapConfig) -> Result<Vec<String>, String> {
     client.list_mailboxes()
 }
 
-/// Streaming multi-folder email acquisition with real-time progress callbacks and cancellation
+/// Streaming multi-folder email acquisition with high-speed pipelining, real-time progress callbacks and cancellation
 pub fn fetch_emails_streaming<F, G>(
     config: &ImapConfig,
     target_mailbox: Option<&str>,
@@ -328,34 +388,54 @@ where
                     let limit = if let Some(m) = max_per_folder { m.min(count) } else { count };
                     let category = categorize_imap_folder(folder);
 
-                    for seq in 1..=limit {
+                    let chunk_size: u32 = 25;
+                    let mut seq = 1;
+
+                    while seq <= limit {
                         if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
                             break;
                         }
 
-                        match client.fetch_raw_message(seq) {
-                            Ok(raw) => {
-                                downloaded += 1;
-                                let msg = StreamingMessage {
-                                    folder_name: folder.clone(),
-                                    folder_category: category.clone(),
-                                    seq_id: seq,
-                                    folder_total: limit,
-                                    folder_index: f_idx + 1,
-                                    total_folders: total_folder_count,
-                                    raw_content: raw,
-                                };
-                                let _ = on_message(msg);
-                            }
-                            Err(_) => {
-                                errors += 1;
+                        let chunk_end = (seq + chunk_size - 1).min(limit);
+                        let fetch_res = client.fetch_chunk_messages(seq, chunk_end, |msg_seq, raw| {
+                            downloaded += 1;
+                            let msg = StreamingMessage {
+                                folder_name: folder.clone(),
+                                folder_category: category.clone(),
+                                seq_id: msg_seq,
+                                folder_total: limit,
+                                folder_index: f_idx + 1,
+                                total_folders: total_folder_count,
+                                raw_content: raw,
+                            };
+                            on_message(msg)
+                        });
+
+                        if fetch_res.is_err() {
+                            // Resilient fallback to single message fetch if chunk encountered an issue
+                            for single_seq in seq..=chunk_end {
+                                if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break;
+                                }
+                                if let Ok(raw) = client.fetch_raw_message(single_seq) {
+                                    downloaded += 1;
+                                    let msg = StreamingMessage {
+                                        folder_name: folder.clone(),
+                                        folder_category: category.clone(),
+                                        seq_id: single_seq,
+                                        folder_total: limit,
+                                        folder_index: f_idx + 1,
+                                        total_folders: total_folder_count,
+                                        raw_content: raw,
+                                    };
+                                    let _ = on_message(msg);
+                                } else {
+                                    errors += 1;
+                                }
                             }
                         }
 
-                        // Gentle throttle for IMAP servers
-                        if seq % 20 == 0 {
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
+                        seq = chunk_end + 1;
                     }
                 }
             }
