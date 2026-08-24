@@ -31,12 +31,35 @@ export interface ForensicTaxonomyArtifact {
   date_sent_utc: string | null;
 }
 
+export interface EmailMessage {
+  id: string;
+  evidence_id: string;
+  case_id: string;
+  message_id: string | null;
+  from_addr: string;
+  from_display: string | null;
+  to_addrs: string;
+  cc_addrs: string;
+  subject: string | null;
+  date_sent: string | null;
+  date_sent_utc: string | null;
+  headers_raw: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  folder_name: string | null;
+  folder_category: string;
+  is_deleted: boolean;
+  deleted_recovered: boolean;
+  risk_score: number;
+  flags: string;
+}
+
 interface Props {
   caseId: string;
   onSelectEmail?: (emailId: string) => void;
 }
 
-export function ArtifactsView({ caseId, onSelectEmail }: Props) {
+export function ArtifactsView({ caseId }: Props) {
   const [taxonomy, setTaxonomy] = useState<TaxonomyDomainSummary[]>([]);
   const [artifacts, setArtifacts] = useState<ForensicTaxonomyArtifact[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>("all");
@@ -45,6 +68,8 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
   const [search, setSearch] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedArtifact, setSelectedArtifact] = useState<ForensicTaxonomyArtifact | null>(null);
+  const [previewEmail, setPreviewEmail] = useState<EmailMessage | null>(null);
+  const [loadingEmail, setLoadingEmail] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -99,6 +124,24 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
     showToast("✓ Copied value to clipboard");
   };
 
+  const openEmailModal = async (emailId: string) => {
+    if (!emailId) return;
+    setLoadingEmail(true);
+    try {
+      const em = await invoke<EmailMessage | null>("email_get", { input: { id: emailId } });
+      if (em) {
+        setPreviewEmail(em);
+      } else {
+        showToast("⚠️ Could not load email content");
+      }
+    } catch (e) {
+      console.error("Failed to fetch email:", e);
+      showToast("❌ Error loading email");
+    } finally {
+      setLoadingEmail(false);
+    }
+  };
+
   const totalAllArtifacts = taxonomy.reduce((acc, d) => acc + d.total_count, 0);
 
   const exportArtifactsCSV = () => {
@@ -147,7 +190,7 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
 
   return (
     <div>
-      {/* Toast */}
+      {/* Toast Notification */}
       {toastMessage && (
         <div 
           className="card"
@@ -173,10 +216,10 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
-            Forensic Artifact Taxonomy &amp; Evidence Intelligence
+            Forensic Artifact Taxonomy &amp; Intelligence Hub
           </h2>
           <p className="muted" style={{ margin: 0 }}>
-            Belkasoft-grade structured evidence taxonomy — Native, Recovered, and Derived intelligence categorized across 14 forensic domains.
+            Belkasoft-grade structured evidence taxonomy — Credentials, Banking, Crypto Wallets, Contraband, Secrets, and Relays across 17 forensic domains.
           </p>
         </div>
         <div className="row gap-2">
@@ -190,7 +233,7 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
       </div>
 
       {/* Main Two-Column Taxonomy Workspace */}
-      <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "310px 1fr", gap: 16 }}>
         
         {/* Left Column: Artifact Taxonomy Category Tree */}
         <div className="card" style={{ padding: 12, maxHeight: "calc(100vh - 180px)", overflowY: "auto" }}>
@@ -331,7 +374,7 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
                 <input
                   className="input"
                   style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
-                  placeholder="Search artifacts (e.g. phone, OTP code, IP, BTC wallet, URL, AnyDesk)..."
+                  placeholder="Search artifacts (e.g. password, routing, credit card, seed phrase, glock, fentanyl, anydesk)..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -413,7 +456,7 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
                           padding: "8px 12px",
                           fontFamily: "var(--mono)",
                           fontSize: 12.5,
-                          color: "#38bdf8",
+                          color: a.domain_id === "credentials" ? "#f43f5e" : a.domain_id === "financial" ? "#22c55e" : a.domain_id === "crypto" ? "#eab308" : a.domain_id === "contraband" ? "#ef4444" : "#38bdf8",
                           marginBottom: 8,
                           display: "flex",
                           alignItems: "center",
@@ -435,15 +478,13 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
                         <div style={{ fontSize: 11.5, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
                           <span className="muted">Source:</span> {a.email_from} · <span className="muted">Subject:</span> {a.email_subject || "(No Subject)"}
                         </div>
-                        {onSelectEmail && (
-                          <button 
-                            className="btn btn-ghost btn-sm" 
-                            style={{ fontSize: 11, padding: "2px 8px" }}
-                            onClick={(e) => { e.stopPropagation(); onSelectEmail(a.email_id); }}
-                          >
-                            ✉️ View Email
-                          </button>
-                        )}
+                        <button 
+                          className="btn btn-ghost btn-sm" 
+                          style={{ fontSize: 11, padding: "2px 8px" }}
+                          onClick={(e) => { e.stopPropagation(); openEmailModal(a.email_id); }}
+                        >
+                          ✉️ View Email
+                        </button>
                       </div>
                     </div>
                   );
@@ -538,20 +579,138 @@ export function ArtifactsView({ caseId, onSelectEmail }: Props) {
                   </div>
                 </div>
 
-                {onSelectEmail && (
-                  <button 
-                    className="btn btn-primary btn-sm" 
-                    style={{ width: "100%" }}
-                    onClick={() => onSelectEmail(selectedArtifact.email_id)}
-                  >
-                    ✉️ Open Email in Forensic Viewer
-                  </button>
-                )}
+                <button 
+                  className="btn btn-primary btn-sm" 
+                  style={{ width: "100%" }}
+                  onClick={() => openEmailModal(selectedArtifact.email_id)}
+                >
+                  ✉️ Open Email in Forensic Viewer
+                </button>
               </div>
             )}
           </div>
         </div>
       </div>
+
+      {/* In-Modal Email Inspector Dialog */}
+      {previewEmail && (
+        <div 
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 10000,
+            background: "rgba(0, 0, 0, 0.8)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 24,
+          }}
+          onClick={() => setPreviewEmail(null)}
+        >
+          <div 
+            className="card"
+            style={{
+              width: "100%",
+              maxWidth: 880,
+              maxHeight: "90vh",
+              overflowY: "auto",
+              padding: 24,
+              background: "#0f172a",
+              border: "1px solid #334155",
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row between mb-3" style={{ borderBottom: "1px solid #1e293b", paddingBottom: 12 }}>
+              <div className="row gap-2" style={{ alignItems: "center" }}>
+                <span style={{ fontSize: 18 }}>✉️</span>
+                <div>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#f8fafc" }}>
+                    {previewEmail.subject || "(No Subject)"}
+                  </h3>
+                  <span className="muted" style={{ fontSize: 11 }}>Message ID: {previewEmail.message_id || previewEmail.id}</span>
+                </div>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setPreviewEmail(null)}>
+                ✕ Close &amp; Return to Artifacts
+              </button>
+            </div>
+
+            {/* Email Metadata Header Table */}
+            <div style={{ background: "#1e293b", padding: 14, borderRadius: "var(--r-sm)", marginBottom: 16, fontSize: 12.5 }}>
+              <div className="row mb-1">
+                <span className="muted" style={{ width: 80, fontWeight: 600 }}>From:</span>
+                <span style={{ color: "#38bdf8", fontWeight: 600 }}>{previewEmail.from_display ? `${previewEmail.from_display} <${previewEmail.from_addr}>` : previewEmail.from_addr}</span>
+              </div>
+              <div className="row mb-1">
+                <span className="muted" style={{ width: 80, fontWeight: 600 }}>To:</span>
+                <span style={{ color: "#e2e8f0" }}>{previewEmail.to_addrs}</span>
+              </div>
+              {previewEmail.cc_addrs && previewEmail.cc_addrs !== "[]" && (
+                <div className="row mb-1">
+                  <span className="muted" style={{ width: 80, fontWeight: 600 }}>Cc:</span>
+                  <span style={{ color: "#e2e8f0" }}>{previewEmail.cc_addrs}</span>
+                </div>
+              )}
+              <div className="row mb-1">
+                <span className="muted" style={{ width: 80, fontWeight: 600 }}>Date:</span>
+                <span style={{ color: "#e2e8f0" }}>{previewEmail.date_sent_utc || previewEmail.date_sent || "Unknown"}</span>
+              </div>
+              <div className="row">
+                <span className="muted" style={{ width: 80, fontWeight: 600 }}>Folder:</span>
+                <span className="badge badge-gray">{previewEmail.folder_name || previewEmail.folder_category}</span>
+                {previewEmail.risk_score > 50 && (
+                  <span className="badge badge-red ml-2" style={{ marginLeft: 8 }}>High Risk ({previewEmail.risk_score}%)</span>
+                )}
+              </div>
+            </div>
+
+            {/* Body Tabs / Content */}
+            <div className="mb-3">
+              <div className="label" style={{ marginBottom: 6 }}>MESSAGE CONTENT</div>
+              <div 
+                style={{
+                  background: "#020617",
+                  border: "1px solid #1e293b",
+                  borderRadius: "var(--r-sm)",
+                  padding: 16,
+                  fontSize: 13,
+                  color: "#f1f5f9",
+                  lineHeight: 1.6,
+                  maxHeight: 380,
+                  overflowY: "auto",
+                  whiteSpace: "pre-wrap",
+                  fontFamily: "var(--font-sans, inherit)",
+                }}
+              >
+                {previewEmail.body_text || previewEmail.body_html || "(No message body content found)"}
+              </div>
+            </div>
+
+            {/* Raw Headers Accordion */}
+            {previewEmail.headers_raw && (
+              <details style={{ marginTop: 12, background: "#090d16", border: "1px solid #1e293b", borderRadius: "var(--r-sm)", padding: 10 }}>
+                <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>
+                  📜 View Raw RFC-822 Transport Headers
+                </summary>
+                <pre style={{ fontSize: 11, fontFamily: "var(--mono)", color: "#cbd5e1", maxHeight: 180, overflowY: "auto", marginTop: 8, whiteSpace: "pre-wrap" }}>
+                  {previewEmail.headers_raw}
+                </pre>
+              </details>
+            )}
+
+            <div className="row between mt-4" style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
+              <span className="muted" style={{ fontSize: 11 }}>Investigator Mode: Forensic In-Modal Inspection</span>
+              <button className="btn btn-primary btn-sm" onClick={() => setPreviewEmail(null)}>
+                Done / Back to Artifacts Hub
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

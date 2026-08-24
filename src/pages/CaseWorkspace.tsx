@@ -182,6 +182,18 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
              </div>
            )}
 
+           {/* Artifacts & Attachments Hub */}
+           {!sidebarCollapsed && (
+             <div className="sb-folder" style={{ marginBottom: 8 }}>
+               <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")} style={{ fontWeight: 600 }}>
+                 <span className="sb-icon">🧩</span> Forensic Artifacts
+               </button>
+               <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")} style={{ fontWeight: 600 }}>
+                 <span className="sb-icon">📎</span> Attachments &amp; Payloads
+               </button>
+             </div>
+           )}
+
           {/* Email Folders - Collapsible */}
           <div className="sb-folder">
             <div className="sb-folder-header" onClick={() => setEmailFolderOpen(!emailFolderOpen)}>
