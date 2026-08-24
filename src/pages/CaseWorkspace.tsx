@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { EmailListView } from "../views/EmailListView";
 import { FindingsView } from "../views/FindingsView";
 import { TargetProfileView } from "../views/TargetProfileView";
@@ -1531,45 +1530,6 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   }, [caseId, username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs]);
 
   useEffect(() => {
-    let unlisten: any;
-    try {
-      listen("imap_progress", (event: any) => {
-        const p = event.payload;
-        if (p?.log) {
-          setLogs(prev => {
-            const last = prev[prev.length - 1];
-            const newLog = `[${new Date().toLocaleTimeString()}] ${p.log}`;
-            if (last === newLog) return prev;
-            return [...prev, newLog];
-          });
-        }
-        if (p?.status === "ingested" || p?.status === "folder_discovered" || p?.status === "duplicate_skipped") {
-          setProgress(prev => ({
-            ...prev,
-            folder: p.folder || prev?.folder,
-            folderIndex: p.folder_index || prev?.folderIndex,
-            totalFolders: p.total_folders || prev?.totalFolders,
-            msgSeq: p.msg_seq || prev?.msgSeq,
-            folderTotal: p.folder_total || prev?.folderTotal,
-            ingested: p.ingested_count !== undefined ? p.ingested_count : prev?.ingested,
-            duplicatesSkipped: p.duplicates_skipped !== undefined ? p.duplicates_skipped : prev?.duplicatesSkipped,
-            subject: p.subject || prev?.subject,
-            from: p.from || prev?.from,
-          }));
-        }
-      }).then(u => { unlisten = u; }).catch((err) => {
-        console.warn("IMAP progress listener attach warning:", err);
-      });
-    } catch (e) {
-      console.warn("IMAP progress error:", e);
-    }
-
-    return () => {
-      if (unlisten) unlisten();
-    };
-  }, []);
-
-  useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
@@ -1663,6 +1623,33 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     addLog(`Starting forensic streaming acquisition for account: ${cleanUser}...`);
     addLog(`Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
     addLog(`⚡ Real-time incremental deduplication active (previously ingested emails will be preserved)`);
+
+    const onEvent = new Channel<any>();
+    onEvent.onmessage = (p: any) => {
+      if (p?.log) {
+        setLogs(prev => {
+          const last = prev[prev.length - 1];
+          const newLog = `[${new Date().toLocaleTimeString()}] ${p.log}`;
+          if (last === newLog) return prev;
+          return [...prev, newLog];
+        });
+      }
+      if (p?.status === "ingested" || p?.status === "folder_discovered" || p?.status === "duplicate_skipped") {
+        setProgress(prev => ({
+          ...prev,
+          folder: p.folder || prev?.folder,
+          folderIndex: p.folder_index || prev?.folderIndex,
+          totalFolders: p.total_folders || prev?.totalFolders,
+          msgSeq: p.msg_seq || prev?.msgSeq,
+          folderTotal: p.folder_total || prev?.folderTotal,
+          ingested: p.ingested_count !== undefined ? p.ingested_count : prev?.ingested,
+          duplicatesSkipped: p.duplicates_skipped !== undefined ? p.duplicates_skipped : prev?.duplicatesSkipped,
+          subject: p.subject || prev?.subject,
+          from: p.from || prev?.from,
+        }));
+      }
+    };
+
     try {
       const res = await invoke<any>("imap_fetch_emails", {
         input: {
@@ -1678,7 +1665,9 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
           useSsl,
           mailbox: mailboxScope,
           max_messages: null
-        }
+        },
+        on_event: onEvent,
+        onEvent
       });
       setResult(res);
       addLog(`✓ Acquisition Finished: Ingested ${res.downloaded} new emails (${res.duplicates_skipped || 0} duplicates skipped) across ${res.folders_acquired?.length || 1} folders`);

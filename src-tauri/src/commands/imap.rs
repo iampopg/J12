@@ -1,6 +1,7 @@
 use chrono::Utc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use tauri::ipc::Channel;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::AppState;
@@ -8,7 +9,8 @@ use crate::db::generate_id;
 use crate::imap_acquisition::{self, ImapConfig, StreamingMessage};
 use crate::parser;
 
-fn emit_imap_event(app: &AppHandle, payload: serde_json::Value) {
+fn emit_imap_event(app: &AppHandle, ch: &Channel<Value>, payload: serde_json::Value) {
+    let _ = ch.send(payload.clone());
     let _ = app.emit("imap_progress", payload.clone());
     let _ = app.emit_to("main", "imap_progress", payload.clone());
     if let Some(win) = app.get_webview_window("main") {
@@ -52,6 +54,7 @@ pub async fn imap_fetch_emails(
     app: AppHandle,
     state: State<'_, AppState>,
     input: Value,
+    on_event: Channel<Value>,
 ) -> Result<serde_json::Value, String> {
     let case_id = input["case_id"].as_str()
         .or_else(|| input["caseId"].as_str())
@@ -85,7 +88,7 @@ pub async fn imap_fetch_emails(
     // Reset cancel flag
     state.cancel_imap.store(false, std::sync::atomic::Ordering::Relaxed);
 
-    emit_imap_event(&app, json!({
+    emit_imap_event(&app, &on_event, json!({
         "status": "connecting",
         "log": format!("Connecting to {}:{} (SSL: {})...", server, port, if use_ssl { "YES" } else { "NO" })
     }));
@@ -125,17 +128,19 @@ pub async fn imap_fetch_emails(
     let mut duplicates_skipped: u32 = 0;
     let app_handle_clone = app.clone();
     let cancel_flag = state.cancel_imap.clone();
+    let on_event_clone = on_event.clone();
 
     // Stream and incrementally save each email
     let result = {
         let app_handle_inner = app_handle_clone.clone();
+        let on_event_inner = on_event_clone.clone();
         imap_acquisition::fetch_emails_streaming(
             &config,
             Some(target_mb),
             max_messages,
             &cancel_flag,
             |folder, count, f_idx, total_f| {
-                emit_imap_event(&app_handle_inner, json!({
+                emit_imap_event(&app_handle_inner, &on_event_inner, json!({
                     "status": "folder_discovered",
                     "folder": folder,
                     "folder_count": count,
@@ -170,7 +175,7 @@ pub async fn imap_fetch_emails(
 
                     if is_duplicate {
                         duplicates_skipped += 1;
-                        emit_imap_event(&app_handle_clone, json!({
+                        emit_imap_event(&app_handle_clone, &on_event_clone, json!({
                             "status": "duplicate_skipped",
                             "folder": msg.folder_name,
                             "msg_seq": msg.seq_id,
@@ -292,7 +297,7 @@ pub async fn imap_fetch_emails(
                         String::new()
                     };
 
-                    emit_imap_event(&app_handle_clone, json!({
+                    emit_imap_event(&app_handle_clone, &on_event_clone, json!({
                         "status": "ingested",
                         "folder": msg.folder_name,
                         "msg_seq": msg.seq_id,
@@ -339,7 +344,7 @@ pub async fn imap_fetch_emails(
         ],
     );
 
-    emit_imap_event(&app, json!({
+    emit_imap_event(&app, &on_event, json!({
         "status": final_status,
         "ingested_count": ingested_count,
         "duplicates_skipped": duplicates_skipped,
