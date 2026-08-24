@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/j12-logo.svg" alt="J12 Logo" width="380" />
+<img src="logo.png" alt="J12 Logo" width="360" />
 
 # <span style="color:#ffffff;">J</span><span style="color:#22c55e;">12</span> Email Forensic Suite
 ### **Advanced Desktop Email Investigation & eDiscovery Intelligence Platform**
