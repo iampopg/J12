@@ -136,19 +136,40 @@ pub async fn case_update(state: State<'_, AppState>, input: CaseUpdateInput) -> 
 }
 
 #[tauri::command]
-pub async fn case_delete(state: State<'_, AppState>, input: EmptyInput) -> Result<bool, String> {
-    let db = state.db.lock().await;
-    let cid = &input.case_id;
-    let _ = db.conn.execute("DELETE FROM findings WHERE case_id=?1", [cid]);
-    let _ = db.conn.execute("DELETE FROM entities WHERE case_id=?1", [cid]);
-    let _ = db.conn.execute("DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE case_id=?1)", [cid]);
-    let _ = db.conn.execute("DELETE FROM emails WHERE case_id=?1", [cid]);
-    let _ = db.conn.execute("DELETE FROM evidence_items WHERE case_id=?1", [cid]);
-    let _ = db.conn.execute("DELETE FROM chain_of_custody WHERE case_id=?1", [cid]);
-    let _ = db.conn.execute("DELETE FROM case_notes WHERE case_id=?1", [cid]);
-    let _ = db.conn.execute("DELETE FROM email_tags WHERE email_id IN (SELECT id FROM emails WHERE case_id=?1)", [cid]);
-    let _ = db.conn.execute("DELETE FROM email_notes WHERE email_id IN (SELECT id FROM emails WHERE case_id=?1)", [cid]);
-    let r = db.conn.execute("DELETE FROM cases WHERE id=?1", [cid]).map_err(|e| e.to_string())?;
+pub async fn case_delete(state: State<'_, AppState>, input: Value) -> Result<bool, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if case_id.is_empty() {
+        return Err("Case ID is required for deletion".to_string());
+    }
+
+    let mut db = state.db.lock().await;
+    let tx = db.conn.transaction().map_err(|e| e.to_string())?;
+
+    // Cascade delete in child-first foreign key order
+    let _ = tx.execute("DELETE FROM email_tags WHERE case_id = ?1 OR email_id IN (SELECT id FROM emails WHERE case_id = ?1)", [&case_id]);
+    let _ = tx.execute("DELETE FROM email_notes WHERE case_id = ?1 OR email_id IN (SELECT id FROM emails WHERE case_id = ?1)", [&case_id]);
+    let _ = tx.execute("DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE case_id = ?1)", [&case_id]);
+    let _ = tx.execute("DELETE FROM forensic_artifacts WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM artifacts_cache WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM communication_edges WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM timeline_events WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM entities WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM findings WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM custody_events WHERE evidence_id IN (SELECT id FROM evidence_items WHERE case_id = ?1)", [&case_id]);
+    let _ = tx.execute("DELETE FROM chain_of_custody WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM case_notes WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM emails WHERE case_id = ?1", [&case_id]);
+    let _ = tx.execute("DELETE FROM evidence_items WHERE case_id = ?1", [&case_id]);
+    let r = tx.execute("DELETE FROM cases WHERE id = ?1", [&case_id]).map_err(|e| e.to_string())?;
+
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(r > 0)
 }
 
