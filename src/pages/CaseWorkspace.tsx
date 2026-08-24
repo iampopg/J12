@@ -1009,10 +1009,87 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
     }
   };
 
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteModal, setConfirmDeleteModal] = useState<{ id: string; filename: string } | null>(null);
+
+  const handleDeleteEvidence = async (evidenceId: string, filename: string) => {
+    setDeletingId(evidenceId);
+    try {
+      await invoke("evidence_delete", { input: { evidence_id: evidenceId } });
+      addLog("success", `Deleted evidence source "${filename}" and its associated emails.`);
+      if (selectedId === evidenceId) setSelectedId(null);
+      setConfirmDeleteModal(null);
+      onRefresh();
+    } catch (e: any) {
+      addLog("error", `Failed to delete evidence: ${e}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const selectedEvidence = selectedId ? evidence.find(e => e.id === selectedId) : null;
 
   return (
     <div>
+      {/* Confirmation Modal for Evidence Deletion */}
+      {confirmDeleteModal && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.75)",
+            backdropFilter: "blur(4px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+          }}
+          onClick={() => setConfirmDeleteModal(null)}
+        >
+          <div
+            className="card"
+            style={{
+              maxWidth: 480,
+              width: "92%",
+              padding: 24,
+              border: "1px solid rgba(239, 68, 68, 0.4)",
+              boxShadow: "0 20px 40px rgba(0,0,0,0.6)",
+              background: "var(--bg-1)",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+              <span style={{ fontSize: 32 }}>⚠️</span>
+              <div>
+                <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--danger)", margin: 0 }}>
+                  Delete Evidence Source?
+                </h3>
+                <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>
+                  Irreversible Forensic Action
+                </p>
+              </div>
+            </div>
+            <p style={{ fontSize: 13, lineHeight: 1.5, color: "var(--text-1)", marginBottom: 16 }}>
+              Are you sure you want to permanently delete <strong>"{confirmDeleteModal.filename}"</strong>? 
+              This will remove all associated emails, extracted attachments, and chain-of-custody records for this container.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button className="btn btn-ghost" onClick={() => setConfirmDeleteModal(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn-danger"
+                style={{ background: "#dc2626", color: "#fff", fontWeight: 600 }}
+                onClick={() => handleDeleteEvidence(confirmDeleteModal.id, confirmDeleteModal.filename)}
+                disabled={deletingId !== null}
+              >
+                {deletingId ? "Deleting..." : "Yes, Delete Evidence Source"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Evidence Acquisition</h2>
@@ -1108,44 +1185,25 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
         {acqMethod === "imaging" && (
           <div style={{ textAlign: "center", padding: "40px 20px" }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>💾</div>
-            <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Forensic Imaging</h4>
+            <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Forensic Physical & Logical Imaging</h4>
             <p className="muted mb-4" style={{ fontSize: 12 }}>
-              Block-by-bit physical storage copy with cryptographic hash verification
+              Extract email stores from physical drives, device dumps, and E01 forensic images
             </p>
-            <div className="row gap-2" style={{ justifyContent: "center", flexWrap: "wrap" }}>
-              <div className="card" style={{ padding: 16, minWidth: 180 }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>🖴</div>
-                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Disk Imaging</h5>
-                <p className="muted" style={{ fontSize: 11 }}>dd, FTK Imager, Guymager</p>
-                <span className="badge badge-gray mt-2">Coming Soon</span>
-              </div>
-              <div className="card" style={{ padding: 16, minWidth: 180 }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>📱</div>
-                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Device Imaging</h5>
-                <p className="muted" style={{ fontSize: 11 }}>Android, iOS, USB Mass Storage</p>
-                <span className="badge badge-gray mt-2">Coming Soon</span>
-              </div>
-              <div className="card" style={{ padding: 16, minWidth: 180 }}>
-                <div style={{ fontSize: 24, marginBottom: 8 }}>🔒</div>
-                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Write Blocking</h5>
-                <p className="muted" style={{ fontSize: 11 }}>Hardware & software protection</p>
-                <span className="badge badge-gray mt-2">Coming Soon</span>
-              </div>
-            </div>
+            <span className="badge badge-gray">Coming Soon</span>
           </div>
         )}
       </div>
 
       {/* Activity Log */}
       {logs.length > 0 && (
-        <div className="card mb-4" style={{ maxHeight: 150, overflowY: "auto", background: "var(--bg-0)" }}>
+        <div className="card mb-4" style={{ maxHeight: 150, overflowY: "auto", fontFamily: "monospace", fontSize: 12 }}>
           <div className="row between mb-4">
             <h4 style={{ fontSize: 12, fontWeight: 600 }}>Activity Log</h4>
             <button className="btn btn-ghost btn-sm" onClick={() => setLogs([])}>Clear</button>
           </div>
           {logs.map((log, i) => (
-            <div key={i} className="row gap-2" style={{ fontSize: 11, fontFamily: "var(--mono)", marginBottom: 2 }}>
-              <span className="muted">{log.time}</span>
+            <div key={i} className={`log-${log.level}`} style={{ padding: "2px 0" }}>
+              <span className="muted">[{log.time}]</span>{" "}
               <span className={`badge badge-${log.level === "error" ? "red" : log.level === "success" ? "green" : "blue"}`}>{log.level}</span>
               <span>{log.message}</span>
             </div>
@@ -1166,22 +1224,36 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
                 <th className="th">Status</th>
                 <th className="th">Messages</th>
                 <th className="th">SHA-256</th>
-                <th className="th">Actions</th>
+                <th className="th" style={{ textAlign: "right" }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {evidence.map((e) => (
                 <tr key={e.id} onClick={() => setSelectedId(selectedId === e.id ? null : e.id)} className="tr-click" style={{ background: selectedId === e.id ? "var(--bg-3)" : "transparent" }}>
-                  <td className="td">{e.filename}</td>
-                  <td className="td"><span className={`badge badge-${e.format === "eml" ? "blue" : e.format === "mbox" ? "green" : "orange"}`}>{e.format}</span></td>
+                  <td className="td" style={{ fontWeight: 600 }}>{e.filename}</td>
+                  <td className="td"><span className={`badge badge-${e.format === "eml" ? "blue" : e.format === "mbox" ? "green" : e.format === "imap" ? "purple" : "orange"}`}>{e.format}</span></td>
                   <td className="td muted">{(e.size_bytes / 1024).toFixed(0)} KB</td>
-                  <td className="td"><span className={`badge ${e.parse_status === "done" ? "badge-green" : e.parse_status === "error" ? "badge-red" : e.parse_status === "parsing" ? "badge-blue" : "badge-gray"}`}>{e.parse_status}</span></td>
+                  <td className="td"><span className={`badge ${e.parse_status === "done" ? "badge-green" : e.parse_status === "error" ? "badge-red" : e.parse_status === "parsing" || e.parse_status === "ingesting" ? "badge-blue" : "badge-gray"}`}>{e.parse_status}</span></td>
                   <td className="td">{e.message_count}</td>
-                  <td className="td mono muted">{e.sha256.slice(0, 12)}…</td>
-                  <td className="td">
-                    {e.parse_status === "pending" && <button className="btn btn-primary btn-sm" onClick={(ev) => { ev.stopPropagation(); handleParse(e.id, e.filename); }}>Parse</button>}
-                    {e.parse_status === "parsing" && <span className="muted text-sm">Parsing...</span>}
-                    {e.parse_status === "error" && <button className="btn btn-ghost btn-sm" onClick={(ev) => { ev.stopPropagation(); handleParse(e.id, e.filename); }}>Retry</button>}
+                  <td className="td mono muted">{e.sha256 ? `${e.sha256.slice(0, 12)}…` : "—"}</td>
+                  <td className="td" style={{ textAlign: "right" }}>
+                    <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                      {e.parse_status === "pending" && <button className="btn btn-primary btn-sm" onClick={(ev) => { ev.stopPropagation(); handleParse(e.id, e.filename); }}>Parse</button>}
+                      {e.parse_status === "parsing" && <span className="muted text-sm">Parsing...</span>}
+                      {e.parse_status === "error" && <button className="btn btn-ghost btn-sm" onClick={(ev) => { ev.stopPropagation(); handleParse(e.id, e.filename); }}>Retry</button>}
+                      <button
+                        className="btn btn-danger btn-sm"
+                        style={{ padding: "4px 8px", fontSize: 12, background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)" }}
+                        title={`Delete evidence source: ${e.filename}`}
+                        onClick={(ev) => {
+                          ev.stopPropagation();
+                          setConfirmDeleteModal({ id: e.id, filename: e.filename });
+                        }}
+                        disabled={deletingId === e.id}
+                      >
+                        {deletingId === e.id ? "Deleting..." : "🗑️ Delete"}
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -1195,7 +1267,16 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
         <div className="card mt-4">
           <div className="row between mb-4">
             <h4 style={{ fontSize: 14, fontWeight: 600 }}>Evidence Details</h4>
-            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedId(null)}>Close</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                className="btn btn-danger btn-sm"
+                style={{ padding: "4px 10px", fontSize: 12, background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)" }}
+                onClick={() => setConfirmDeleteModal({ id: selectedEvidence.id, filename: selectedEvidence.filename })}
+              >
+                🗑️ Delete Evidence Source
+              </button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setSelectedId(null)}>Close</button>
+            </div>
           </div>
           <div className="grid-2" style={{ fontSize: 13 }}>
             <div><span className="muted">File:</span> {selectedEvidence.filename}</div>

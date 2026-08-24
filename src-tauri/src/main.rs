@@ -38,6 +38,7 @@ fn main() {
             commands::evidence_upload,
             commands::evidence_list,
             commands::evidence_status,
+            commands::evidence_delete,
             commands::write_temp_file,
             commands::open_file_dialog,
             commands::open_folder_dialog,

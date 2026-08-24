@@ -77,6 +77,52 @@ pub async fn evidence_list(state: State<'_, AppState>, input: EmptyInput) -> Res
 }
 
 #[tauri::command]
+pub async fn evidence_delete(state: State<'_, AppState>, input: Value) -> Result<bool, String> {
+    let evidence_id = input["evidence_id"].as_str()
+        .or_else(|| input["evidenceId"].as_str())
+        .or_else(|| input["id"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if evidence_id.is_empty() {
+        return Err("Evidence ID is required".to_string());
+    }
+
+    let db = state.db.lock().await;
+
+    // 1. Delete extracted attachments for this evidence item
+    let _ = db.conn.execute(
+        "DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)",
+        [&evidence_id],
+    );
+
+    // 2. Delete custody events associated with this evidence item
+    let _ = db.conn.execute(
+        "DELETE FROM custody_events WHERE evidence_id = ?1",
+        [&evidence_id],
+    );
+    let _ = db.conn.execute(
+        "DELETE FROM chain_of_custody WHERE evidence_id = ?1",
+        [&evidence_id],
+    );
+
+    // 3. Delete emails
+    let _ = db.conn.execute(
+        "DELETE FROM emails WHERE evidence_id = ?1",
+        [&evidence_id],
+    );
+
+    // 4. Delete the evidence item itself
+    let rows_deleted = db.conn.execute(
+        "DELETE FROM evidence_items WHERE id = ?1",
+        [&evidence_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(rows_deleted > 0)
+}
+
+#[tauri::command]
 pub async fn evidence_status(state: State<'_, AppState>, evidence_id: String) -> Result<EvidenceItem, String> {
     let db = state.db.lock().await;
     let r = db.conn.query_row(
