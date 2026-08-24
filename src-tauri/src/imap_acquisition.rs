@@ -151,24 +151,17 @@ impl ImapClient {
 
     fn login(&mut self, user: &str, pass: &str) -> Result<(), String> {
         let clean_user = user.trim().replace('"', "\\\"");
-        // Strip trailing backslashes, quotes, or accidental whitespace
-        let clean_pass = pass.trim().trim_matches(&['\\', '"', '\'', ' '][..]).trim().replace('"', "\\\"");
+        let mut clean_pass = pass.trim().trim_matches(&['\\', '"', '\'', ' '][..]).trim().to_string();
         
-        let cmd = format!("LOGIN \"{}\" \"{}\"", clean_user, clean_pass);
-        match self.send_command(&cmd) {
-            Ok(_) => Ok(()),
-            Err(e) => {
-                // For Google App Passwords ("abcd efgh ijkl mnop"), retry without spaces ("abcdefghijklmnop")
-                let pass_no_spaces = clean_pass.replace(' ', "");
-                if pass_no_spaces != clean_pass && !pass_no_spaces.is_empty() {
-                    let retry_cmd = format!("LOGIN \"{}\" \"{}\"", clean_user, pass_no_spaces);
-                    if self.send_command(&retry_cmd).is_ok() {
-                        return Ok(());
-                    }
-                }
-                Err(format!("IMAP Authentication failed. Check your password or use an App Password: {}", e))
-            }
+        // If password has spaces and matches 16-char App Password pattern (or Gmail account), strip spaces
+        let no_spaces = clean_pass.replace(' ', "");
+        if no_spaces.len() == 16 || user.to_lowercase().contains("gmail") {
+            clean_pass = no_spaces;
         }
+
+        let cmd = format!("LOGIN \"{}\" \"{}\"", clean_user, clean_pass.replace('"', "\\\""));
+        self.send_command(&cmd).map_err(|e| format!("IMAP Authentication failed. Check your password or use an App Password: {}", e))?;
+        Ok(())
     }
 
     fn list_mailboxes(&mut self) -> Result<Vec<String>, String> {

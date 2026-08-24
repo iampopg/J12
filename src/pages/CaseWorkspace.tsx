@@ -1572,6 +1572,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   const testConnection = async () => {
     const cleanUser = username.trim();
     const cleanPass = password.trim().replace(/\\+$/, "").trim();
+    const effectivePass = cleanUser.toLowerCase().includes("gmail") ? cleanPass.replace(/\s+/g, "") : cleanPass;
     setConnecting(true);
     setLogs([]);
     addLog(`Testing connection to ${server}:${port} (SSL: ${useSsl ? "YES" : "NO"})...`);
@@ -1581,7 +1582,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
           server: server.trim(), 
           port: parseInt(port) || 993, 
           username: cleanUser, 
-          password: cleanPass, 
+          password: effectivePass, 
           use_ssl: useSsl,
           useSsl
         }
@@ -1598,6 +1599,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   const acquireEmails = async () => {
     const cleanUser = username.trim();
     const cleanPass = password.trim().replace(/\\+$/, "").trim();
+    const effectivePass = cleanUser.toLowerCase().includes("gmail") ? cleanPass.replace(/\s+/g, "") : cleanPass;
     setFetching(true);
     setLogs([]);
     addLog(`Starting forensic acquisition for account: ${cleanUser}...`);
@@ -1612,7 +1614,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
           server: server.trim(), 
           port: parseInt(port) || 993, 
           username: cleanUser, 
-          password: cleanPass, 
+          password: effectivePass, 
           use_ssl: useSsl,
           useSsl,
           mailbox: mailboxScope,
