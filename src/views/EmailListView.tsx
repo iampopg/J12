@@ -829,7 +829,7 @@ function VirtualEmailList({
 }
 
 function EmailDetail({
-  email,
+  email: initialEmail,
   caseId,
   evidenceName,
   tags,
@@ -843,6 +843,17 @@ function EmailDetail({
   onTagsChanged: () => void;
   onClose: () => void;
 }) {
+  const [email, setEmail] = useState<Email>(initialEmail);
+
+  useEffect(() => {
+    setEmail(initialEmail);
+    if (!initialEmail.body_text && !initialEmail.body_html && !initialEmail.headers_raw) {
+      invoke<Email | null>("email_get", { input: { id: initialEmail.id } }).then((full) => {
+        if (full) setEmail(full);
+      }).catch(console.error);
+    }
+  }, [initialEmail.id]);
+
   const [tab, setTab] = useState<
     "overview" | "notes" | "headers" | "auth" | "mime" | "raw" | "attachments"
   >("overview");

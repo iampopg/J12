@@ -371,7 +371,7 @@ pub async fn extract_entities(state: State<'_, AppState>, input: Value) -> Resul
     let db = state.db.lock().await;
 
     let mut stmt = db.conn.prepare(
-        "SELECT id, from_addr, to_addrs, cc_addrs, bcc_addrs, body_text, body_html, headers_raw 
+        "SELECT from_addr, to_addrs, cc_addrs, bcc_addrs 
          FROM emails WHERE case_id = ?1"
     ).map_err(|e| e.to_string())?;
 
@@ -381,29 +381,26 @@ pub async fn extract_entities(state: State<'_, AppState>, input: Value) -> Resul
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-            row.get::<_, Option<String>>(5)?,
-            row.get::<_, Option<String>>(6)?,
-            row.get::<_, Option<String>>(7)?,
         ))
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
     let mut entity_map: HashMap<String, (i64, i64)> = HashMap::new();
-
     let re_email = regex::Regex::new(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}").unwrap();
 
-    for (_email_id, from, to, cc, bcc, body, html, headers) in rows {
-        let full_text = format!("{} {} {} {} {} {} {}", 
-            from, to, cc, bcc, 
-            body.unwrap_or_default(), 
-            html.unwrap_or_default(), 
-            headers.unwrap_or_default()
-        );
-
-        for cap in re_email.captures_iter(&full_text) {
+    for (from, to, cc, bcc) in rows {
+        // Extract sender (sent_count)
+        for cap in re_email.captures_iter(&from) {
             let val = cap[0].to_lowercase();
             let entry = entity_map.entry(val).or_insert((0, 0));
             entry.0 += 1;
+        }
+
+        // Extract recipients (received_count)
+        let recipients = format!("{} {} {}", to, cc, bcc);
+        for cap in re_email.captures_iter(&recipients) {
+            let val = cap[0].to_lowercase();
+            let entry = entity_map.entry(val).or_insert((0, 0));
+            entry.1 += 1;
         }
     }
 
