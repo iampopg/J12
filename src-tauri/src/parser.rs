@@ -15,20 +15,35 @@ pub struct RawEmail {
     pub from_addr: String,
     pub from_display: Option<String>,
     pub to_addrs: Vec<String>,
+    pub to_display_names: Vec<String>,
     pub cc_addrs: Vec<String>,
+    pub cc_display_names: Vec<String>,
     pub bcc_addrs: Vec<String>,
     pub subject: Option<String>,
+    pub subject_raw: Option<String>,
     pub date_sent: Option<DateTime<Utc>>,
-    pub headers_raw: String,
+    pub headers_raw: String,          // COMPLETE raw headers - NO truncation
+    pub headers_json: String,         // All headers as JSON
     pub body_text: Option<String>,
     pub body_html: Option<String>,
     pub raw_size: u64,
     pub raw_offset: u64,
     pub folder_name: Option<String>,
     pub folder_category: String,
-    pub recovery_status: String, // inbox|sent|deleted|drafts|other
+    pub recovery_status: String,
     pub attachments: Vec<RawAttachment>,
     pub warnings: Vec<String>,
+    // Forensic headers
+    pub received_chain: Vec<String>,
+    pub return_path: Option<String>,
+    pub reply_to: Option<String>,
+    pub x_mailer: Option<String>,
+    pub x_originating_ip: Option<String>,
+    pub importance: Option<String>,
+    pub in_reply_to: Option<String>,
+    pub references: Vec<String>,
+    pub x_to_header: Option<String>,
+    pub x_cc_header: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -106,58 +121,152 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
     let mut from_addr = String::new();
     let mut from_display = None;
     let mut to_addrs = Vec::new();
+    let mut to_display_names = Vec::new();
     let mut cc_addrs = Vec::new();
+    let mut cc_display_names = Vec::new();
+    let mut bcc_addrs = Vec::new();
     let mut subject = None;
+    let mut subject_raw = None;
     let mut date_sent = None;
     let mut content_type = String::new();
     let mut folder_raw: Option<String> = None;
     
-    // Parse headers
+    // Forensic headers
+    let mut received_chain = Vec::new();
+    let mut return_path = None;
+    let mut reply_to = None;
+    let mut x_mailer = None;
+    let mut x_originating_ip = None;
+    let mut importance = None;
+    let mut in_reply_to = None;
+    let mut references = Vec::new();
+    let mut x_to_header = None;
+    let mut x_cc_header = None;
+    
+    // Build JSON headers
+    let mut headers_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    
+    // Parse headers - handle folded headers properly
+    let mut current_header_key = String::new();
+    let mut current_header_value = String::new();
+    
     for line in header_section.lines() {
         if line.starts_with(' ') || line.starts_with('\t') {
-            continue; // skip folded headers
+            // Folded header - append to current
+            current_header_value.push(' ');
+            current_header_value.push_str(line.trim());
+            continue;
         }
-        if line.is_empty() {
-            break;
-        }
-        if let Some((key, value)) = line.split_once(':') {
-            let key = key.trim().to_lowercase();
-            let value = value.trim();
-            match key.as_str() {
-                "message-id" => message_id = value.trim_matches(|c| c == '<' || c == '>').to_string(),
+        
+        // Save previous header
+        if !current_header_key.is_empty() {
+            let key_lower = current_header_key.to_lowercase();
+            headers_map.entry(key_lower.clone()).or_insert_with(Vec::new).push(current_header_value.clone());
+            
+            // Process known headers
+            match key_lower.as_str() {
+                "message-id" => message_id = current_header_value.trim().trim_matches(|c| c == '<' || c == '>').to_string(),
                 "from" => {
                     if from_addr.is_empty() {
-                        from_addr = extract_email(value);
-                        from_display = extract_display_name(value);
+                        from_addr = extract_email(&current_header_value);
+                        from_display = extract_display_name(&current_header_value).map(|n| decode_mime_word(&n));
                     }
                 }
                 "x-from" => {
                     if from_display.is_none() {
-                        let name = clean_exchange_name(value);
-                        if !name.is_empty() { from_display = Some(name); }
-                    }
-                }
-                "x-to" => {
-                    // Store X-To names for reference
-                    if !value.is_empty() {
-                        // Could store as extended data if needed
+                        let name = clean_exchange_name(&current_header_value);
+                        if !name.is_empty() { from_display = Some(decode_mime_word(&name)); }
                     }
                 }
                 "to" => {
-                    for addr in extract_address_list(value) {
-                        if !to_addrs.contains(&addr) { to_addrs.push(addr); }
+                    for (email, name) in extract_address_list_with_names(&current_header_value) {
+                        if !to_addrs.contains(&email) {
+                            to_addrs.push(email);
+                            if let Some(n) = name {
+                                to_display_names.push(decode_mime_word(&n));
+                            }
+                        }
                     }
                 }
-                "cc" => cc_addrs = extract_address_list(value),
-                "subject" => subject = Some(value.to_string()),
-                "date" => date_sent = parse_date(value),
-                "content-type" => content_type = value.to_string(),
-                "x-folder" => {
-                    // Extract Outlook folder path for categorization
-                    folder_raw = Some(value.to_string());
+                "x-to" => {
+                    x_to_header = Some(current_header_value.clone());
+                    for (email, name) in extract_address_list_with_names(&current_header_value) {
+                        if !to_addrs.contains(&email) { to_addrs.push(email); }
+                        if let Some(n) = name {
+                            let decoded = decode_mime_word(&n);
+                            if !to_display_names.contains(&decoded) { to_display_names.push(decoded); }
+                        }
+                    }
+                }
+                "cc" => {
+                    for (email, name) in extract_address_list_with_names(&current_header_value) {
+                        if !cc_addrs.contains(&email) {
+                            cc_addrs.push(email);
+                            if let Some(n) = name {
+                                cc_display_names.push(decode_mime_word(&n));
+                            }
+                        }
+                    }
+                }
+                "xcc" => {
+                    x_cc_header = Some(current_header_value.clone());
+                    for (email, name) in extract_address_list_with_names(&current_header_value) {
+                        if !cc_addrs.contains(&email) { cc_addrs.push(email); }
+                        if let Some(n) = name {
+                            let decoded = decode_mime_word(&n);
+                            if !cc_display_names.contains(&decoded) { cc_display_names.push(decoded); }
+                        }
+                    }
+                }
+                "bcc" => bcc_addrs = extract_address_list(&current_header_value),
+                "subject" => {
+                    subject_raw = Some(current_header_value.clone());
+                    subject = Some(decode_mime_word(&current_header_value));
+                }
+                "date" => date_sent = parse_date(&current_header_value),
+                "content-type" => content_type = current_header_value.clone(),
+                "x-folder" => folder_raw = Some(current_header_value.clone()),
+                "received" => received_chain.push(current_header_value.clone()),
+                "return-path" => return_path = Some(current_header_value.clone()),
+                "reply-to" => reply_to = Some(extract_email(&current_header_value)),
+                "x-mailer" => x_mailer = Some(current_header_value.clone()),
+                "x-originating-ip" => {
+                    let ip = extract_ip(&current_header_value);
+                    if !ip.is_empty() { x_originating_ip = Some(ip); }
+                }
+                "importance" => importance = Some(current_header_value.clone()),
+                "x-priority" => importance = Some(current_header_value.clone()),
+                "in-reply-to" => in_reply_to = Some(current_header_value.trim().trim_matches(|c| c == '<' || c == '>').to_string()),
+                "references" => {
+                    for word in current_header_value.split_whitespace() {
+                        let clean = word.trim_matches(|c| c == '<' || c == '>');
+                        if !clean.is_empty() && !references.contains(&clean.to_string()) {
+                            references.push(clean.to_string());
+                        }
+                    }
                 }
                 _ => {}
             }
+        }
+        
+        // Start new header
+        current_header_value.clear();
+        if let Some((key, value)) = line.split_once(':') {
+            current_header_key = key.trim().to_string();
+            current_header_value = value.trim().to_string();
+        } else {
+            current_header_key.clear();
+        }
+    }
+    
+    // Don't forget the last header
+    if !current_header_key.is_empty() {
+        let key_lower = current_header_key.to_lowercase();
+        headers_map.entry(key_lower.clone()).or_insert_with(Vec::new).push(current_header_value.clone());
+        match key_lower.as_str() {
+            "received" => received_chain.push(current_header_value.clone()),
+            "return-path" => return_path = Some(current_header_value.clone()),
+            _ => {}
         }
     }
     
@@ -171,8 +280,11 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
         warnings.push("Missing From address".to_string());
     }
     
+    // Build headers JSON
+    let headers_json = serde_json::to_string(&headers_map).unwrap_or_else(|_| "{}".to_string());
+    
+    // Parse body and attachments
     let (body_text, body_html, attachments) = if content_type.starts_with("multipart/") {
-        // Parse multipart message
         let boundary = extract_boundary(&content_type);
         if let Some(boundary) = boundary {
             parse_multipart(body, &boundary)
@@ -182,22 +294,20 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
     } else if content_type.contains("text/html") {
         (None, Some(body.to_string()), vec![])
     } else if content_type.contains("text/plain") || content_type.is_empty() {
-        {
-            let text = if body.trim().is_empty() { None } else { Some(body.to_string()) };
-            (text, None, vec![])
-        }
+        let text = if body.trim().is_empty() { None } else { Some(body.to_string()) };
+        (text, None, vec![])
     } else {
         (Some(body.to_string()), None, vec![])
     };
     
-    // Categorize email based on X-Folder header with forensic distinction
+    // Categorize email based on X-Folder header
     let (folder_name, folder_category, recovery_status) = match &folder_raw {
         Some(path) => {
             let lower = path.to_lowercase();
             let (category, recovery) = if lower.contains("sent") {
                 ("sent", "normal")
             } else if lower.contains("deleted") {
-                ("soft_deleted", "soft_deleted")  // In Deleted Items / Recycle Bin
+                ("soft_deleted", "soft_deleted")
             } else if lower.contains("draft") {
                 ("drafts", "normal")
             } else if lower.contains("inbox") {
@@ -217,90 +327,242 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
         from_addr,
         from_display,
         to_addrs,
+        to_display_names,
         cc_addrs,
-        bcc_addrs: vec![],
+        cc_display_names,
+        bcc_addrs,
         folder_name,
         folder_category,
         recovery_status,
         subject,
+        subject_raw,
         date_sent,
-        headers_raw: header_section.chars().take(2000).collect(),
+        headers_raw: header_section.to_string(),  // COMPLETE headers - no truncation!
+        headers_json,
         body_text,
         body_html,
         raw_size: size,
         raw_offset: offset,
-        attachments: vec![],
+        attachments,  // NOW properly populated!
         warnings,
+        received_chain,
+        return_path,
+        reply_to,
+        x_mailer,
+        x_originating_ip,
+        importance,
+        in_reply_to,
+        references,
+        x_to_header,
+        x_cc_header,
     })
 }
 
-fn extract_email(s: &str) -> String {
+fn clean_raw_email(s: &str) -> String {
+    s.trim_matches(|c: char| c == '<' || c == '>' || c == '"' || c == '\'' || c == ',' || c == ';' || c == ' ')
+     .trim()
+     .to_string()
+}
+
+pub fn extract_email(s: &str) -> String {
+    let s = s.trim();
+    if s.is_empty() { return String::new(); }
+
+    // Check for standard <email@domain.com>
     if let Some(start) = s.find('<') {
-        if let Some(end) = s.find('>') {
-            if end > start { return s[start+1..end].to_string(); }
-        }
-    }
-    // Try to find email-like pattern
-    if let Some(start) = s.find(|c: char| c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || c == '+') {
-        let rest = &s[start..];
-        if let Some(end) = rest.find(|c: char| c == ' ' || c == '>' || c == '\r' || c == '\n' || c == ',') {
-            let candidate = &rest[..end];
-            if candidate.contains('@') && candidate.contains('.') {
-                return candidate.to_string();
+        if let Some(end) = s.rfind('>') {
+            if end > start {
+                let inside = s[start + 1..end].trim();
+                if !inside.is_empty() {
+                    let cleaned = clean_raw_email(inside);
+                    if cleaned.contains('@') {
+                        return cleaned;
+                    }
+                }
             }
-        } else if rest.contains('@') && rest.contains('.') {
-            return rest.to_string();
         }
     }
-    s.trim().to_string()
-}
 
-fn extract_display_name(s: &str) -> Option<String> {
-    if let Some(start) = s.find('<') {
-        let name = s[..start].trim().trim_matches('"').trim();
-        if !name.is_empty() && !name.contains('@') { return Some(name.to_string()); }
+    // Check if it's an Exchange DN: /O=ENRON/OU=NA/CN=RECIPIENTS/CN=SWHITE
+    if s.contains("/O=") || s.contains("CN=") || s.contains("/o=") || s.contains("cn=") {
+        if let Some(cn_idx) = s.to_uppercase().rfind("CN=") {
+            let name = &s[cn_idx + 3..];
+            let name = name.split(';').next().unwrap_or(name).split('/').next().unwrap_or(name).trim();
+            let name_clean = name.trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '\'');
+            if !name_clean.is_empty() {
+                return format!("{}@enron.com", name_clean.to_lowercase());
+            }
+        }
     }
-    None
+
+    // Try to find email pattern user@domain
+    if let Some(at_idx) = s.find('@') {
+        let before = &s[..at_idx];
+        let after = &s[at_idx + 1..];
+
+        let user_start = before
+            .rfind(|c: char| c == ' ' || c == '<' || c == '"' || c == ':' || c == ',')
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let user = before[user_start..].trim();
+
+        let domain_end = after
+            .find(|c: char| c == ' ' || c == '>' || c == '"' || c == ';' || c == ',' || c == '\r' || c == '\n')
+            .unwrap_or(after.len());
+        let domain = after[..domain_end].trim();
+
+        if !user.is_empty() && !domain.is_empty() {
+            let candidate = format!("{}@{}", user, domain);
+            return clean_raw_email(&candidate);
+        }
+    }
+
+    clean_raw_email(s)
 }
 
-/// Clean Exchange/Notes formatting from display names
-fn clean_exchange_name(s: &str) -> String {
-    let mut name = s.trim().to_string();
-    // Remove IMCEANOTES- encoded parts
+/// Extract display name from Exchange DN or standard name string
+pub fn extract_display_name(s: &str) -> Option<String> {
+    let s = s.trim();
+    if s.is_empty() { return None; }
+
+    // Standard "Name <email>"
+    if let Some(start) = s.find('<') {
+        let name_part = s[..start].trim();
+        if !name_part.is_empty() {
+            if let Some(cleaned) = clean_display_name_str(name_part) {
+                return Some(cleaned);
+            }
+        }
+    }
+
+    // Exchange DN: extract human name from CN
+    if s.contains("/O=") || s.contains("CN=") || s.contains("OU=") {
+        if let Some(cn_idx) = s.to_uppercase().rfind("CN=") {
+            let name = &s[cn_idx + 3..];
+            let name = name.split(';').next().unwrap_or(name).split('/').next().unwrap_or(name).trim();
+            if let Some(cleaned) = clean_display_name_str(name) {
+                return Some(cleaned);
+            }
+        }
+    }
+
+    clean_display_name_str(s)
+}
+
+/// Clean a display name string (remove IMCEANOTES, @ENRON, convert "Last, First" to "First Last")
+pub fn clean_display_name_str(s: &str) -> Option<String> {
+    let mut name = s
+        .trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '\'' || c == ';' || c == ',')
+        .trim()
+        .to_string();
+
+    if name.is_empty() { return None; }
+
+    // Remove IMCEANOTES- and @ENRON suffix
     if let Some(idx) = name.find("IMCEANOTES-") {
         name = name[..idx].trim().to_string();
     }
-    // Remove @ENRON and everything after
     if let Some(idx) = name.find("@ENRON") {
         name = name[..idx].trim().to_string();
     }
-    // Remove Exchange DN components like /O=ENRON/OU=NA/CN=RECIPIENTS/...
-    if let Some(idx) = name.find("/O=") {
+    if let Some(idx) = name.find("@enron") {
         name = name[..idx].trim().to_string();
     }
-    // Remove angle brackets content
-    if let Some(start) = name.find('<') {
-        if let Some(end) = name.find('>') {
-            name = format!("{} {}", name[..start].trim(), name[end+1..].trim()).trim().to_string();
+
+    // If it has "Last, First", convert to "First Last"
+    if name.contains(',') && !name.contains('@') {
+        let parts: Vec<&str> = name.split(',').map(|p| p.trim()).collect();
+        if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            name = format!("{} {}", parts[1], parts[0]);
         }
     }
-    // Remove quotes
-    name = name.trim_matches('"').trim().to_string();
-    // Remove email addresses
-    if name.contains('@') {
-        // Try to extract just the name part
-        if let Some(start) = name.find('<') {
-            name = name[..start].trim().to_string();
+
+    let trimmed = name
+        .trim_matches(|c| c == '<' || c == '>' || c == '"' || c == '\'' || c == ',' || c == ';')
+        .trim();
+
+    if trimmed.is_empty() || (trimmed.contains('@') && !trimmed.contains(' ')) {
+        return None;
+    }
+
+    Some(trimmed.to_string())
+}
+
+/// Split address list (e.g. "To: Last, First <email1>, Second <email2>") without breaking on commas inside names
+pub fn split_address_list(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut bracket_depth = 0;
+
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        let c = chars[i];
+        if c == '"' {
+            in_quotes = !in_quotes;
+            current.push(c);
+        } else if c == '<' {
+            bracket_depth += 1;
+            current.push(c);
+        } else if c == '>' {
+            if bracket_depth > 0 { bracket_depth -= 1; }
+            current.push(c);
+        } else if c == ';' {
+            if !in_quotes && bracket_depth == 0 {
+                let trimmed = current.trim().to_string();
+                if !trimmed.is_empty() { parts.push(trimmed); }
+                current.clear();
+            } else {
+                current.push(c);
+            }
+        } else if c == ',' {
+            if in_quotes || bracket_depth > 0 {
+                current.push(c);
+            } else {
+                // If current part does NOT have '@' or '<', and the next chunk before comma contains '<' or '@',
+                // this comma is between "Last, First" in a name!
+                let has_email_in_current = current.contains('@') || current.contains('<');
+                let remaining: String = chars[i+1..].iter().collect();
+                let next_delim = remaining.find(|ch| ch == ';' || ch == ',');
+                let next_chunk = match next_delim {
+                    Some(idx) => &remaining[..idx],
+                    None => &remaining,
+                };
+                let next_has_bracket = next_chunk.contains('<') && next_chunk.contains('>');
+                let next_has_at = next_chunk.contains('@');
+
+                if !has_email_in_current && (next_has_bracket || next_has_at) {
+                    current.push(c);
+                } else {
+                    let trimmed = current.trim().to_string();
+                    if !trimmed.is_empty() { parts.push(trimmed); }
+                    current.clear();
+                }
+            }
         } else {
-            // It's just an email, not a name
-            return String::new();
+            current.push(c);
         }
+        i += 1;
     }
-    name.trim().to_string()
+
+    let trimmed = current.trim().to_string();
+    if !trimmed.is_empty() { parts.push(trimmed); }
+    parts
+}
+
+fn clean_exchange_name(s: &str) -> String {
+    clean_display_name_str(s).unwrap_or_else(|| s.trim().to_string())
 }
 
 fn extract_address_list(s: &str) -> Vec<String> {
-    s.split(',').map(|a| extract_email(a.trim())).filter(|a| !a.is_empty() && a != "unknown@unknown").collect()
+    split_address_list(s)
+        .into_iter()
+        .map(|a| extract_email(&a))
+        .filter(|a| !a.is_empty() && a != "unknown@unknown")
+        .collect()
 }
 
 fn parse_date(s: &str) -> Option<DateTime<Utc>> {
@@ -480,4 +742,83 @@ fn qp_decode(input: &str) -> Vec<u8> {
     }
     
     result
+}
+
+/// Decode MIME encoded-word syntax: =?charset?encoding?text?=
+fn decode_mime_word(s: &str) -> String {
+    let mut result = String::new();
+    let mut remaining = s;
+    
+    while let Some(start) = remaining.find("=?") {
+        // Add text before encoded word
+        result.push_str(&remaining[..start]);
+        
+        // Find end of encoded word (look for ?=)
+        if let Some(end) = remaining[start..].find("?=") {
+            let encoded = &remaining[start..start + end + 2];
+            let decoded = decode_single_mime_word(encoded);
+            result.push_str(&decoded);
+            remaining = &remaining[start + end + 2..];
+        } else {
+            break;
+        }
+    }
+    result.push_str(remaining);
+    result.trim().to_string()
+}
+
+fn decode_single_mime_word(s: &str) -> String {
+    // Format: =?charset?encoding?text?=
+    let s = s.trim_start_matches("=?").trim_end_matches("?=");
+    let parts: Vec<&str> = s.split('?').collect();
+    if parts.len() != 3 { return s.to_string(); }
+    
+    let _charset = parts[0];
+    let encoding = parts[1].to_uppercase();
+    let text = parts[2];
+    
+    if encoding == "B" {
+        // Base64 encoded
+        let cleaned: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        match base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &cleaned) {
+            Ok(bytes) => String::from_utf8_lossy(&bytes).to_string(),
+            Err(_) => text.to_string(),
+        }
+    } else if encoding == "Q" {
+        // Quoted-printable encoded
+        let bytes = qp_decode(text);
+        String::from_utf8_lossy(&bytes).to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// Extract list of (email, display_name) pairs
+fn extract_address_list_with_names(s: &str) -> Vec<(String, Option<String>)> {
+    split_address_list(s).into_iter().filter_map(|part| {
+        let part = part.trim();
+        if part.is_empty() { return None; }
+        let email = extract_email(part);
+        if email.is_empty() { return None; }
+        let name = extract_display_name(part);
+        Some((email, name))
+    }).collect()
+}
+
+/// Extract IP address from header value
+fn extract_ip(s: &str) -> String {
+    // Look for pattern like [x.x.x.x] or just x.x.x.x
+    if let Some(start) = s.find('[') {
+        if let Some(end) = s[start..].find(']') {
+            return s[start+1..start+end].to_string();
+        }
+    }
+    // Try to find IP pattern
+    for word in s.split(|c: char| c == ' ' || c == '\t' || c == '(' || c == ')' || c == ',') {
+        let word = word.trim();
+        if word.split('.').count() == 4 && word.chars().all(|c| c.is_digit(10) || c == '.') {
+            return word.to_string();
+        }
+    }
+    String::new()
 }

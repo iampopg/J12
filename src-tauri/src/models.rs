@@ -105,6 +105,7 @@ pub struct Finding {
     pub created_at: DateTime<Utc>,
     pub reviewed_by: Option<String>,
     pub reviewed_at: Option<DateTime<Utc>>,
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -145,6 +146,17 @@ pub struct CaseCreateInput {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct CaseUpdateInput {
+    pub case_id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    pub target_email: Option<String>,
+    pub target_name: Option<String>,
+    pub target_organization: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct EvidenceUploadInput {
     pub case_id: String,
     pub file_path: String,
@@ -177,6 +189,7 @@ pub struct Entity {
     pub sent_count: i64,
     pub received_count: i64,
     pub role: String,
+    pub aliases: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -189,3 +202,82 @@ pub struct EntityInput {
 pub struct EmptyInput {
     pub case_id: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CaseNote {
+    pub id: String,
+    pub case_id: String,
+    pub author: String,
+    pub title: String,
+    pub content: String,
+    pub category: String,
+    pub pinned: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CaseNoteCreateInput {
+    pub case_id: String,
+    pub author: Option<String>,
+    pub title: String,
+    pub content: String,
+    pub category: Option<String>,
+    pub pinned: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CaseNoteUpdateInput {
+    pub id: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub category: Option<String>,
+    pub pinned: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EmailTag {
+    pub id: String,
+    pub case_id: String,
+    pub email_id: String,
+    pub tag: String,
+    pub color: String,
+    pub created_by: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmailTagAddInput {
+    pub case_id: String,
+    pub email_id: String,
+    pub tag: String,
+    pub color: Option<String>,
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmailTagRemoveInput {
+    pub case_id: String,
+    pub email_id: String,
+    pub tag: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct EmailNote {
+    pub id: String,
+    pub case_id: String,
+    pub email_id: String,
+    pub author: String,
+    pub content: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EmailNoteInput {
+    pub case_id: String,
+    pub email_id: String,
+    pub author: Option<String>,
+    pub content: String,
+}
+

@@ -7,16 +7,46 @@ import { SearchView } from "../views/SearchView";
 import { EntityDiveView } from "../views/EntityDiveView";
 import { TimelineView } from "../views/TimelineView";
 import { GraphView } from "../views/GraphView";
+import { NotesView } from "../views/NotesView";
+import { ReportView } from "../views/ReportView";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
 interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
 
-type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target";
+type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity";
 type FolderFilter = "all" | "inbox" | "sent" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other";
+
+function cleanDisplayName(name: string | null): string {
+  if (!name) return "";
+  let n = name.trim();
+  n = n.replace(/^['"]+|['"]+$/g, "");
+  if (n.startsWith("/O=") || n.startsWith("/o=")) {
+    const parts = n.split("/");
+    for (const part of parts) {
+      if (part.toUpperCase().startsWith("CN=")) {
+        return part.substring(3).trim();
+      }
+    }
+    return n;
+  }
+  if (n.includes(",")) {
+    const parts = n.split(",");
+    if (parts.length === 2) {
+      const last = parts[0].trim();
+      const first = parts[1].trim();
+      if (!first.includes(" ") && !last.includes(" ")) {
+        return `${first} ${last}`;
+      }
+    }
+  }
+  n = n.replace(/<.*$/, "").trim();
+  return n;
+}
 
 export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () => void }) {
   const [view, setView] = useState<View>("dashboard");
+  const [notesCount, setNotesCount] = useState(0);
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
@@ -26,6 +56,8 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
   const [evidenceFolderOpen, setEvidenceFolderOpen] = useState(true);
   const [investigationFolderOpen, setInvestigationFolderOpen] = useState(true);
   const [folderFilter, setFolderFilter] = useState<FolderFilter>("all");
+  const [showDeleteCase, setShowDeleteCase] = useState(false);
+  const [deletingCase, setDeletingCase] = useState(false);
 
   const hasEvidence = evidence.length > 0;
   const hasDone = evidence.some((e) => e.parse_status === "done");
@@ -41,11 +73,28 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
       setCaseData(c);
       setEvidence(ev);
       setDashboard(dash);
+      if (ev.length === 0) {
+        setView("evidence");
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, [caseId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  const handleDeleteCase = async () => {
+    if (!caseId) return;
+    setDeletingCase(true);
+    try {
+      await invoke<boolean>("case_delete", { input: { case_id: caseId } });
+      onBack();
+    } catch (e) {
+      console.error("Failed to delete case:", e);
+    } finally {
+      setDeletingCase(false);
+      setShowDeleteCase(false);
+    }
+  };
 
   // Auto-refresh while parsing
   useEffect(() => {
@@ -80,8 +129,8 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
           <div className="brand" style={{ cursor: "pointer" }}>
             <img src="/j12-logo.png" alt="J12" className="topbar-logo" />
             <div>
-              <div className="brand-title"><span className="brand-j">J</span><span className="brand-12">12</span> · {caseData?.title || "Case"}</div>
-              <div className="brand-sub">{caseData?.case_number || "No case number"}</div>
+              <div className="brand-title">{caseData?.title || "Case"}</div>
+              <div className="brand-sub">{caseData?.case_number ? `Case #${caseData.case_number}` : "Investigation"}</div>
             </div>
           </div>
         </div>
@@ -93,7 +142,13 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
             </div>
           )}
           {hasDone && <span className="badge badge-green">● {dashboard?.email_count?.toLocaleString() || 0} emails</span>}
-          <span className="muted">{evidence.length} source(s)</span>
+          <button
+            className={`btn ${view === "evidence" ? "btn-primary" : "btn-ghost"} btn-sm`}
+            onClick={() => setView("evidence")}
+            style={{ fontSize: 12 }}
+          >
+            📥 {evidence.length} Evidence Source(s)
+          </button>
         </div>
       </header>
 
@@ -118,9 +173,8 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
            {/* Target Profile */}
            {!sidebarCollapsed && (
              <div className="sb-folder" style={{ marginBottom: 8 }}>
-               <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")} style={{ fontWeight: 500 }}>
+               <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")} style={{ fontWeight: 600 }}>
                  <span className="sb-icon">👤</span> Target Profile
-                 {caseData?.target_email && <span className="sb-count" style={{ background: "var(--accent)" }}>●</span>}
                </button>
              </div>
            )}
@@ -134,8 +188,8 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
             {emailFolderOpen && !sidebarCollapsed && (
               <div className="sb-folder-content">
                 <button className={`sb-item ${folderFilter === "all" ? "active" : ""}`} onClick={() => { setFolderFilter("all"); setView("emails"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">📥</span> All Emails
-                  <span className="sb-count">{emailCounts.total}</span>
+                  <span className="sb-icon">📬</span> All Emails
+                  <span className="sb-count">{emailCounts.total || 0}</span>
                 </button>
                 <button className={`sb-item ${folderFilter === "inbox" ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                   <span className="sb-icon">📥</span> Inbox
@@ -171,16 +225,57 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
             )}
           </div>
 
-          {/* Evidence Sources - Collapsible */}
+          {/* Evidence Sources - Always Clickable */}
           <div className="sb-folder">
-            <div className="sb-folder-header" onClick={() => setEvidenceFolderOpen(!evidenceFolderOpen)}>
-              <span className="sb-folder-arrow">{evidenceFolderOpen ? "▼" : "▶"}</span>
-              <span className="sb-label" style={{ margin: 0 }}>Evidence Sources</span>
+            <div
+              className="sb-folder-header"
+              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+              onClick={() => {
+                setView("evidence");
+                setEvidenceFolderOpen(true);
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <span
+                  className="sb-folder-arrow"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEvidenceFolderOpen(!evidenceFolderOpen);
+                  }}
+                  style={{ fontSize: 10, cursor: "pointer" }}
+                >
+                  {evidenceFolderOpen ? "▼" : "▶"}
+                </span>
+                <span className="sb-label" style={{ margin: 0, padding: 0 }}>Evidence Sources</span>
+              </div>
+              <button
+                className="btn btn-ghost btn-sm"
+                style={{ padding: "2px 8px", fontSize: 10, height: 22 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setView("evidence");
+                }}
+              >
+                + Add
+              </button>
             </div>
             {evidenceFolderOpen && !sidebarCollapsed && (
               <div className="sb-folder-content">
+                <button
+                  className={`sb-item ${view === "evidence" ? "active" : ""}`}
+                  onClick={() => setView("evidence")}
+                >
+                  <span className="sb-icon">📥</span>
+                  <span>Acquire / Upload</span>
+                  <span className="sb-count">{evidence.length}</span>
+                </button>
                 {evidence.map((e) => (
-                  <button key={e.id} className={`sb-item ${view === "evidence" ? "active" : ""}`} onClick={() => setView("evidence")}>
+                  <button
+                    key={e.id}
+                    className={`sb-item ${view === "evidence" ? "active" : ""}`}
+                    onClick={() => setView("evidence")}
+                    style={{ paddingLeft: 24 }}
+                  >
                     <span className="sb-icon">{e.format === "eml" ? "📧" : e.format === "mbox" ? "📦" : "📄"}</span>
                     <span className="sb-text-truncate">{e.filename}</span>
                     <span className={`sb-status sb-${e.parse_status}`}>{e.parse_status === "done" ? "✓" : e.parse_status === "error" ? "!" : "•"}</span>
@@ -229,14 +324,39 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
             </div>
             {!sidebarCollapsed && (
               <div className="sb-folder-content">
+                <button className={`sb-item ${view === "case_manage" ? "active" : ""}`} onClick={() => setView("case_manage")}>
+                  <span className="sb-icon">⚙️</span> Manage Case
+                </button>
                 <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
                   <span className="sb-icon">📋</span> Chain of Custody
                 </button>
-                <button className="sb-item" style={{ opacity: 0.4 }}>
+                <button className={`sb-item ${view === "notes" ? "active" : ""}`} onClick={() => setView("notes")}>
                   <span className="sb-icon">📝</span> Notes
+                  {notesCount > 0 && <span className="sb-count">{notesCount}</span>}
                 </button>
-                <button className="sb-item" style={{ opacity: 0.4 }}>
-                  <span className="sb-icon">📊</span> Reports
+                <button className={`sb-item ${view === "report" ? "active" : ""}`} onClick={() => setView("report")}>
+                  <span className="sb-icon">📄</span> Generate Report
+                </button>
+                <button className="sb-item" style={{ color: "var(--red)" }} onClick={() => setShowDeleteCase(true)}>
+                  <span className="sb-icon">🗑️</span> Delete Case
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Integrity & Verification (Phase 6) */}
+          <div className="sb-folder">
+            <div className="sb-folder-header">
+              <span className="sb-folder-arrow">▼</span>
+              <span className="sb-label" style={{ margin: 0 }}>Integrity & Verification</span>
+            </div>
+            {!sidebarCollapsed && (
+              <div className="sb-folder-content">
+                <button className={`sb-item ${view === "integrity" ? "active" : ""}`} onClick={() => setView("integrity")}>
+                  <span className="sb-icon">🔒</span> Verify Evidence
+                </button>
+                <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
+                  <span className="sb-icon">📋</span> Chain of Custody
                 </button>
               </div>
             )}
@@ -245,7 +365,16 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
 
         {/* Main content area */}
         <main className="content">
-          {view === "dashboard" && dashboard && <DashboardView data={dashboard} evidence={evidence} caseData={caseData} />}
+          {view === "dashboard" && dashboard && (
+            <DashboardView
+              data={dashboard}
+              evidence={evidence}
+              caseData={caseData}
+              caseId={caseId}
+              onNavigate={(v) => setView(v)}
+              onRefresh={loadAll}
+            />
+          )}
           {view === "evidence" && <EvidenceView evidence={evidence} caseId={caseId} onRefresh={loadAll} />}
            {view === "emails" && <EmailListView caseId={caseId} filter="all" onViewEntity={(email) => setView("entities")} />}
            {view === "sent" && <EmailListView caseId={caseId} filter="sent" onViewEntity={(email) => setView("entities")} />}
@@ -260,16 +389,85 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
            {view === "entities" && <EntityDiveView caseId={caseId} />}
            {view === "timeline" && <TimelineView caseId={caseId} />}
            {view === "graph" && <GraphView caseId={caseId} />}
-           {view === "findings" && <FindingsView caseId={caseId} />}
+           {view === "findings" && <FindingsView caseId={caseId} onGoToEvidence={() => setView("evidence")} />}
            {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
-           {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
-        </main>
-      </div>
-    </div>
-  );
+            {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
+            {view === "notes" && <NotesView caseId={caseId} onNotesCountChange={setNotesCount} />}
+            {view === "case_manage" && <CaseManageView caseData={caseData} caseId={caseId} onUpdate={loadAll} onBack={() => setView("dashboard")} />}
+             {view === "report" && <ReportView caseId={caseId} caseData={caseData} />}
+             {view === "integrity" && <IntegrityView caseId={caseId} />}
+         </main>
+       </div>
+
+       {/* Delete Case Confirmation Modal */}
+       {showDeleteCase && (
+         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+           <div className="card" style={{ maxWidth: 440, width: "90%", padding: 24 }}>
+             <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-0)", marginBottom: 12 }}>⚠ Delete Case</h3>
+             <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.6 }}>
+               Are you sure you want to delete case <strong>"{caseData?.title}"</strong>? This will permanently remove:
+             </p>
+             <ul style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 20, paddingLeft: 20, lineHeight: 1.8 }}>
+               <li>All evidence sources ({evidence.length} files)</li>
+               <li>All parsed emails ({dashboard?.email_count?.toLocaleString() || 0} messages)</li>
+               <li>All findings and analysis results</li>
+               <li>Chain of custody records</li>
+             </ul>
+             <p style={{ fontSize: 12, color: "var(--red)", marginBottom: 20 }}>This action cannot be undone.</p>
+             <div className="row gap-2" style={{ justifyContent: "flex-end" }}>
+               <button className="btn btn-ghost" onClick={() => setShowDeleteCase(false)} disabled={deletingCase}>Cancel</button>
+               <button className="btn" style={{ background: "var(--red)", color: "#fff" }} onClick={handleDeleteCase} disabled={deletingCase}>
+                 {deletingCase ? "Deleting..." : "Delete Permanently"}
+               </button>
+             </div>
+           </div>
+         </div>
+       )}
+     </div>
+   );
 }
 
-function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence: Evidence[]; caseData: Case | null }) {
+function DashboardView({
+  data,
+  evidence,
+  caseData,
+  caseId,
+  onNavigate,
+  onRefresh,
+}: {
+  data: Dashboard;
+  evidence: Evidence[];
+  caseData: Case | null;
+  caseId: string;
+  onNavigate: (view: View) => void;
+  onRefresh: () => void;
+}) {
+  const [criticalFindings, setCriticalFindings] = useState<any[]>([]);
+  const [targetPartners, setTargetPartners] = useState<any[]>([]);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  useEffect(() => {
+    // Load top critical findings
+    invoke<any[]>("findings_list", { input: { case_id: caseId } })
+      .then((res) => {
+        const critical = (res || []).filter((f) => f.severity === "critical" || f.severity === "high");
+        setCriticalFindings(critical.slice(0, 3));
+      })
+      .catch(() => setCriticalFindings([]));
+
+    // Load target partners if target_email exists
+    if (caseData?.target_email) {
+      invoke<any>("entity_dive", { input: { case_id: caseId, email: caseData.target_email } })
+        .then((res) => {
+          if (res?.top_sent_to || res?.top_received_from) {
+            const combined = [...(res.top_sent_to || []), ...(res.top_received_from || [])];
+            setTargetPartners(combined.slice(0, 4));
+          }
+        })
+        .catch(() => setTargetPartners([]));
+    }
+  }, [caseId, caseData?.target_email]);
+
   const severityData = [
     { label: "Critical", value: data.severity_breakdown?.critical || 0, color: "#ef4444" },
     { label: "High", value: data.severity_breakdown?.high || 0, color: "#f97316" },
@@ -277,94 +475,316 @@ function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence
     { label: "Low", value: data.severity_breakdown?.low || 0, color: "#22c55e" },
   ];
   const totalFindings = severityData.reduce((sum, s) => sum + s.value, 0);
-  const maxSeverity = Math.max(...severityData.map(s => s.value), 1);
+  const maxSeverity = Math.max(...severityData.map((s) => s.value), 1);
+
+  const handleRunAnalysis = async () => {
+    setAnalyzing(true);
+    try {
+      await invoke("run_analysis", { input: { case_id: caseId } });
+      onRefresh();
+    } catch (e) {
+      console.error("Analysis failed:", e);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
   return (
     <div>
-      <div className="row between mb-4">
+      {/* Top Header & Investigation Quick Actions Bar */}
+      <div className="row between mb-4" style={{ flexWrap: "wrap", gap: 12 }}>
         <div>
-          <h2 style={{ fontSize: 24, fontWeight: 700, color: "var(--text-0)", marginBottom: 4 }}>Case Dashboard</h2>
-          <p className="muted">Overview of evidence and investigation findings</p>
+          <h2 style={{ fontSize: 24, fontWeight: 800, color: "var(--text-0)", marginBottom: 4 }}>
+            Case Investigation Command Center
+          </h2>
+          <p className="muted" style={{ fontSize: 12 }}>
+            Central intelligence hub for evidence triage, threat detection, entity profiling, and case reporting.
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={() => { /* trigger analysis refresh */ }}>
-          ↻ Refresh
+        <div className="row gap-2">
+          <button
+            className="btn btn-ghost btn-sm"
+            onClick={handleRunAnalysis}
+            disabled={analyzing}
+            title="Run forensic rules & brand impersonation checks"
+          >
+            {analyzing ? "⚡ Analyzing..." : "⚡ Run Analysis"}
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={onRefresh}>
+            ↻ Refresh
+          </button>
+        </div>
+      </div>
+
+      {/* Investigation Action Shortcuts Bar */}
+      <div
+        className="card mb-4"
+        style={{
+          padding: "10px 14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          flexWrap: "wrap",
+          background: "var(--bg-2)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-3)", marginRight: 6 }}>
+          QUICK TOOLS:
+        </span>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: 11, padding: "4px 10px" }}
+          onClick={() => onNavigate("search")}
+        >
+          🔍 Advanced Search
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: 11, padding: "4px 10px" }}
+          onClick={() => onNavigate("graph")}
+        >
+          🕸️ Network Graph
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: 11, padding: "4px 10px" }}
+          onClick={() => onNavigate("timeline")}
+        >
+          📅 Incident Timeline
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: 11, padding: "4px 10px" }}
+          onClick={() => onNavigate("entities")}
+        >
+          👤 Entity Profiles
+        </button>
+        <button
+          className="btn btn-ghost btn-sm"
+          style={{ fontSize: 11, padding: "4px 10px" }}
+          onClick={() => onNavigate("findings")}
+        >
+          🛡️ Findings Matrix
+        </button>
+        <button
+          className="btn btn-primary btn-sm"
+          style={{ fontSize: 11, padding: "4px 12px", marginLeft: "auto" }}
+          onClick={() => onNavigate("report")}
+        >
+          📄 Generate Report
         </button>
       </div>
 
-      {/* Target Info Card */}
-      {(caseData?.target_name || caseData?.target_email || caseData?.target_organization) && (
-        <div className="card mb-4" style={{ borderLeft: "4px solid var(--accent)" }}>
-          <div className="row between">
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 600, color: "var(--accent)", letterSpacing: "0.05em", marginBottom: 8 }}>INVESTIGATION TARGET</div>
-              <div className="row gap-4" style={{ flexWrap: "wrap" }}>
-                {caseData.target_name && (
-                  <div>
-                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>Name</div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)" }}>{caseData.target_name}</div>
-                  </div>
-                )}
-                {caseData.target_email && (
-                  <div>
-                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>Email</div>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--accent)", fontFamily: "var(--mono)" }}>{caseData.target_email}</div>
-                  </div>
-                )}
-                {caseData.target_organization && (
-                  <div>
-                    <div style={{ fontSize: 11, color: "var(--text-3)" }}>Organization</div>
-                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text-1)" }}>{caseData.target_organization}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 11, color: "var(--text-3)" }}>Case Number</div>
-              <div style={{ fontSize: 13, fontFamily: "var(--mono)", color: "var(--text-1)" }}>{caseData.case_number || "—"}</div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* KPI Cards */}
-      <div className="kpi-grid">
-        <div className="kpi">
+      {/* Interactive 5-Metric Command Center Cards (Clickable) */}
+      <div className="kpi-grid mb-4">
+        <div
+          className="kpi tr-click"
+          style={{ cursor: "pointer" }}
+          onClick={() => onNavigate("search")}
+          title="Click to search all messages"
+        >
           <div className="kpi-val">{data.email_count.toLocaleString()}</div>
-          <div className="kpi-label">Emails</div>
+          <div className="kpi-label">✉️ Processed Emails →</div>
         </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ color: "var(--accent)" }}>{data.entity_count || 0}</div>
-          <div className="kpi-label">Entities</div>
+
+        <div
+          className="kpi tr-click"
+          style={{ cursor: "pointer" }}
+          onClick={() => onNavigate("entities")}
+          title="Click to explore entity profiles"
+        >
+          <div className="kpi-val" style={{ color: "var(--accent)" }}>
+            {data.entity_count || 0}
+          </div>
+          <div className="kpi-label">👥 Entities Discovered →</div>
         </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ color: "var(--warning)" }}>{data.deleted_recovered}</div>
-          <div className="kpi-label">Deleted Recovered</div>
+
+        <div
+          className="kpi tr-click"
+          style={{ cursor: "pointer" }}
+          onClick={() => onNavigate("soft_deleted")}
+          title="Click to inspect deleted & recovered emails"
+        >
+          <div className="kpi-val" style={{ color: "var(--danger)" }}>
+            {data.deleted_recovered.toLocaleString()}
+          </div>
+          <div className="kpi-label">🗑️ Deleted Recovered →</div>
         </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ color: totalFindings > 0 ? "var(--danger)" : "var(--text-0)" }}>{totalFindings}</div>
-          <div className="kpi-label">Findings</div>
+
+        <div
+          className="kpi tr-click"
+          style={{ cursor: "pointer" }}
+          onClick={() => onNavigate("findings")}
+          title="Click to review security findings"
+        >
+          <div
+            className="kpi-val"
+            style={{ color: totalFindings > 0 ? "var(--warning)" : "var(--text-0)" }}
+          >
+            {totalFindings}
+          </div>
+          <div className="kpi-label">🚨 Security Findings →</div>
         </div>
-        <div className="kpi">
-          <div className="kpi-val" style={{ color: "var(--success)" }}>{data.evidence_count}</div>
-          <div className="kpi-label">Evidence</div>
+
+        <div
+          className="kpi tr-click"
+          style={{ cursor: "pointer" }}
+          onClick={() => onNavigate("evidence")}
+          title="Click to manage evidence containers"
+        >
+          <div className="kpi-val" style={{ color: "var(--success)" }}>
+            {data.evidence_count}
+          </div>
+          <div className="kpi-label">📁 Evidence Containers →</div>
         </div>
       </div>
 
-      {/* Folder Breakdown */}
+      {/* Target Subject Dossier & Active Security Threats Grid */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 16,
+          marginBottom: 16,
+        }}
+      >
+        {/* Left: Investigation Target Dossier */}
+        <div className="card mb-0" style={{ borderLeft: "4px solid var(--accent)", padding: 16 }}>
+          <div className="row between mb-3">
+            <span style={{ fontSize: 11, fontWeight: 700, color: "var(--accent)", letterSpacing: "0.06em" }}>
+              🎯 CASE TARGET DOSSIER
+            </span>
+            <span className="badge badge-blue" style={{ fontSize: 10 }}>
+              CASE #{caseData?.case_number || "J12-001"}
+            </span>
+          </div>
+
+          <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text-0)", marginBottom: 4 }}>
+            {caseData?.target_name || "Target Not Set"}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)", marginBottom: 8 }}>
+            {caseData?.target_email || "No primary email assigned"}
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-2)", marginBottom: 12 }}>
+            Organization: <strong>{caseData?.target_organization || "N/A"}</strong>
+          </div>
+
+          {/* Top Correspondents for Target */}
+          {targetPartners.length > 0 && (
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)", marginBottom: 6 }}>
+                FREQUENT CORRESPONDENTS:
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {targetPartners.map((p, i) => (
+                  <div
+                    key={i}
+                    className="row between tr-click"
+                    style={{
+                      padding: "4px 8px",
+                      background: "var(--bg-3)",
+                      borderRadius: "var(--r-xs)",
+                      fontSize: 11,
+                    }}
+                    onClick={() => onNavigate("entities")}
+                  >
+                    <span style={{ color: "var(--text-1)" }}>
+                      {cleanDisplayName(p.display_name) || p.email}
+                    </span>
+                    <span className="badge badge-blue" style={{ fontSize: 9 }}>
+                      {p.count} messages
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Right: Active Threats & Security Alerts */}
+        <div className="card mb-0" style={{ borderLeft: "4px solid #ef4444", padding: 16 }}>
+          <div className="row between mb-3">
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#ef4444", letterSpacing: "0.06em" }}>
+              🚨 CRITICAL SECURITY FINDINGS ({totalFindings})
+            </span>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: 10, padding: "2px 6px" }}
+              onClick={() => onNavigate("findings")}
+            >
+              View All →
+            </button>
+          </div>
+
+          {criticalFindings.length > 0 ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {criticalFindings.map((f: any) => (
+                <div
+                  key={f.id}
+                  className="tr-click"
+                  style={{
+                    padding: 10,
+                    background: "var(--bg-3)",
+                    borderRadius: "var(--r-xs)",
+                    borderLeft: "3px solid #ef4444",
+                  }}
+                  onClick={() => onNavigate("findings")}
+                >
+                  <div className="row between mb-1">
+                    <strong style={{ fontSize: 12, color: "var(--text-0)" }}>{f.title}</strong>
+                    <span className="badge badge-red" style={{ fontSize: 9 }}>
+                      {f.severity.toUpperCase()}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {f.description}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty" style={{ padding: 24, fontSize: 12 }}>
+              No critical threat violations flagged. Run analysis to scan archive.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Interactive Folder Breakdown Tiles */}
       <div className="card mb-4">
-        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Email Folder Breakdown</h3>
-        <div className="row gap-4" style={{ flexWrap: "wrap" }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
+          Mailbox Folder Tally (Click to inspect folder)
+        </h3>
+        <div className="row gap-3" style={{ flexWrap: "wrap" }}>
           {[
-            { label: "Inbox", count: data.inbox_count, color: "#3b82f6" },
-            { label: "Sent", count: data.sent_count, color: "#22c55e" },
-            { label: "Deleted", count: data.soft_deleted_count, color: "#f97316" },
-            { label: "Drafts", count: data.drafts_count, color: "#a855f7" },
-            { label: "Spam", count: data.spam_count, color: "#ef4444" },
-            { label: "Other", count: data.other_count, color: "#6b7280" },
-          ].map(folder => (
-            <div key={folder.label} style={{ flex: 1, minWidth: 120, padding: 12, background: "var(--bg-3)", borderRadius: "var(--r-sm)", textAlign: "center" }}>
-              <div style={{ fontSize: 20, fontWeight: 700, color: folder.color }}>{folder.count.toLocaleString()}</div>
-              <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 4 }}>{folder.label}</div>
+            { label: "Inbox", count: data.inbox_count, color: "#3b82f6", view: "inbox" as View },
+            { label: "Sent Items", count: data.sent_count, color: "#22c55e", view: "sent" as View },
+            { label: "Deleted / Trash", count: data.soft_deleted_count, color: "#f97316", view: "soft_deleted" as View },
+            { label: "Drafts", count: data.drafts_count, color: "#a855f7", view: "drafts" as View },
+            { label: "Spam / Junk", count: data.spam_count, color: "#ef4444", view: "spam" as View },
+            { label: "Other Folders", count: data.other_count, color: "#6b7280", view: "other" as View },
+          ].map((folder) => (
+            <div
+              key={folder.label}
+              className="tr-click"
+              style={{
+                flex: 1,
+                minWidth: 120,
+                padding: 12,
+                background: "var(--bg-3)",
+                borderRadius: "var(--r-sm)",
+                textAlign: "center",
+                cursor: "pointer",
+              }}
+              onClick={() => onNavigate(folder.view)}
+            >
+              <div style={{ fontSize: 20, fontWeight: 700, color: folder.color }}>
+                {folder.count.toLocaleString()}
+              </div>
+              <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 4 }}>
+                {folder.label} →
+              </div>
             </div>
           ))}
         </div>
@@ -375,13 +795,41 @@ function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence
         <div className="card mb-4">
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Findings by Severity</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {severityData.map(sev => (
+            {severityData.map((sev) => (
               <div key={sev.label} className="row gap-4">
-                <span style={{ width: 70, fontSize: 12, color: sev.color, fontWeight: 600 }}>{sev.label}</span>
-                <div style={{ flex: 1, height: 24, background: "var(--bg-3)", borderRadius: "var(--r-sm)", overflow: "hidden" }}>
-                  <div style={{ width: `${(sev.value / maxSeverity) * 100}%`, height: "100%", background: sev.color, borderRadius: "var(--r-sm)", opacity: 0.7 }} />
+                <span style={{ width: 70, fontSize: 12, color: sev.color, fontWeight: 600 }}>
+                  {sev.label}
+                </span>
+                <div
+                  style={{
+                    flex: 1,
+                    height: 24,
+                    background: "var(--bg-3)",
+                    borderRadius: "var(--r-sm)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${(sev.value / maxSeverity) * 100}%`,
+                      height: "100%",
+                      background: sev.color,
+                      borderRadius: "var(--r-sm)",
+                      opacity: 0.7,
+                    }}
+                  />
                 </div>
-                <span style={{ width: 40, textAlign: "right", fontSize: 13, fontWeight: 600, color: "var(--text-1)" }}>{sev.value}</span>
+                <span
+                  style={{
+                    width: 40,
+                    textAlign: "right",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: "var(--text-1)",
+                  }}
+                >
+                  {sev.value}
+                </span>
               </div>
             ))}
           </div>
@@ -391,41 +839,59 @@ function DashboardView({ data, evidence, caseData }: { data: Dashboard; evidence
       {/* Evidence Status */}
       {evidence.length > 0 && (
         <div className="card">
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Evidence Status</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Evidence Containers & Provenance</h3>
           <table>
             <thead>
               <tr>
-                <th className="th">File</th>
-                <th className="th">Format</th>
-                <th className="th">Status</th>
-                <th className="th">Messages</th>
-                <th className="th">SHA-256</th>
+                <th className="th">Container File</th>
+                <th className="th" style={{ width: 80 }}>Format</th>
+                <th className="th" style={{ width: 90 }}>Status</th>
+                <th className="th" style={{ width: 90 }}>Messages</th>
+                <th className="th">SHA-256 Acquisition Hash</th>
               </tr>
             </thead>
             <tbody>
-              {evidence.reduce((unique: Evidence[], e) => {
-                // Deduplicate by filename, keeping the latest status
-                const existing = unique.find(u => u.filename === e.filename);
-                if (!existing) unique.push(e);
-                else if (e.message_count > existing.message_count) {
-                  const idx = unique.indexOf(existing);
-                  unique[idx] = e;
-                }
-                return unique;
-              }, []).map(e => (
-                <tr key={e.id}>
-                  <td className="td">{e.filename}</td>
-                  <td className="td"><span className="badge badge-blue">{e.format}</span></td>
-                  <td className="td"><span className={`badge badge-${e.parse_status === "done" ? "green" : e.parse_status === "error" ? "red" : e.parse_status === "parsing" ? "blue" : "gray"}`}>{e.parse_status}</span></td>
-                  <td className="td">{e.message_count.toLocaleString()}</td>
-                  <td className="td mono muted">{e.sha256.slice(0, 10)}…</td>
-                </tr>
-              ))}
+              {evidence
+                .reduce((unique: Evidence[], e) => {
+                  const existing = unique.find((u) => u.filename === e.filename);
+                  if (!existing) unique.push(e);
+                  else if (e.message_count > existing.message_count) {
+                    const idx = unique.indexOf(existing);
+                    unique[idx] = e;
+                  }
+                  return unique;
+                }, [])
+                .map((e) => (
+                  <tr key={e.id}>
+                    <td className="td">
+                      <strong>{e.filename}</strong>
+                    </td>
+                    <td className="td">
+                      <span className="badge badge-blue">{e.format.toUpperCase()}</span>
+                    </td>
+                    <td className="td">
+                      <span
+                        className={`badge badge-${
+                          e.parse_status === "done"
+                            ? "green"
+                            : e.parse_status === "error"
+                            ? "red"
+                            : e.parse_status === "parsing"
+                            ? "blue"
+                            : "gray"
+                        }`}
+                      >
+                        {e.parse_status}
+                      </span>
+                    </td>
+                    <td className="td">{e.message_count.toLocaleString()}</td>
+                    <td className="td mono muted" style={{ fontSize: 11, color: "var(--accent)" }}>
+                      {e.sha256}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
-          {evidence.length > 1 && evidence.length !== new Set(evidence.map(e => e.filename)).size && (
-            <p className="muted text-sm mt-4">{evidence.length} uploads · {new Set(evidence.map(e => e.filename)).size} unique files (showing latest status)</p>
-          )}
         </div>
       )}
     </div>
@@ -437,6 +903,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [acqMethod, setAcqMethod] = useState<"file" | "server" | "client" | "imaging">("file");
 
   const addLog = (level: string, message: string) => {
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), level, message }]);
@@ -471,8 +938,6 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
   const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    // Note: Browser File API doesn't expose full path for security
-    // For Tauri, we use the file picker. Drag-drop shows a message.
     addLog("info", "Please use the upload button to select files (browser security restricts drag-drop paths)");
   };
 
@@ -503,14 +968,153 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
     <div>
       <div className="row between mb-4">
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Evidence</h2>
-          <p className="muted">Manage evidence sources for this case</p>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Evidence Acquisition</h2>
+          <p className="muted">Import evidence into this case</p>
         </div>
-        <button className="btn btn-primary" onClick={handleUpload} disabled={uploading}>
-          {uploading ? "Uploading..." : "+ Add Evidence"}
-        </button>
       </div>
 
+      {/* Acquisition Method Tabs */}
+      <div className="card mb-4">
+        <div className="row gap-2 mb-4" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 0 }}>
+          {[
+            { key: "file", label: "📁 File Import", desc: "EML, MBOX, PST, MSG", active: true },
+            { key: "server", label: "☁️ Mail Server", desc: "IMAP, OAuth, Cloud", active: false },
+            { key: "client", label: "💻 Mail Client", desc: "Outlook, Apple Mail, Thunderbird", active: false },
+            { key: "imaging", label: "💾 Forensic Imaging", desc: "Disk, Device, E01", active: false },
+          ].map(tab => (
+            <button
+              key={tab.key}
+              className={`btn btn-sm ${acqMethod === tab.key ? "btn-primary" : "btn-ghost"}`}
+              style={{ borderRadius: "6px 6px 0 0", display: "flex", flexDirection: "column", alignItems: "center", padding: "8px 14px", opacity: tab.active ? 1 : 0.7 }}
+              onClick={() => setAcqMethod(tab.key as any)}
+            >
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{tab.label}</span>
+              <span style={{ fontSize: 10, opacity: 0.7 }}>{tab.desc}</span>
+              {!tab.active && <span style={{ fontSize: 9, color: "var(--text-3)" }}>Coming Soon</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* 1. File Import Method (ACTIVE) */}
+        {acqMethod === "file" && (
+          <div>
+            <div
+              style={{
+                textAlign: "center",
+                padding: "40px 20px",
+                border: dragOver ? "2px dashed var(--accent)" : "2px dashed var(--border)",
+                borderRadius: "var(--r-md)",
+                background: dragOver ? "var(--accent-subtle)" : "transparent",
+              }}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <div style={{ fontSize: 40, marginBottom: 12 }}>📧</div>
+              <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Upload Email Files</h4>
+              <p className="muted mb-4" style={{ fontSize: 12 }}>Supports: EML, MBOX, PST, OST, MSG, EMLX</p>
+              <button className="btn btn-primary" onClick={handleUpload} disabled={uploading}>
+                {uploading ? "Uploading..." : "+ Select Files"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 2. Direct Mail Server / Cloud (Coming Soon) */}
+        {acqMethod === "server" && (
+          <div style={{ textAlign: "center", padding: "40px 20px" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>☁️</div>
+            <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Direct Mail Server Acquisition</h4>
+            <p className="muted mb-4" style={{ fontSize: 12 }}>
+              Connect directly to email accounts to download mailboxes with full headers preserved
+            </p>
+            <div className="row gap-2" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>📧</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>IMAP / POP3</h5>
+                <p className="muted" style={{ fontSize: 11 }}>Gmail, Yahoo, self-hosted</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🔷</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Microsoft 365</h5>
+                <p className="muted" style={{ fontSize: 11 }}>Graph API, Exchange EWS</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🔴</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Google Workspace</h5>
+                <p className="muted" style={{ fontSize: 11 }}>Gmail API, OAuth 2.0</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 3. Local Mail Client Extraction (Coming Soon) */}
+        {acqMethod === "client" && (
+          <div style={{ textAlign: "center", padding: "40px 20px" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>💻</div>
+            <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Local Mail Client Extraction</h4>
+            <p className="muted mb-4" style={{ fontSize: 12 }}>
+              Auto-detect and extract from installed mail applications on this computer
+            </p>
+            <div className="row gap-2" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>📮</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Apple Mail</h5>
+                <p className="muted" style={{ fontSize: 11 }}>macOS native mail app</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🔷</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Outlook</h5>
+                <p className="muted" style={{ fontSize: 11 }}>Mac/Windows, OST/PST</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🦅</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Thunderbird</h5>
+                <p className="muted" style={{ fontSize: 11 }}>MBOX-based storage</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 4. Forensic Imaging (Coming Soon) */}
+        {acqMethod === "imaging" && (
+          <div style={{ textAlign: "center", padding: "40px 20px" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>💾</div>
+            <h4 style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Forensic Imaging</h4>
+            <p className="muted mb-4" style={{ fontSize: 12 }}>
+              Block-by-bit physical storage copy with cryptographic hash verification
+            </p>
+            <div className="row gap-2" style={{ justifyContent: "center", flexWrap: "wrap" }}>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🖴</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Disk Imaging</h5>
+                <p className="muted" style={{ fontSize: 11 }}>dd, FTK Imager, Guymager</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>📱</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Device Imaging</h5>
+                <p className="muted" style={{ fontSize: 11 }}>Android, iOS, USB Mass Storage</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+              <div className="card" style={{ padding: 16, minWidth: 180 }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🔒</div>
+                <h5 style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>Write Blocking</h5>
+                <p className="muted" style={{ fontSize: 11 }}>Hardware & software protection</p>
+                <span className="badge badge-gray mt-2">Coming Soon</span>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Activity Log */}
       {logs.length > 0 && (
         <div className="card mb-4" style={{ maxHeight: 150, overflowY: "auto", background: "var(--bg-0)" }}>
           <div className="row between mb-4">
@@ -527,26 +1131,10 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
         </div>
       )}
 
-      {evidence.length === 0 ? (
-        <div
-          className="card"
-          style={{
-            textAlign: "center",
-            padding: "60px 40px",
-            border: dragOver ? "2px dashed var(--accent)" : "2px dashed var(--border)",
-            background: dragOver ? "var(--accent-subtle)" : "transparent",
-          }}
-          onDrop={handleDrop}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-        >
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📁</div>
-          <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--text-0)" }}>No evidence yet</h3>
-          <p className="muted mb-4">Drag & drop email files here or click upload</p>
-          <button className="btn btn-primary" onClick={handleUpload}>+ Upload Evidence</button>
-        </div>
-      ) : (
+      {/* Evidence List */}
+      {evidence.length > 0 && (
         <div className="card">
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Evidence Sources ({evidence.length})</h3>
           <table>
             <thead>
               <tr>
@@ -580,6 +1168,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
         </div>
       )}
 
+      {/* Selected Evidence Details */}
       {selectedEvidence && (
         <div className="card mt-4">
           <div className="row between mb-4">
@@ -637,6 +1226,241 @@ function CustodyView({ evidence, caseId }: { evidence: Evidence[]; caseId: strin
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CaseManageView({ caseData, caseId, onUpdate, onBack }: { caseData: Case | null; caseId: string; onUpdate: () => void; onBack: () => void }) {
+  const [title, setTitle] = useState(caseData?.title || "");
+  const [description, setDescription] = useState(caseData?.description || "");
+  const [status, setStatus] = useState(caseData?.status || "open");
+  const [targetName, setTargetName] = useState(caseData?.target_name || "");
+  const [targetEmail, setTargetEmail] = useState(caseData?.target_email || "");
+  const [targetOrg, setTargetOrg] = useState(caseData?.target_organization || "");
+  const [saving, setSaving] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await invoke("case_update", {
+        input: {
+          case_id: caseId,
+          title,
+          description,
+          status,
+          target_name: targetName,
+          target_email: targetEmail,
+          target_organization: targetOrg,
+        }
+      });
+      onUpdate();
+    } catch (e) {
+      console.error("Failed to update case:", e);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      await invoke("case_delete", { input: { case_id: caseId } });
+      onBack();
+    } catch (e) {
+      console.error("Failed to delete case:", e);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="row between mb-4">
+        <div>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Manage Case</h2>
+          <p className="muted">Edit case details or delete the case</p>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back to Dashboard</button>
+      </div>
+
+      <div className="card mb-4">
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Case Information</h3>
+        <div className="field">
+          <label className="label">Case ID (not editable)</label>
+          <input className="input" value={caseId} disabled style={{ opacity: 0.6 }} />
+        </div>
+        <div className="field">
+          <label className="label">Case Number</label>
+          <input className="input" value={caseData?.case_number || "—"} disabled style={{ opacity: 0.6 }} />
+        </div>
+        <div className="field">
+          <label className="label">Title</label>
+          <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+        </div>
+        <div className="field">
+          <label className="label">Description</label>
+          <textarea className="textarea" value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+        </div>
+        <div className="field">
+          <label className="label">Status</label>
+          <select className="input" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="open">Open</option>
+            <option value="closed">Closed</option>
+            <option value="archived">Archived</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="card mb-4">
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Investigation Target</h3>
+        <div className="field">
+          <label className="label">Target Name</label>
+          <input className="input" value={targetName} onChange={(e) => setTargetName(e.target.value)} placeholder="e.g. John Doe" />
+        </div>
+        <div className="field">
+          <label className="label">Target Email</label>
+          <input className="input" value={targetEmail} onChange={(e) => setTargetEmail(e.target.value)} placeholder="e.g. john@example.com" />
+        </div>
+        <div className="field">
+          <label className="label">Target Organization</label>
+          <input className="input" value={targetOrg} onChange={(e) => setTargetOrg(e.target.value)} placeholder="e.g. Acme Corp" />
+        </div>
+      </div>
+
+      <div className="row gap-2">
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
+          {saving ? "Saving..." : "Save Changes"}
+        </button>
+        <button className="btn btn-ghost" onClick={onBack}>Cancel</button>
+      </div>
+
+      <div className="card mt-4" style={{ borderColor: "var(--red)", border: "1px solid var(--red)" }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, color: "var(--red)", marginBottom: 12 }}>Danger Zone</h3>
+        <p style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 16 }}>
+          Deleting this case will permanently remove all evidence, emails, findings, and chain of custody records.
+        </p>
+        <button className="btn" style={{ background: "var(--red)", color: "#fff" }} onClick={() => setShowDelete(true)}>
+          Delete Case & All Data
+        </button>
+      </div>
+
+      {showDelete && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+          <div className="card" style={{ maxWidth: 440, width: "90%", padding: 24 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: "var(--text-0)", marginBottom: 12 }}>⚠ Delete Case</h3>
+            <p style={{ fontSize: 14, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.6 }}>
+              Are you sure you want to delete case <strong>"{caseData?.title}"</strong>? This will permanently remove:
+            </p>
+            <ul style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 20, paddingLeft: 20, lineHeight: 1.8 }}>
+              <li>All evidence sources</li>
+              <li>All parsed emails</li>
+              <li>All findings and analysis results</li>
+              <li>Chain of custody records</li>
+            </ul>
+            <p style={{ fontSize: 12, color: "var(--red)", marginBottom: 20 }}>This action cannot be undone.</p>
+            <div className="row gap-2" style={{ justifyContent: "flex-end" }}>
+              <button className="btn btn-ghost" onClick={() => setShowDelete(false)} disabled={deleting}>Cancel</button>
+               <button className="btn" style={{ background: "var(--red)", color: "#fff" }} onClick={handleDelete} disabled={deleting}>
+                {deleting ? "Deleting..." : "Delete Permanently"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IntegrityView({ caseId }: { caseId: string }) {
+  const [verification, setVerification] = useState<any>(null);
+  const [chainCheck, setChainCheck] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+
+  const verifyHashes = async () => {
+    setLoading(true);
+    try {
+      const result = await invoke<any>("verify_evidence_hashes", { input: { case_id: caseId } });
+      setVerification(result);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  const checkChain = async () => {
+    setLoading(true);
+    try {
+      const result = await invoke<any>("check_custody_chain", { input: { case_id: caseId } });
+      setChainCheck(result);
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  };
+
+  const exportAudit = async () => {
+    try {
+      const path = await invoke<string>("export_audit_log", { input: { case_id: caseId } });
+      alert(`Audit log exported to: ${path}`);
+    } catch (e) { console.error(e); }
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", marginBottom: 16 }}>Integrity & Verification</h2>
+      <p className="muted mb-4">Verify evidence integrity and export audit logs</p>
+
+      <div className="row gap-2 mb-4">
+        <button className="btn btn-primary" onClick={verifyHashes} disabled={loading}>🔍 Verify Evidence Hashes</button>
+        <button className="btn btn-ghost" onClick={checkChain} disabled={loading}>🔗 Check Custody Chain</button>
+        <button className="btn btn-ghost" onClick={exportAudit}>📥 Export Audit Log</button>
+      </div>
+
+      {verification && (
+        <div className="card mb-4">
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Hash Verification Results</h3>
+          <div className="grid-3 mb-4">
+            <div className="card" style={{ textAlign: "center", padding: 16 }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--success)" }}>{verification.verified}</div>
+              <div className="muted">Verified</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: 16 }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--red)" }}>{verification.failed}</div>
+              <div className="muted">Modified</div>
+            </div>
+            <div className="card" style={{ textAlign: "center", padding: 16 }}>
+              <div style={{ fontSize: 24, fontWeight: 700, color: "var(--text-2)" }}>{verification.missing}</div>
+              <div className="muted">Missing</div>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>Filename</th><th>Status</th></tr></thead>
+            <tbody>
+              {verification.results.map((r: any, i: number) => (
+                <tr key={i}>
+                  <td>{r.filename}</td>
+                  <td><span className={`badge ${r.status === "verified" ? "badge-green" : r.status === "modified" ? "badge-red" : "badge-gray"}`}>{r.status}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {chainCheck && (
+        <div className="card">
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Custody Chain Check</h3>
+          <p>Chain Intact: <span className={`badge ${chainCheck.chain_intact ? "badge-green" : "badge-red"}`}>{chainCheck.chain_intact ? "YES" : "NO"}</span></p>
+          {chainCheck.gaps.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <strong>Gaps Found:</strong>
+              <ul style={{ paddingLeft: 20, marginTop: 8 }}>
+                {chainCheck.gaps.map((g: any, i: number) => (
+                  <li key={i}>{g.evidence}: {g.issue}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>

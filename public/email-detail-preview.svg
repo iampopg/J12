@@ -1,124 +1,170 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 680" width="1200" height="680">
   <defs>
-    <linearGradient id="logoGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#22c55e"/>
-      <stop offset="100%" style="stop-color:#16a34a"/>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0b0f17"/>
+      <stop offset="100%" style="stop-color:#090d14"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#131b28"/>
+      <stop offset="100%" style="stop-color:#0f1723"/>
     </linearGradient>
   </defs>
 
+  <style>
+    .font-sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+    .font-mono { font-family: 'SF Mono', Consolas, Menlo, Monaco, 'Courier New', monospace; }
+  </style>
+
   <!-- Background -->
-  <rect width="800" height="600" fill="#0a0d12"/>
+  <rect width="1200" height="680" fill="url(#bg)"/>
 
-  <!-- Card -->
-  <rect x="20" y="20" width="760" height="560" rx="8" fill="#151a23" stroke="#2a3344" stroke-width="1"/>
+  <!-- Modal / Inspector Panel -->
+  <g transform="translate(30, 24)">
+    <rect width="1140" height="632" rx="10" fill="url(#card)" stroke="#1e293b" stroke-width="1.5"/>
 
-  <!-- Header -->
-  <rect x="20" y="20" width="760" height="60" rx="8" fill="#1c2230"/>
-  <rect x="20" y="60" width="760" height="20" fill="#1c2230"/>
-  <line x1="20" y1="80" x2="780" y2="80" stroke="#2a3344" stroke-width="1"/>
+    <!-- Header bar -->
+    <g transform="translate(24, 24)">
+      <text x="0" y="22" class="font-sans" font-size="18" font-weight="800" fill="#ffffff">
+        Urgent: Wells Fargo Account Verification &amp; Release Authorization
+      </text>
+      <text x="0" y="44" class="font-sans" font-size="12" fill="#94a3b8">
+        From: <tspan class="font-mono" fill="#38bdf8">notice@wells-fargo-verify.com</tspan> · To: <tspan class="font-mono" fill="#e2e8f0">swhite@enron.com</tspan> · Date: <tspan fill="#e2e8f0">Mon, 15 Jan 2001 09:14:22 UTC</tspan>
+      </text>
 
-  <!-- Subject -->
-  <text x="40" y="48" font-family="system-ui" font-size="16" font-weight="600" fill="#f8fafc">Urgent wire transfer needed</text>
-  <text x="40" y="68" font-family="system-ui" font-size="12" fill="#64748b">From: john.smith@enron.com · Mon, 15 Jan 2001 09:15</text>
+      <!-- Risk Score Badge -->
+      <rect x="940" y="2" width="145" height="32" rx="6" fill="rgba(239,68,68,0.15)" stroke="#ef4444" stroke-width="1"/>
+      <text x="1012" y="22" class="font-sans" font-size="12" font-weight="800" fill="#f87171" text-anchor="middle">
+        RISK SCORE: 92 / 100
+      </text>
+    </g>
+    <line x1="24" y1="84" x2="1116" y2="84" stroke="#1e293b" stroke-width="1"/>
 
-  <!-- Close button -->
-  <rect x="720" y="30" width="50" height="28" rx="6" fill="#252d3d"/>
-  <text x="745" y="49" font-family="system-ui" font-size="11" fill="#94a3b8" text-anchor="middle">Close</text>
+    <!-- Tabs -->
+    <g transform="translate(24, 100)" class="font-sans" font-size="12" font-weight="600">
+      <rect width="120" height="28" rx="5" fill="#22c55e"/>
+      <text x="60" y="19" fill="#0b0f17" text-anchor="middle">🛡️ Authentication</text>
 
-  <!-- Tabs -->
-  <rect x="40" y="90" width="720" height="36" fill="transparent"/>
-  
-  <!-- Overview Tab (inactive) -->
-  <rect x="40" y="92" width="70" height="32" rx="6" fill="transparent"/>
-  <text x="75" y="113" font-family="system-ui" font-size="12" fill="#64748b" text-anchor="middle">Overview</text>
+      <rect x="130" y="0" width="110" height="28" rx="5" fill="#1e293b"/>
+      <text x="185" y="19" fill="#94a3b8" text-anchor="middle">📋 Raw Headers</text>
 
-  <!-- Headers Tab (inactive) -->
-  <rect x="115" y="92" width="70" height="32" rx="6" fill="transparent"/>
-  <text x="150" y="113" font-family="system-ui" font-size="12" fill="#64748b" text-anchor="middle">Headers</text>
+      <rect x="250" y="0" width="110" height="28" rx="5" fill="#1e293b"/>
+      <text x="305" y="19" fill="#94a3b8" text-anchor="middle">🔗 Received Hops</text>
 
-  <!-- Authentication Tab (active) -->
-  <rect x="190" y="92" width="100" height="32" rx="6" fill="#3b82f6"/>
-  <text x="240" y="113" font-family="system-ui" font-size="12" fill="#fff" text-anchor="middle">Authentication</text>
+      <rect x="370" y="0" width="110" height="28" rx="5" fill="#1e293b"/>
+      <text x="425" y="19" fill="#94a3b8" text-anchor="middle">📎 Attachments</text>
 
-  <!-- MIME Tab (inactive) -->
-  <rect x="295" y="92" width="55" height="32" rx="6" fill="transparent"/>
-  <text x="322" y="113" font-family="system-ui" font-size="12" fill="#64748b" text-anchor="middle">MIME</text>
+      <rect x="490" y="0" width="100" height="28" rx="5" fill="#1e293b"/>
+      <text x="540" y="19" fill="#94a3b8" text-anchor="middle">📄 Body &amp; MIME</text>
+    </g>
 
-  <!-- Raw Tab (inactive) -->
-  <rect x="355" y="92" width="45" height="32" rx="6" fill="transparent"/>
-  <text x="377" y="113" font-family="system-ui" font-size="12" fill="#64748b" text-anchor="middle">Raw</text>
+    <!-- 4 AUTHENTICATION VERIFICATION CARDS -->
+    <g transform="translate(24, 144)">
+      
+      <!-- SPF Card (FAIL) -->
+      <g transform="translate(0, 0)">
+        <rect width="260" height="116" rx="8" fill="#0b0f17" stroke="#ef4444" stroke-width="1"/>
+        <text x="16" y="24" class="font-sans" font-size="12" font-weight="800" fill="#f87171">SPF CHECK</text>
+        <rect x="190" y="10" width="54" height="20" rx="4" fill="#ef4444"/>
+        <text x="217" y="24" class="font-sans" font-size="10" font-weight="900" fill="#ffffff" text-anchor="middle">FAIL</text>
 
-  <!-- Attachments Tab (inactive) -->
-  <rect x="405" y="92" width="90" height="32" rx="6" fill="transparent"/>
-  <text x="450" y="113" font-family="system-ui" font-size="12" fill="#64748b" text-anchor="middle">Attachments</text>
+        <text x="16" y="52" class="font-sans" font-size="11" fill="#64748b">Sender IP: <tspan class="font-mono" fill="#f87171">198.51.100.24</tspan></text>
+        <text x="16" y="72" class="font-sans" font-size="11" fill="#64748b">Domain: <tspan class="font-mono" fill="#e2e8f0">wells-fargo-verify.com</tspan></text>
+        <text x="16" y="92" class="font-sans" font-size="10.5" fill="#94a3b8">IP not included in authorized SPF list</text>
+      </g>
 
-  <!-- Content Area -->
-  <!-- SPF Result -->
-  <rect x="40" y="140" width="350" height="80" rx="8" fill="#1c2230"/>
-  <text x="56" y="162" font-family="system-ui" font-size="14" font-weight="600" fill="#f8fafc">SPF</text>
-  <rect x="310" y="148" width="60" height="24" rx="12" fill="rgba(34,197,94,0.15)"/>
-  <text x="340" y="165" font-family="system-ui" font-size="11" fill="#4ade80" text-anchor="middle">PASS</text>
-  <text x="56" y="185" font-family="system-ui" font-size="11" fill="#64748b">SPF validation passed — sender authorized</text>
-  <text x="56" y="205" font-family="monospace" font-size="11" fill="#94a3b8">Domain: enron.com · Aligned: Yes</text>
+      <!-- DKIM Card (FAIL) -->
+      <g transform="translate(276, 0)">
+        <rect width="260" height="116" rx="8" fill="#0b0f17" stroke="#ef4444" stroke-width="1"/>
+        <text x="16" y="24" class="font-sans" font-size="12" font-weight="800" fill="#f87171">DKIM SIGNATURE</text>
+        <rect x="190" y="10" width="54" height="20" rx="4" fill="#ef4444"/>
+        <text x="217" y="24" class="font-sans" font-size="10" font-weight="900" fill="#ffffff" text-anchor="middle">FAIL</text>
 
-  <!-- DKIM Result -->
-  <rect x="410" y="140" width="350" height="80" rx="8" fill="#1c2230"/>
-  <text x="426" y="162" font-family="system-ui" font-size="14" font-weight="600" fill="#f8fafc">DKIM</text>
-  <rect x="700" y="148" width="60" height="24" rx="12" fill="rgba(34,197,94,0.15)"/>
-  <text x="730" y="165" font-family="system-ui" font-size="11" fill="#4ade80" text-anchor="middle">PASS</text>
-  <text x="426" y="185" font-family="system-ui" font-size="11" fill="#64748b">DKIM signature verified</text>
-  <text x="426" y="205" font-family="monospace" font-size="11" fill="#94a3b8">Selector: default · Domain: enron.com</text>
+        <text x="16" y="52" class="font-sans" font-size="11" fill="#64748b">Selector: <tspan class="font-mono" fill="#e2e8f0">s1024</tspan></text>
+        <text x="16" y="72" class="font-sans" font-size="11" fill="#64748b">Signature Status: <tspan fill="#f87171">Invalid cryptographic body hash</tspan></text>
+        <text x="16" y="92" class="font-sans" font-size="10.5" fill="#94a3b8">Header altered in transit</text>
+      </g>
 
-  <!-- DMARC Result -->
-  <rect x="40" y="235" width="350" height="80" rx="8" fill="#1c2230"/>
-  <text x="56" y="257" font-family="system-ui" font-size="14" font-weight="600" fill="#f8fafc">DMARC</text>
-  <rect x="310" y="243" width="60" height="24" rx="12" fill="rgba(34,197,94,0.15)"/>
-  <text x="340" y="260" font-family="system-ui" font-size="11" fill="#4ade80" text-anchor="middle">PASS</text>
-  <text x="56" y="280" font-family="system-ui" font-size="11" fill="#64748b">DMARC policy: reject — both checks passed</text>
-  <text x="56" y="300" font-family="monospace" font-size="11" fill="#94a3b8">Alignment: ALIGNED</text>
+      <!-- DMARC Card (REJECT) -->
+      <g transform="translate(552, 0)">
+        <rect width="260" height="116" rx="8" fill="#0b0f17" stroke="#ef4444" stroke-width="1"/>
+        <text x="16" y="24" class="font-sans" font-size="12" font-weight="800" fill="#f87171">DMARC POLICY</text>
+        <rect x="180" y="10" width="64" height="20" rx="4" fill="#ef4444"/>
+        <text x="212" y="24" class="font-sans" font-size="10" font-weight="900" fill="#ffffff" text-anchor="middle">REJECT</text>
 
-  <!-- ARC Result -->
-  <rect x="410" y="235" width="350" height="80" rx="8" fill="#1c2230"/>
-  <text x="426" y="257" font-family="system-ui" font-size="14" font-weight="600" fill="#f8fafc">ARC</text>
-  <rect x="700" y="243" width="60" height="24" rx="12" fill="#252d3d"/>
-  <text x="730" y="260" font-family="system-ui" font-size="11" fill="#94a3b8" text-anchor="middle">N/A</text>
-  <text x="426" y="280" font-family="system-ui" font-size="11" fill="#64748b">No ARC seals present in headers</text>
-  <text x="426" y="300" font-family="monospace" font-size="11" fill="#64748b">Not forwarded through ARC-enabled intermediary</text>
+        <text x="16" y="52" class="font-sans" font-size="11" fill="#64748b">Alignment: <tspan fill="#f87171">SPF / DKIM Unaligned</tspan></text>
+        <text x="16" y="72" class="font-sans" font-size="11" fill="#64748b">Header From: <tspan class="font-mono" fill="#f87171">wellsfargo.com</tspan></text>
+        <text x="16" y="92" class="font-sans" font-size="10.5" fill="#94a3b8">Enforcement: Action = Quarantine</text>
+      </g>
 
-  <!-- Received Chain -->
-  <text x="40" y="345" font-family="system-ui" font-size="13" font-weight="600" fill="#f8fafc">Received Chain (3 hops, bottom = oldest)</text>
+      <!-- BRAND IMPERSONATION -->
+      <g transform="translate(828, 0)">
+        <rect width="264" height="116" rx="8" fill="#0b0f17" stroke="#f59e0b" stroke-width="1"/>
+        <text x="16" y="24" class="font-sans" font-size="12" font-weight="800" fill="#fbbf24">BEC FRAUD DETECTED</text>
+        <rect x="186" y="10" width="64" height="20" rx="4" fill="#f59e0b"/>
+        <text x="218" y="24" class="font-sans" font-size="9.5" font-weight="900" fill="#0b0f17" text-anchor="middle">WARNING</text>
 
-  <!-- Hop 1 (oldest) -->
-  <rect x="40" y="355" width="720" height="40" rx="4" fill="#1c2230"/>
-  <text x="56" y="372" font-family="system-ui" font-size="11" fill="#94a3b8">Hop 1 (oldest)</text>
-  <text x="56" y="387" font-family="monospace" font-size="10" fill="#64748b">from mail.enron.com by proxy.corp.com with ESMTP</text>
-  <rect x="680" y="363" width="60" height="20" rx="10" fill="rgba(34,197,94,0.1)"/>
-  <text x="710" y="377" font-family="system-ui" font-size="10" fill="#4ade80" text-anchor="middle">+0.1s</text>
+        <text x="16" y="52" class="font-sans" font-size="11" fill="#64748b">Brand Impersonated: <tspan fill="#ffffff" font-weight="700">Wells Fargo</tspan></text>
+        <text x="16" y="72" class="font-sans" font-size="11" fill="#64748b">Lookalike Domain: <tspan class="font-mono" fill="#fbbf24">wells-fargo-verify.com</tspan></text>
+        <text x="16" y="92" class="font-sans" font-size="10.5" fill="#94a3b8">Typosquatting distance = 98%</text>
+      </g>
+    </g>
 
-  <!-- Hop 2 -->
-  <rect x="40" y="400" width="720" height="40" rx="4" fill="#1c2230"/>
-  <text x="56" y="417" font-family="system-ui" font-size="11" fill="#94a3b8">Hop 2</text>
-  <text x="56" y="432" font-family="monospace" font-size="10" fill="#64748b">from proxy.corp.com by mail.gateway.com with HTTP</text>
-  <rect x="680" y="408" width="60" height="20" rx="10" fill="rgba(34,197,94,0.1)"/>
-  <text x="710" y="422" font-family="system-ui" font-size="10" fill="#4ade80" text-anchor="middle">+2.3s</text>
+    <!-- RECEIVED HOPS CHAIN (CHRONOLOGICAL ROUTING) -->
+    <g transform="translate(24, 276)">
+      <rect width="1092" height="160" rx="8" fill="#0b0f17" stroke="#1e293b" stroke-width="1"/>
+      <text x="16" y="24" class="font-sans" font-size="12" font-weight="700" fill="#ffffff">
+        RECEIVED ROUTING CHAIN (3 Hops · Bottom = Initial Origin)
+      </text>
 
-  <!-- Hop 3 (newest) -->
-  <rect x="40" y="445" width="720" height="40" rx="4" fill="#1c2230"/>
-  <text x="56" y="462" font-family="system-ui" font-size="11" fill="#94a3b8">Hop 3 (newest)</text>
-  <text x="56" y="477" font-family="monospace" font-size="10" fill="#64748b">from [192.168.1.100] by inet.gateway.com with SMTP id abc123</text>
-  <rect x="680" y="453" width="60" height="20" rx="10" fill="rgba(34,197,94,0.1)"/>
-  <text x="710" y="467" font-family="system-ui" font-size="10" fill="#4ade80" text-anchor="middle">+0.5s</text>
+      <!-- Hop 3 -->
+      <g transform="translate(16, 38)" class="font-sans" font-size="11">
+        <rect width="1060" height="32" rx="4" fill="#131b28"/>
+        <text x="12" y="20" font-weight="700" fill="#38bdf8">Hop 3 (Delivery):</text>
+        <text x="130" y="20" class="font-mono" fill="#e2e8f0">mail.enron.com [172.16.1.50]</text>
+        <text x="450" y="20" fill="#64748b">with ESMTP · Deliv: 09:14:22 UTC (+0.8s latency)</text>
+        <text x="1040" y="20" fill="#22c55e" text-anchor="end">● INTACT</text>
+      </g>
 
-  <!-- Analysis Summary -->
-  <rect x="40" y="500" width="720" height="70" rx="8" fill="#1c2230"/>
-  <text x="56" y="520" font-family="system-ui" font-size="12" font-weight="600" fill="#f8fafc">Analysis Summary</text>
-  
-  <rect x="56" y="530" width="100" height="30" rx="4" fill="#252d3d"/>
-  <text x="106" y="550" font-family="system-ui" font-size="11" fill="#4ade80" text-anchor="middle">No Anomalies</text>
+      <!-- Hop 2 -->
+      <g transform="translate(16, 76)" class="font-sans" font-size="11">
+        <rect width="1060" height="32" rx="4" fill="#131b28"/>
+        <text x="12" y="20" font-weight="700" fill="#38bdf8">Hop 2 (Gateway):</text>
+        <text x="130" y="20" class="font-mono" fill="#e2e8f0">mx-relay.external-cdn.net [203.0.113.88]</text>
+        <text x="450" y="20" fill="#64748b">with SMTP · Time: 09:14:21 UTC (+2.1s latency)</text>
+        <text x="1040" y="20" fill="#22c55e" text-anchor="end">● INTACT</text>
+      </g>
 
-  <rect x="166" y="530" width="120" height="30" rx="4" fill="#252d3d"/>
-  <text x="226" y="550" font-family="system-ui" font-size="11" fill="#4ade80" text-anchor="middle">No Clock Skew</text>
+      <!-- Hop 1 (Origin) -->
+      <g transform="translate(16, 114)" class="font-sans" font-size="11">
+        <rect width="1060" height="32" rx="4" fill="rgba(239,68,68,0.12)" stroke="rgba(239,68,68,0.3)" stroke-width="1"/>
+        <text x="12" y="20" font-weight="700" fill="#f87171">Hop 1 (Originator):</text>
+        <text x="130" y="20" class="font-mono" fill="#f87171">server12.bulletproof-host.xyz [198.51.100.24]</text>
+        <text x="450" y="20" fill="#f87171">with HTTP Mailer · Time: 09:14:19 UTC</text>
+        <text x="1040" y="20" fill="#f87171" text-anchor="end" font-weight="700">⚠ ANOMALY DETECTED</text>
+      </g>
+    </g>
 
-  <rect x="296" y="530" width="140" height="30" rx="4" fill="#252d3d"/>
-  <text x="366" y="550" font-family="system-ui" font-size="11" fill="#94a3b8" text-anchor="middle">Originating: 192.168.1.100</text>
+    <!-- EXAMINER EVIDENCE EXHIBIT & AUDIT TAG -->
+    <g transform="translate(24, 452)">
+      <rect width="1092" height="144" rx="8" fill="#0b0f17" stroke="#1e293b" stroke-width="1"/>
+      <text x="16" y="24" class="font-sans" font-size="12" font-weight="700" fill="#ffffff">
+        Cryptographic Evidence Provenance &amp; Forensic Tagging
+      </text>
+
+      <g transform="translate(16, 40)" class="font-sans" font-size="11.5">
+        <text x="0" y="16" fill="#64748b">Message Hash (SHA-256):</text>
+        <text x="180" y="16" class="font-mono" fill="#38bdf8">9f83ac0b1c9e8a7d6e5f4b3a2c1d0e9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c3d</text>
+
+        <text x="0" y="42" fill="#64748b">Parent Evidence Container:</text>
+        <text x="180" y="42" fill="#ffffff">enron_sample.mbox (Offset: 0x004A12B0 · Size: 4,120 bytes)</text>
+
+        <text x="0" y="68" fill="#64748b">Court Exhibit Status:</text>
+        <rect x="180" y="54" width="110" height="20" rx="4" fill="rgba(34,197,94,0.15)"/>
+        <text x="235" y="68" font-weight="700" fill="#22c55e" text-anchor="middle">MARKED EXHIBIT-A</text>
+        
+        <text x="310" y="68" fill="#94a3b8">Annotation: "Primary phishing email initiating fraudulent transfer inquiry"</text>
+      </g>
+    </g>
+
+  </g>
 </svg>

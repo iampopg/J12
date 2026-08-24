@@ -89,10 +89,15 @@ impl Database {
                 from_display TEXT,
                 to_addrs TEXT NOT NULL DEFAULT '[]',
                 cc_addrs TEXT DEFAULT '[]',
+                bcc_addrs TEXT DEFAULT '[]',
+                to_display_names TEXT DEFAULT '[]',
+                cc_display_names TEXT DEFAULT '[]',
                 subject TEXT,
+                subject_raw TEXT,
                 date_sent TEXT,
                 date_sent_utc TEXT,
                 headers_raw TEXT,
+                headers_json TEXT,
                 body_text TEXT,
                 body_html TEXT,
                 folder_name TEXT,
@@ -102,6 +107,17 @@ impl Database {
                 deleted_recovered INTEGER DEFAULT 0,
                 risk_score INTEGER DEFAULT 0,
                 flags TEXT DEFAULT '[]',
+                -- Forensic headers
+                received_chain TEXT DEFAULT '[]',
+                return_path TEXT,
+                reply_to TEXT,
+                x_mailer TEXT,
+                x_originating_ip TEXT,
+                importance TEXT,
+                in_reply_to TEXT,
+                msg_references TEXT DEFAULT '[]',
+                x_to_header TEXT,
+                x_cc_header TEXT,
                 created_at TEXT NOT NULL
             );
 
@@ -168,6 +184,7 @@ impl Database {
                 sent_count INTEGER DEFAULT 0,
                 received_count INTEGER DEFAULT 0,
                 role TEXT DEFAULT 'unknown',
+                aliases TEXT,
                 UNIQUE(case_id, email_address)
             );
 
@@ -192,6 +209,39 @@ impl Database {
                 actor TEXT,
                 summary TEXT
             );
+
+            CREATE TABLE IF NOT EXISTS case_notes (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                author TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT DEFAULT 'general',
+                pinned INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS email_tags (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                email_id TEXT NOT NULL REFERENCES emails(id),
+                tag TEXT NOT NULL,
+                color TEXT DEFAULT '#3b82f6',
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(case_id, email_id, tag)
+            );
+
+            CREATE TABLE IF NOT EXISTS email_notes (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                email_id TEXT NOT NULL REFERENCES emails(id),
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
         "        ).expect("Failed to initialize schema");
         
         // Migration: add target_email column if missing
@@ -214,6 +264,27 @@ impl Database {
         self.conn.execute("ALTER TABLE findings ADD COLUMN reviewed_at TEXT", []).ok();
         // Migration: add notes column to findings if missing
         self.conn.execute("ALTER TABLE findings ADD COLUMN notes TEXT", []).ok();
+        // Migration: add aliases column to entities if missing
+        self.conn.execute("ALTER TABLE entities ADD COLUMN aliases TEXT", []).ok();
+        
+        // === PERFORMANCE INDEXES (Phase 6) ===
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_case_id ON emails(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_from_addr ON emails(from_addr)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_date_sent ON emails(date_sent_utc)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder_category)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_subject ON emails(subject)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_evidence_id ON emails(evidence_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_case_id ON findings(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_findings_severity ON findings(severity)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_case_id ON entities(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_entities_email ON entities(email_address)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_case_id ON timeline_events(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_timeline_timestamp ON timeline_events(timestamp)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_custody_evidence_id ON custody_events(evidence_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_evidence_case_id ON evidence_items(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_case_notes_case_id ON case_notes(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_email_tags_case_id ON email_tags(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_email_notes_case_id ON email_notes(case_id)", []).ok();
         
         // Migration: update existing emails with folder_category from headers_raw X-Folder
         self.migrate_folder_categories();

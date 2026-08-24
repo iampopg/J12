@@ -9,18 +9,38 @@ interface Finding {
   confidence: string;
   title: string;
   description: string | null;
+  evidence_refs: string;
   email_ids: string;
   status: string;
   created_at: string;
   reviewed_by: string | null;
   reviewed_at: string | null;
+  notes: string | null;
+}
+
+interface EmailItem {
+  id: string;
+  evidence_id: string;
+  from_addr: string;
+  from_display: string | null;
+  to_addrs: string;
+  cc_addrs: string;
+  subject: string | null;
+  date_sent: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  headers_raw: string | null;
+  folder_name: string | null;
+  folder_category: string;
+  risk_score: number;
 }
 
 interface Props {
   caseId: string;
+  onGoToEvidence?: () => void;
 }
 
-export function FindingsView({ caseId }: Props) {
+export function FindingsView({ caseId, onGoToEvidence }: Props) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -28,18 +48,56 @@ export function FindingsView({ caseId }: Props) {
   const [filterType, setFilterType] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [selectedFinding, setSelectedFinding] = useState<Finding | null>(null);
+  
+  // Related emails state
+  const [relatedEmails, setRelatedEmails] = useState<EmailItem[]>([]);
+  const [loadingEmails, setLoadingEmails] = useState(false);
+  const [inspectingEmail, setInspectingEmail] = useState<EmailItem | null>(null);
+
+  // Note composer state
   const [noteText, setNoteText] = useState("");
+  const [authorName, setAuthorName] = useState("Investigator");
+  const [savingNote, setSavingNote] = useState(false);
 
   const loadFindings = useCallback(async () => {
     setLoading(true);
     try {
       const data = await invoke<Finding[]>("findings_list", { input: { case_id: caseId } });
       setFindings(data);
+      if (selectedFinding) {
+        const updated = data.find(f => f.id === selectedFinding.id);
+        if (updated) setSelectedFinding(updated);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [caseId]);
+  }, [caseId, selectedFinding?.id]);
 
-  useEffect(() => { loadFindings(); }, [loadFindings]);
+  useEffect(() => { loadFindings(); }, [caseId]);
+
+  // Load related emails when selectedFinding changes
+  useEffect(() => {
+    if (!selectedFinding) {
+      setRelatedEmails([]);
+      setInspectingEmail(null);
+      return;
+    }
+
+    setLoadingEmails(true);
+    invoke<EmailItem[]>("finding_emails", { findingId: selectedFinding.id })
+      .then(emails => {
+        setRelatedEmails(emails);
+        if (emails.length > 0) {
+          setInspectingEmail(emails[0]); // Auto-inspect first related email
+        } else {
+          setInspectingEmail(null);
+        }
+      })
+      .catch(err => {
+        console.error("Failed to load finding emails:", err);
+        setRelatedEmails([]);
+      })
+      .finally(() => setLoadingEmails(false));
+  }, [selectedFinding?.id]);
 
   const runAnalysis = async () => {
     setAnalyzing(true);
@@ -55,21 +113,29 @@ export function FindingsView({ caseId }: Props) {
 
   const updateStatus = async (id: string, newStatus: string) => {
     try {
-      await invoke("update_finding_status", { findingId: id, newStatus, reviewedBy: "admin" });
+      await invoke("update_finding_status", { findingId: id, newStatus, reviewedBy: authorName });
       loadFindings();
     } catch (e: any) {
       alert(`Update failed: ${e}`);
     }
   };
 
-  const addNote = async (id: string) => {
-    if (!noteText.trim()) return;
+  const addNote = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedFinding || !noteText.trim()) return;
+    setSavingNote(true);
     try {
-      await invoke("add_finding_note", { findingId: id, note: noteText, author: "admin" });
+      await invoke("add_finding_note", {
+        findingId: selectedFinding.id,
+        note: noteText.trim(),
+        author: authorName.trim() || "Investigator",
+      });
       setNoteText("");
       loadFindings();
     } catch (e: any) {
       alert(`Note failed: ${e}`);
+    } finally {
+      setSavingNote(false);
     }
   };
 
@@ -98,16 +164,16 @@ export function FindingsView({ caseId }: Props) {
   };
 
   const severityColor = (severity: string) => {
-    switch (severity) {
-      case "critical": return "#dc2626";
-      case "high": return "#ea580c";
+    switch (severity.toLowerCase()) {
+      case "critical": return "var(--danger)";
+      case "high": return "var(--warning)";
       case "medium": return "#ca8a04";
       default: return "#6b7280";
     }
   };
 
   const statusBadge = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case "open": return "badge-blue";
       case "confirmed": return "badge-green";
       case "rejected": return "badge-red";
@@ -116,193 +182,385 @@ export function FindingsView({ caseId }: Props) {
     }
   };
 
+  // Parse notes list
+  const parsedNotes = (selectedFinding?.notes || "").split("\n---\n").filter(Boolean);
+
   return (
     <div>
+      {/* Header */}
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Forensic Findings</h2>
-          <p className="muted">Automated analysis results and investigator review</p>
+          <p className="muted">Automated threat analysis results, evidence verification, and investigator review</p>
         </div>
         <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
           {analyzing ? "Analyzing..." : "▶ Run Analysis"}
         </button>
       </div>
 
-      {/* Severity Summary */}
-      <div className="row gap-4 mb-4">
-        <div style={{ flex: 1, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #dc2626" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#dc2626" }}>{severityCounts.critical}</div>
+      {/* Severity Summary Cards */}
+      <div className="row gap-4 mb-4" style={{ flexWrap: "wrap" }}>
+        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid var(--danger)" }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "var(--danger)" }}>{severityCounts.critical}</div>
           <div className="muted text-sm">Critical</div>
         </div>
-        <div style={{ flex: 1, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #ea580c" }}>
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#ea580c" }}>{severityCounts.high}</div>
+        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid var(--warning)" }}>
+          <div style={{ fontSize: 24, fontWeight: 700, color: "var(--warning)" }}>{severityCounts.high}</div>
           <div className="muted text-sm">High</div>
         </div>
-        <div style={{ flex: 1, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #ca8a04" }}>
+        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #ca8a04" }}>
           <div style={{ fontSize: 24, fontWeight: 700, color: "#ca8a04" }}>{severityCounts.medium}</div>
           <div className="muted text-sm">Medium</div>
         </div>
-        <div style={{ flex: 1, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #6b7280" }}>
+        <div style={{ flex: 1, minWidth: 140, padding: 16, background: "var(--bg-3)", borderRadius: "var(--r-md)", textAlign: "center", borderLeft: "4px solid #6b7280" }}>
           <div style={{ fontSize: 24, fontWeight: 700, color: "#6b7280" }}>{severityCounts.low}</div>
           <div className="muted text-sm">Low</div>
         </div>
       </div>
 
-      {/* Type Summary */}
+      {/* Type Breakdown Pills */}
       <div className="row gap-2 mb-4" style={{ flexWrap: "wrap" }}>
         {Object.entries(typeCounts).map(([type, count]) => (
-          count > 0 && (
-            <span key={type} className="badge badge-gray" style={{ padding: "6px 12px", fontSize: 12 }}>
-              {type}: {count}
-            </span>
-          )
+          <button
+            key={type}
+            className={`btn btn-sm ${filterType === type ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => setFilterType(filterType === type ? "all" : type)}
+          >
+            {type}: {count}
+          </button>
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="row gap-4 mb-4">
-        <select className="input" style={{ width: "auto" }} value={filterSeverity} onChange={e => setFilterSeverity(e.target.value)}>
-          <option value="all">All Severities</option>
-          <option value="critical">Critical</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
-        <select className="input" style={{ width: "auto" }} value={filterType} onChange={e => setFilterType(e.target.value)}>
-          <option value="all">All Types</option>
-          <option value="BEC">BEC</option>
-          <option value="SPOOFING">Spoofing</option>
-          <option value="ANOMALY">Anomaly</option>
-          <option value="ATTACHMENT">Attachment</option>
-          <option value="ROUTING">Routing</option>
-        </select>
-        <select className="input" style={{ width: "auto" }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
-          <option value="all">All Statuses</option>
-          <option value="open">Open</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="rejected">Rejected</option>
-          <option value="reviewed">Reviewed</option>
-        </select>
-        <span className="muted text-sm">{filtered.length} findings</span>
+      {/* Filter Toolbar */}
+      <div className="card mb-4" style={{ padding: "12px 16px" }}>
+        <div className="row between" style={{ flexWrap: "wrap", gap: 12 }}>
+          <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+            <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>Severity:</span>
+            {["all", "critical", "high", "medium", "low"].map(s => (
+              <button
+                key={s}
+                className={`btn btn-sm ${filterSeverity === s ? "btn-primary" : "btn-ghost"}`}
+                style={{ fontSize: 11, padding: "4px 8px" }}
+                onClick={() => setFilterSeverity(s)}
+              >
+                {s.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          <div className="row gap-2" style={{ flexWrap: "wrap" }}>
+            <span className="muted" style={{ fontSize: 12, alignSelf: "center" }}>Status:</span>
+            {["all", "open", "confirmed", "rejected", "reviewed"].map(st => (
+              <button
+                key={st}
+                className={`btn btn-sm ${filterStatus === st ? "btn-primary" : "btn-ghost"}`}
+                style={{ fontSize: 11, padding: "4px 8px" }}
+                onClick={() => setFilterStatus(st)}
+              >
+                {st.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
+      {/* Findings Table */}
       {loading ? (
-        <div className="empty">Loading findings...</div>
-      ) : findings.length === 0 ? (
-        <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>🔍</div>
-          <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--text-0)" }}>No findings yet</h3>
-          <p className="muted mb-4">Run automated analysis to detect spoofing, authentication failures, and anomalies.</p>
-          <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
-            {analyzing ? "Analyzing..." : "▶ Run Analysis"}
-          </button>
+        <div className="empty">Loading forensic findings...</div>
+      ) : filtered.length === 0 ? (
+        <div className="card" style={{ textAlign: "center", padding: "50px 30px" }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>🔍</div>
+          <h3 style={{ fontSize: 18, color: "var(--text-0)", marginBottom: 6 }}>No findings match criteria</h3>
+          <p className="muted mb-4">
+            {findings.length === 0
+              ? "Run automated analysis to detect BEC, spoofing, anomalies, and routing deviations."
+              : "Try adjusting your filters above."}
+          </p>
+          {findings.length === 0 && (
+            <button className="btn btn-primary" onClick={runAnalysis} disabled={analyzing}>
+              {analyzing ? "Analyzing..." : "▶ Run Analysis Now"}
+            </button>
+          )}
         </div>
       ) : (
-        <div className="card">
-          <table>
-            <thead>
-              <tr>
-                <th className="th" style={{ width: 80 }}>Severity</th>
-                <th className="th" style={{ width: 80 }}>Type</th>
-                <th className="th">Title</th>
-                <th className="th" style={{ width: 100 }}>Status</th>
-                <th className="th" style={{ width: 80 }}>Emails</th>
-                <th className="th" style={{ width: 120 }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map((f) => (
-                <tr key={f.id} className="tr-click" onClick={() => setSelectedFinding(selectedFinding?.id === f.id ? null : f)}>
-                  <td>
-                    <span className="badge" style={{ background: severityColor(f.severity), color: "#fff", padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>
-                      {f.severity?.toUpperCase()}
-                    </span>
-                  </td>
-                  <td><span className="badge badge-gray">{f.type_}</span></td>
-                  <td style={{ maxWidth: 300 }}>{f.title}</td>
-                  <td><span className={`badge ${statusBadge(f.status)}`}>{f.status}</span></td>
-                  <td className="mono">
-                    {(() => {
-                      try {
-                        const ids = JSON.parse(f.email_ids || "[]");
-                        return ids.length;
-                      } catch { return 0; }
-                    })()}
-                  </td>
-                  <td>
-                    <div className="row gap-2" onClick={e => e.stopPropagation()}>
-                      {f.status === "open" && (
-                        <>
-                          <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(f.id, "confirmed")} title="Confirm finding">✓</button>
-                          <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(f.id, "rejected")} title="Reject finding">✗</button>
-                        </>
-                      )}
-                      {f.status === "confirmed" && (
-                        <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(f.id, "reviewed")} title="Mark reviewed">👁</button>
-                      )}
-                    </div>
-                  </td>
+        <div className="card" style={{ padding: 0, overflow: "hidden", marginBottom: 20 }}>
+          <div style={{ padding: "10px 16px", background: "var(--bg-3)", borderBottom: "1px solid var(--border)", fontSize: 12, fontWeight: 600, color: "var(--text-1)" }}>
+            {filtered.length} Forensic Finding{filtered.length === 1 ? "" : "s"} — Click any row to review evidence & related email body
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th className="th" style={{ width: 90 }}>Severity</th>
+                  <th className="th" style={{ width: 100 }}>Type</th>
+                  <th className="th">Finding Summary</th>
+                  <th className="th" style={{ width: 100 }}>Status</th>
+                  <th className="th" style={{ width: 70 }}>Emails</th>
+                  <th className="th" style={{ width: 140 }}>Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filtered.map(f => (
+                  <tr
+                    key={f.id}
+                    className="tr-click"
+                    style={{
+                      background: selectedFinding?.id === f.id ? "rgba(59,130,246,0.08)" : undefined,
+                      borderLeft: selectedFinding?.id === f.id ? "4px solid var(--accent)" : undefined,
+                    }}
+                    onClick={() => setSelectedFinding(f)}
+                  >
+                    <td>
+                      <span className="badge" style={{ background: `${severityColor(f.severity)}22`, color: severityColor(f.severity), border: `1px solid ${severityColor(f.severity)}44`, fontWeight: 700 }}>
+                        {f.severity.toUpperCase()}
+                      </span>
+                    </td>
+                    <td><span className="badge badge-gray">{f.type_}</span></td>
+                    <td style={{ maxWidth: 360, fontWeight: 500, color: "var(--text-0)" }}>{f.title}</td>
+                    <td><span className={`badge ${statusBadge(f.status)}`}>{f.status.toUpperCase()}</span></td>
+                    <td className="mono" style={{ fontSize: 12 }}>
+                      {(() => {
+                        try {
+                          const ids = JSON.parse(f.email_ids || "[]");
+                          return `${ids.length} msg`;
+                        } catch { return "0"; }
+                      })()}
+                    </td>
+                    <td>
+                      <div className="row gap-2" onClick={e => e.stopPropagation()}>
+                        {f.status === "open" && (
+                          <>
+                            <button className="btn btn-ghost btn-sm" style={{ color: "var(--success)", padding: "2px 6px" }} onClick={() => updateStatus(f.id, "confirmed")} title="Confirm finding">
+                              ✓ Confirm
+                            </button>
+                            <button className="btn btn-ghost btn-sm" style={{ color: "var(--danger)", padding: "2px 6px" }} onClick={() => updateStatus(f.id, "rejected")} title="Reject (False Positive)">
+                              ✗ Reject
+                            </button>
+                          </>
+                        )}
+                        {f.status === "confirmed" && (
+                          <button className="btn btn-ghost btn-sm" style={{ color: "var(--warning)", padding: "2px 6px" }} onClick={() => updateStatus(f.id, "reviewed")} title="Mark reviewed">
+                            👁 Review
+                          </button>
+                        )}
+                        {f.status !== "open" && (
+                          <button className="btn btn-ghost btn-sm" style={{ padding: "2px 6px", fontSize: 11 }} onClick={() => updateStatus(f.id, "open")} title="Reopen finding">
+                            Reopen
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {/* Finding Detail */}
+      {/* Comprehensive Finding Investigation & Email Inspector Panel */}
       {selectedFinding && (
-        <div className="card mt-4">
-          <div className="row between mb-4">
-            <h4 style={{ fontSize: 14, fontWeight: 600 }}>Finding Details</h4>
-            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedFinding(null)}>Close</button>
-          </div>
-          <div style={{ fontSize: 13 }}>
-            <div className="mb-4">
-              <span className="muted">Type:</span> <span className="badge badge-gray">{selectedFinding.type_}</span>
-              <span className="muted" style={{ marginLeft: 16 }}>Severity:</span>
-              <span className="badge" style={{ background: severityColor(selectedFinding.severity), color: "#fff" }}>{selectedFinding.severity}</span>
-              <span className="muted" style={{ marginLeft: 16 }}>Confidence:</span> {selectedFinding.confidence}
-            </div>
-            <div className="mb-4">
-              <h4 style={{ fontWeight: 600, marginBottom: 4 }}>{selectedFinding.title}</h4>
-              <p style={{ color: "var(--text-1)" }}>{selectedFinding.description}</p>
-            </div>
-            <div className="mb-4">
-              <span className="muted">Status:</span> <span className={`badge ${statusBadge(selectedFinding.status)}`}>{selectedFinding.status}</span>
-              <span className="muted" style={{ marginLeft: 16 }}>Created:</span> {new Date(selectedFinding.created_at).toLocaleString()}
-              {selectedFinding.reviewed_by && (
-                <>
-                  <span className="muted" style={{ marginLeft: 16 }}>Reviewed by:</span> {selectedFinding.reviewed_by}
-                  {selectedFinding.reviewed_at && <span className="muted" style={{ marginLeft: 8 }}>at {new Date(selectedFinding.reviewed_at).toLocaleString()}</span>}
-                </>
-              )}
-            </div>
-            <div className="mb-4">
-              <span className="muted">Related Emails:</span>
-              <span className="mono">
-                {(() => {
-                  try {
-                    const ids = JSON.parse(selectedFinding.email_ids || "[]");
-                    return `${ids.length} email(s)`;
-                  } catch { return "0"; }
-                })()}
+        <div className="card" style={{ border: "1px solid var(--accent)", boxShadow: "0 8px 30px rgba(0,0,0,0.15)" }}>
+          <div className="row between mb-4" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
+            <div className="row gap-2" style={{ alignItems: "center" }}>
+              <span className="badge" style={{ background: `${severityColor(selectedFinding.severity)}22`, color: severityColor(selectedFinding.severity), border: `1px solid ${severityColor(selectedFinding.severity)}44`, fontWeight: 700 }}>
+                {selectedFinding.severity.toUpperCase()}
               </span>
+              <span className="badge badge-gray">{selectedFinding.type_}</span>
+              <span className={`badge ${statusBadge(selectedFinding.status)}`}>{selectedFinding.status.toUpperCase()}</span>
+              <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
+                {selectedFinding.title}
+              </h3>
             </div>
-            <div className="mb-4">
-              <span className="muted">Quick Actions:</span>
-              <div className="row gap-2 mt-4">
-                <button className="btn btn-primary btn-sm" onClick={() => updateStatus(selectedFinding.id, "confirmed")}>Confirm</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(selectedFinding.id, "rejected")}>Reject</button>
-                <button className="btn btn-ghost btn-sm" onClick={() => updateStatus(selectedFinding.id, "reviewed")}>Mark Reviewed</button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setSelectedFinding(null)}>✕ Close Panel</button>
+          </div>
+
+          {/* Top Quick Actions Bar */}
+          <div className="row between mb-4" style={{ background: "var(--bg-0)", padding: "10px 14px", borderRadius: "var(--r-md)", border: "1px solid var(--border)" }}>
+            <div className="row gap-2" style={{ alignItems: "center", fontSize: 12, color: "var(--text-2)" }}>
+              <span>Investigator Decision:</span>
+              <button
+                className={`btn btn-sm ${selectedFinding.status === "confirmed" ? "btn-primary" : "btn-ghost"}`}
+                style={{ background: selectedFinding.status === "confirmed" ? "var(--success)" : undefined, color: selectedFinding.status === "confirmed" ? "#fff" : "var(--success)", borderColor: "var(--success)" }}
+                onClick={() => updateStatus(selectedFinding.id, "confirmed")}
+              >
+                ✓ Confirm Threat
+              </button>
+              <button
+                className={`btn btn-sm ${selectedFinding.status === "rejected" ? "btn-primary" : "btn-ghost"}`}
+                style={{ background: selectedFinding.status === "rejected" ? "var(--danger)" : undefined, color: selectedFinding.status === "rejected" ? "#fff" : "var(--danger)", borderColor: "var(--danger)" }}
+                onClick={() => updateStatus(selectedFinding.id, "rejected")}
+              >
+                ✗ Reject (False Positive)
+              </button>
+              <button
+                className={`btn btn-sm ${selectedFinding.status === "reviewed" ? "btn-primary" : "btn-ghost"}`}
+                style={{ background: selectedFinding.status === "reviewed" ? "var(--warning)" : undefined, color: selectedFinding.status === "reviewed" ? "#000" : "var(--warning)", borderColor: "var(--warning)" }}
+                onClick={() => updateStatus(selectedFinding.id, "reviewed")}
+              >
+                👁 Mark Reviewed
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+              Created: {new Date(selectedFinding.created_at).toLocaleString()}
+              {selectedFinding.reviewed_by && ` · Reviewed by: ${selectedFinding.reviewed_by}`}
+            </div>
+          </div>
+
+          {/* Analysis Reason */}
+          <div className="mb-4" style={{ padding: 14, background: "rgba(239, 68, 68, 0.04)", border: "1px solid rgba(239, 68, 68, 0.15)", borderRadius: "var(--r-md)" }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, color: "var(--danger)", marginBottom: 6 }}>Automated Detection Rationale</h4>
+            <p style={{ fontSize: 13, color: "var(--text-1)", lineHeight: 1.6, margin: 0 }}>
+              {selectedFinding.description || "No automated rationale specified."}
+            </p>
+          </div>
+
+          {/* Related Emails Section */}
+          <div className="mb-4">
+            <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 8 }}>
+              Associated Email Messages ({relatedEmails.length})
+            </h4>
+            <p className="muted mb-3" style={{ fontSize: 12 }}>
+              Inspect the exact email body, headers, and sender details that triggered this finding:
+            </p>
+
+            {loadingEmails ? (
+              <div className="empty">Loading associated emails...</div>
+            ) : relatedEmails.length === 0 ? (
+              <div className="empty">No associated email messages found in database.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {/* Email Selector Tabs if multiple */}
+                {relatedEmails.length > 1 && (
+                  <div className="row gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+                    {relatedEmails.map((em, idx) => (
+                      <button
+                        key={em.id}
+                        className={`btn btn-sm ${inspectingEmail?.id === em.id ? "btn-primary" : "btn-ghost"}`}
+                        style={{ fontSize: 12 }}
+                        onClick={() => setInspectingEmail(em)}
+                      >
+                        Email #{idx + 1}: {em.subject || "(no subject)"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* Inspected Email Preview Box */}
+                {inspectingEmail && (
+                  <div style={{ background: "var(--bg-0)", borderRadius: "var(--r-md)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", background: "var(--bg-3)", borderBottom: "1px solid var(--border)" }}>
+                      <div className="row between">
+                        <div>
+                          <strong style={{ fontSize: 14, color: "var(--text-0)" }}>{inspectingEmail.subject || "(no subject)"}</strong>
+                          <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+                            From: <strong>{inspectingEmail.from_display || inspectingEmail.from_addr}</strong> ({inspectingEmail.from_addr})
+                          </div>
+                          <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
+                            Date: {inspectingEmail.date_sent ? new Date(inspectingEmail.date_sent).toLocaleString() : "—"} · Folder: <span className="badge badge-gray">{inspectingEmail.folder_category}</span>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <span className="badge badge-red" style={{ fontSize: 11 }}>Risk Score: {inspectingEmail.risk_score}/100</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Email Body Content */}
+                    <div style={{ padding: 16 }}>
+                      <div className="muted text-sm mb-2" style={{ fontWeight: 600 }}>Message Body Preview:</div>
+                      <pre style={{
+                        background: "var(--bg-1)",
+                        border: "1px solid var(--border)",
+                        borderRadius: "var(--r-sm)",
+                        padding: 14,
+                        fontSize: 12,
+                        color: "var(--text-1)",
+                        maxHeight: 220,
+                        overflowY: "auto",
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.5,
+                        margin: 0,
+                      }}>
+                        {inspectingEmail.body_text || inspectingEmail.body_html || "No body content available in message."}
+                      </pre>
+
+                      {/* Raw Headers Preview Toggle */}
+                      {inspectingEmail.headers_raw && (
+                        <details style={{ marginTop: 12 }}>
+                          <summary style={{ fontSize: 12, color: "var(--accent)", cursor: "pointer", fontWeight: 500 }}>
+                            View Raw Transport Headers ({inspectingEmail.headers_raw.split('\n').length} lines)
+                          </summary>
+                          <pre className="mono" style={{
+                            fontSize: 10,
+                            background: "var(--bg-1)",
+                            padding: 12,
+                            borderRadius: "var(--r-sm)",
+                            border: "1px solid var(--border)",
+                            maxHeight: 180,
+                            overflowY: "auto",
+                            marginTop: 8,
+                            color: "var(--text-2)",
+                          }}>
+                            {inspectingEmail.headers_raw}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-            <div>
-              <span className="muted">Add Note:</span>
-              <div className="row gap-2 mt-4">
-                <input className="input" style={{ flex: 1 }} placeholder="Investigator note..." value={noteText} onChange={e => setNoteText(e.target.value)} />
-                <button className="btn btn-primary btn-sm" onClick={() => addNote(selectedFinding.id)}>Add</button>
+            )}
+          </div>
+
+          <hr style={{ borderColor: "var(--border)", margin: "20px 0" }} />
+
+          {/* Investigator Notes on Finding */}
+          <div>
+            <h4 style={{ fontSize: 14, fontWeight: 600, color: "var(--text-0)", marginBottom: 8 }}>
+              Investigator Review Notes
+            </h4>
+            <p className="muted mb-3" style={{ fontSize: 12 }}>
+              Document why this finding was confirmed or rejected for the forensic report:
+            </p>
+
+            {/* Note Composer */}
+            <form onSubmit={addNote} className="mb-4">
+              <div className="row gap-2 mb-2">
+                <input
+                  className="input"
+                  style={{ maxWidth: 200, padding: "6px 10px", fontSize: 12 }}
+                  placeholder="Investigator name"
+                  value={authorName}
+                  onChange={e => setAuthorName(e.target.value)}
+                />
+                <input
+                  className="input"
+                  style={{ flex: 1, padding: "6px 12px", fontSize: 12 }}
+                  placeholder="Record your observation or justification (e.g. 'Domain wellsfargo.m0.net verified as legit marketing subvendor')..."
+                  value={noteText}
+                  onChange={e => setNoteText(e.target.value)}
+                />
+                <button type="submit" className="btn btn-primary btn-sm" disabled={savingNote || !noteText.trim()}>
+                  {savingNote ? "Saving..." : "+ Add Note"}
+                </button>
               </div>
-            </div>
+            </form>
+
+            {/* Existing Notes List */}
+            {parsedNotes.length === 0 ? (
+              <div style={{ padding: 12, background: "var(--bg-0)", borderRadius: "var(--r-md)", border: "1px solid var(--border)", color: "var(--text-3)", fontSize: 12, textAlign: "center" }}>
+                No investigator review notes recorded on this finding yet.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {parsedNotes.map((nt, idx) => (
+                  <div key={idx} style={{ padding: "10px 14px", background: "var(--bg-0)", borderRadius: "var(--r-md)", border: "1px solid var(--border)", fontSize: 12 }}>
+                    <span style={{ color: "var(--accent)", fontWeight: 600 }}>📝 Note #{idx + 1}</span>
+                    <div style={{ color: "var(--text-1)", marginTop: 4, whiteSpace: "pre-wrap" }}>{nt}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

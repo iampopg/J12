@@ -34,3 +34,6 @@ data/
 
 # Evidence storage
 evidence_store/
+
+# Generated reports
+reports/

@@ -114,9 +114,9 @@ table{width:100%;border-collapse:collapse}
 .analysis-stat-val{font-size:24px;font-weight:700;color:var(--text-0)}
 .analysis-stat-label{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.05em;margin-top:4px}
 
-/* Brand Colors */
-.brand-j{color:#22c55e}
-.brand-12{color:#f8fafc}
+/* Brand Colors: J in White, 12 in Green */
+.brand-j{color:#ffffff}
+.brand-12{color:#22c55e}
 
 /* Overlay */
 .overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:100;backdrop-filter:blur(3px)}

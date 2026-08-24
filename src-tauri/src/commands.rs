@@ -50,6 +50,33 @@ pub async fn case_get(state: State<'_, AppState>, input: EmptyInput) -> Result<O
 }
 
 #[tauri::command]
+pub async fn case_update(state: State<'_, AppState>, input: CaseUpdateInput) -> Result<(), String> {
+    let db = state.db.lock().await;
+    db.conn.execute(
+        "UPDATE cases SET title=?1, description=?2, status=?3, target_name=?4, target_email=?5, target_organization=?6, updated_at=?7 WHERE id=?8",
+        rusqlite::params![&input.title, &input.description, &input.status, &input.target_name, &input.target_email, &input.target_organization, &Utc::now().to_rfc3339(), &input.case_id],
+    ).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn case_delete(state: State<'_, AppState>, input: EmptyInput) -> Result<bool, String> {
+    let db = state.db.lock().await;
+    // Delete all related data in correct order (foreign key safety)
+    db.conn.execute("DELETE FROM case_notes WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM findings WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM entities WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM communication_edges WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM timeline_events WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE case_id=?1)", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM emails WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM custody_events WHERE evidence_id IN (SELECT id FROM evidence_items WHERE case_id=?1)", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM evidence_items WHERE case_id=?1", [&input.case_id]).ok();
+    db.conn.execute("DELETE FROM cases WHERE id=?1", [&input.case_id]).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
 pub async fn evidence_upload(state: State<'_, AppState>, input: EvidenceUploadInput) -> Result<EvidenceItem, String> {
     let db = state.db.lock().await;
     let path = PathBuf::from(&input.file_path);
@@ -119,7 +146,7 @@ pub async fn search(state: State<'_, AppState>, input: SearchInput) -> Result<Ve
 #[tauri::command]
 pub async fn findings_list(state: State<'_, AppState>, input: EmptyInput) -> Result<Vec<Finding>, String> {
     let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare("SELECT id,case_id,type,severity,confidence,title,description,evidence_refs,email_ids,status,created_at,reviewed_by,reviewed_at FROM findings WHERE case_id=?1 ORDER BY created_at DESC").map_err(|e| e.to_string())?;
+    let mut stmt = db.conn.prepare("SELECT id,case_id,type,severity,confidence,title,description,evidence_refs,email_ids,status,created_at,reviewed_by,reviewed_at,notes FROM findings WHERE case_id=?1 ORDER BY created_at DESC").map_err(|e| e.to_string())?;
     let findings = stmt.query_map([&input.case_id], |row| {
         Ok(Finding { 
             id: row.get(0)?, 
@@ -137,6 +164,7 @@ pub async fn findings_list(state: State<'_, AppState>, input: EmptyInput) -> Res
             reviewed_at: row.get::<_, Option<String>>(12).ok().and_then(|opt_str| {
                 opt_str.and_then(|s| s.parse::<chrono::DateTime<chrono::Utc>>().ok())
             }),
+            notes: row.get(13).ok().unwrap_or(None),
         })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     Ok(findings)
@@ -285,15 +313,25 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
             let email_id = generate_id();
             let to_json = serde_json::to_string(&email.to_addrs).unwrap_or_default();
             let cc_json = serde_json::to_string(&email.cc_addrs).unwrap_or_default();
+            let bcc_json = serde_json::to_string(&email.bcc_addrs).unwrap_or_default();
+            let to_names_json = serde_json::to_string(&email.to_display_names).unwrap_or_default();
+            let cc_names_json = serde_json::to_string(&email.cc_display_names).unwrap_or_default();
+            let received_json = serde_json::to_string(&email.received_chain).unwrap_or_default();
+            let references_json = serde_json::to_string(&email.references).unwrap_or_default();
             let date_str = email.date_sent.map(|d| d.to_rfc3339());
             
             tx.execute(
-                "INSERT INTO emails (id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, folder_name, folder_category, recovery_status, is_deleted, deleted_recovered, risk_score, flags, created_at)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22)",
+                "INSERT INTO emails (id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, to_display_names, cc_display_names, subject, subject_raw, date_sent, date_sent_utc, headers_raw, headers_json, body_text, body_html, folder_name, folder_category, recovery_status, is_deleted, deleted_recovered, risk_score, flags, received_chain, return_path, reply_to, x_mailer, x_originating_ip, importance, in_reply_to, msg_references, x_to_header, x_cc_header, created_at)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24,?25,?26,?27,?28,?29,?30,?31,?32,?33,?34,?35,?36,?37)",
                 rusqlite::params![
                     &email_id, &evidence_id, &case_id, &email.message_id, &email.from_addr, &email.from_display,
-                    &to_json, &cc_json, &email.subject, &date_str, &date_str, &email.headers_raw,
-                    &email.body_text, &email.body_html, &email.folder_name, &email.folder_category, &email.recovery_status, 0i64, 0i64, 0i64, "[]", &chrono::Utc::now().to_rfc3339()
+                    &to_json, &cc_json, &bcc_json, &to_names_json, &cc_names_json, &email.subject, &email.subject_raw, &date_str, &date_str,
+                    &email.headers_raw, &email.headers_json, &email.body_text, &email.body_html,
+                    &email.folder_name, &email.folder_category, &email.recovery_status,
+                    0i64, 0i64, 0i64, "[]",
+                    &received_json, &email.return_path, &email.reply_to, &email.x_mailer,
+                    &email.x_originating_ip, &email.importance, &email.in_reply_to, &references_json,
+                    &email.x_to_header, &email.x_cc_header, &chrono::Utc::now().to_rfc3339()
                 ],
             ).map_err(|e| format!("Insert email {}: {}", email.message_id, e))?;
             
@@ -303,10 +341,10 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                 let sha256 = crate::parser::sha256_data(&att.data);
                 let size = att.data.len() as i64;
                 tx.execute(
-                    "INSERT INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags)
-                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                    "INSERT INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags, created_at)
+                     VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
                     rusqlite::params![
-                        &att_id, &email_id, &att.filename, &att.content_type, &att.content_type, &size, "", 0.0, "[]"
+                        &att_id, &email_id, &att.filename, &sha256, &att.content_type, &size, "", 0.0, "[]", &chrono::Utc::now().to_rfc3339()
                     ],
                 ).ok(); // Don't fail on attachment errors
             }
@@ -530,171 +568,193 @@ pub async fn email_attachments(state: State<'_, AppState>, email_id: String) -> 
 #[tauri::command]
 pub async fn auto_detect_targets(state: State<'_, AppState>, case_id: String) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;
-    
-    // Find most frequent email addresses (sent + received)
+
+    // Check if entities table has records. If not, auto extract!
+    let entity_count: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM entities WHERE case_id=?1",
+        [&case_id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    drop(db);
+
+    if entity_count == 0 {
+        let _ = extract_entities(state.clone(), case_id.clone()).await;
+    }
+
+    let db = state.db.lock().await;
     let mut stmt = db.conn.prepare("
-        SELECT addr, SUM(cnt) as total FROM (
-            SELECT from_addr as addr, COUNT(*) as cnt FROM emails WHERE case_id=?1 GROUP BY from_addr
-            UNION ALL
-            SELECT json_each.value as addr, COUNT(*) as cnt FROM emails, json_each(emails.to_addrs) WHERE emails.case_id=?1 GROUP BY json_each.value
-        ) GROUP BY addr ORDER BY total DESC LIMIT 20
+        SELECT email_address, display_name, sent_count, received_count, (sent_count + received_count) as total
+        FROM entities WHERE case_id=?1 AND email_address LIKE '%@%'
+        ORDER BY total DESC LIMIT 30
     ").map_err(|e| e.to_string())?;
-    
-    let rows: Vec<(String, i64)> = stmt.query_map([&case_id], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    
-    // For each address, get display name and stats
-    let mut targets = Vec::new();
-    for (addr, count) in &rows {
-        // Get display name
-        let display_name: Option<String> = db.conn.query_row(
-            "SELECT DISTINCT from_display FROM emails WHERE from_addr=?1 AND from_display IS NOT NULL AND from_display != '' LIMIT 1",
-            [addr.as_str()],
-            |row| row.get(0),
-        ).ok();
-        
-        // Get sent count
-        let sent: i64 = db.conn.query_row(
-            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND from_addr=?2",
-            rusqlite::params![&case_id, addr.as_str()],
-            |row| row.get(0),
-        ).unwrap_or(0);
-        
-        // Get received count
-        let received: i64 = db.conn.query_row(
-            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND to_addrs LIKE ?2",
-            rusqlite::params![&case_id, format!("%{}%", addr.as_str())],
-            |row| row.get(0),
-        ).unwrap_or(0);
-        
-        targets.push(serde_json::json!({
-            "email": addr,
-            "display_name": display_name,
-            "total_emails": count,
+
+    let rows: Vec<serde_json::Value> = stmt.query_map([&case_id], |row| {
+        let email: String = row.get(0)?;
+        let display: Option<String> = row.get(1)?;
+        let sent: i64 = row.get(2)?;
+        let received: i64 = row.get(3)?;
+        let total: i64 = row.get(4)?;
+
+        let best_display = display
+            .filter(|d| !d.trim().is_empty() && d != &email)
+            .or_else(|| {
+                let prefix = email.split('@').next().unwrap_or(&email);
+                Some(prefix.replace('.', " ").to_string())
+            });
+
+        Ok(serde_json::json!({
+            "email": email,
+            "display_name": best_display,
+            "total_emails": total,
             "sent": sent,
             "received": received,
-        }));
-    }
-    
+        }))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
     Ok(serde_json::json!({
-        "targets": targets,
+        "targets": rows,
         "case_id": case_id,
     }))
 }
+
 #[tauri::command]
-pub async fn target_profile(state: State<'_, AppState>, case_id: String) -> Result<serde_json::Value, String> {
+pub async fn target_profile(state: State<'_, AppState>, case_id: String, target_email: Option<String>) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;
-    
+
     // Get case info
     let case: (String, Option<String>, Option<String>, Option<String>) = db.conn.query_row(
         "SELECT title, target_email, target_name, target_organization FROM cases WHERE id=?1",
         [&case_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     ).map_err(|e| e.to_string())?;
-    
-    let (case_title, target_email, target_name, target_organization) = case;
-    
-    // If no target email, return basic info
-    let email = target_email.clone().unwrap_or_default();
-    
+
+    let (case_title, default_target_email, target_name, target_organization) = case;
+
+    // Selected email takes precedence, then case configured target email, then top entity
+    let email = match target_email.filter(|e| !e.trim().is_empty()) {
+        Some(e) => e,
+        None => match default_target_email.filter(|e| !e.trim().is_empty()) {
+            Some(e) => e,
+            None => {
+                db.conn.query_row(
+                    "SELECT email_address FROM entities WHERE case_id=?1 AND email_address LIKE '%@%' ORDER BY (sent_count + received_count) DESC LIMIT 1",
+                    [&case_id],
+                    |r| r.get(0),
+                ).unwrap_or_default()
+            }
+        },
+    };
+
+    let email_prefix = email.split('@').next().unwrap_or(&email);
+
     // Count emails where target is sender
     let sent_count: i64 = if email.is_empty() { 0 } else {
         db.conn.query_row(
-            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND from_addr LIKE ?2",
-            rusqlite::params![&case_id, format!("%{}%", email)],
+            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR from_addr LIKE ?3)",
+            rusqlite::params![&case_id, format!("%{}%", email), format!("%{}%", email_prefix)],
             |r| r.get(0),
         ).unwrap_or(0)
     };
-    
+
     // Count emails where target is recipient
     let received_count: i64 = if email.is_empty() { 0 } else {
         db.conn.query_row(
-            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
-            rusqlite::params![&case_id, format!("%{}%", email)],
+            "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3)",
+            rusqlite::params![&case_id, format!("%{}%", email), format!("%{}%", email_prefix)],
             |r| r.get(0),
         ).unwrap_or(0)
     };
-    
+
     // Get first and last seen dates
     let first_seen: Option<String> = if email.is_empty() { None } else {
         db.conn.query_row(
             "SELECT MIN(date_sent_utc) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
-            rusqlite::params![&case_id, format!("%{}%", email)],
+            rusqlite::params![&case_id, format!("%{}%", email_prefix)],
             |r| r.get::<_, Option<String>>(0),
         ).ok().flatten()
     };
-    
+
     let last_seen: Option<String> = if email.is_empty() { None } else {
         db.conn.query_row(
             "SELECT MAX(date_sent_utc) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
-            rusqlite::params![&case_id, format!("%{}%", email)],
+            rusqlite::params![&case_id, format!("%{}%", email_prefix)],
             |r| r.get::<_, Option<String>>(0),
         ).ok().flatten()
     };
-    
-    // Get top correspondents (who target emails most)
+
+    // Get top correspondents (who target communicates with most)
     let top_correspondents: Vec<(String, i64)> = if email.is_empty() { vec![] } else {
-        let mut stmt = db.conn.prepare(
-            "SELECT from_addr, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2) GROUP BY from_addr ORDER BY cnt DESC LIMIT 10"
-        ).ok();
-        
+        let mut stmt = db.conn.prepare("
+            SELECT from_addr, COUNT(*) as cnt FROM emails
+            WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2) AND from_addr NOT LIKE ?2
+            GROUP BY from_addr ORDER BY cnt DESC LIMIT 10
+        ").ok();
+
         match stmt {
             Some(mut s) => {
-                s.query_map(rusqlite::params![&case_id, format!("%{}%", email)], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                s.query_map(rusqlite::params![&case_id, format!("%{}%", email_prefix)], |row| {
+                    let raw_addr: String = row.get(0)?;
+                    let clean = crate::parser::extract_email(&raw_addr);
+                    Ok((if clean.is_empty() { raw_addr } else { clean }, row.get::<_, i64>(1)?))
                 }).ok().map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default()
             }
             None => vec![]
         }
     };
-    
+
     // Get top subjects
     let top_subjects: Vec<(String, i64)> = if email.is_empty() { vec![] } else {
-        let mut stmt = db.conn.prepare(
-            "SELECT subject, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2) AND subject IS NOT NULL GROUP BY subject ORDER BY cnt DESC LIMIT 10"
-        ).ok();
-        
+        let mut stmt = db.conn.prepare("
+            SELECT subject, COUNT(*) as cnt FROM emails
+            WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)
+              AND subject IS NOT NULL AND subject != ''
+            GROUP BY subject ORDER BY cnt DESC LIMIT 10
+        ").ok();
+
         match stmt {
             Some(mut s) => {
-                s.query_map(rusqlite::params![&case_id, format!("%{}%", email)], |row| {
+                s.query_map(rusqlite::params![&case_id, format!("%{}%", email_prefix)], |row| {
                     Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
                 }).ok().map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default()
             }
             None => vec![]
         }
     };
-    
+
     // Get risk score (average of emails involving target)
     let avg_risk: f64 = if email.is_empty() { 0.0 } else {
         db.conn.query_row(
             "SELECT AVG(risk_score) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)",
-            rusqlite::params![&case_id, format!("%{}%", email)],
+            rusqlite::params![&case_id, format!("%{}%", email_prefix)],
             |r| r.get::<_, f64>(0),
         ).unwrap_or(0.0)
     };
-    
+
     // Get all display names used by target
     let display_names: Vec<String> = if email.is_empty() { vec![] } else {
         let mut stmt = db.conn.prepare(
-            "SELECT DISTINCT from_display FROM emails WHERE case_id=?1 AND from_addr LIKE ?2 AND from_display IS NOT NULL AND from_display != ''"
+            "SELECT DISTINCT from_display FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR from_addr LIKE ?3) AND from_display IS NOT NULL AND from_display != ''"
         ).ok();
-        
+
         match stmt {
             Some(mut s) => {
-                s.query_map(rusqlite::params![&case_id, format!("%{}%", email)], |row| {
-                    Ok(row.get::<_, String>(0)?)
+                s.query_map(rusqlite::params![&case_id, format!("%{}%", email), format!("%{}%", email_prefix)], |row| {
+                    let d: String = row.get(0)?;
+                    Ok(crate::parser::clean_display_name_str(&d).unwrap_or(d))
                 }).ok().map(|r| r.filter_map(|x| x.ok()).collect()).unwrap_or_default()
             }
             None => vec![]
         }
     };
-    
+
+    let best_name = target_name.or_else(|| display_names.first().cloned());
+
     Ok(serde_json::json!({
         "case_id": case_id,
         "case_title": case_title,
-        "target_email": target_email,
-        "target_name": target_name,
+        "target_email": if email.is_empty() { None } else { Some(email) },
+        "target_name": best_name,
         "target_organization": target_organization,
         "sent_count": sent_count,
         "received_count": received_count,
@@ -708,118 +768,259 @@ pub async fn target_profile(state: State<'_, AppState>, case_id: String) -> Resu
     }))
 }
 
-/// Advanced search with operators
+/// Advanced forensic search with operators, multi-token matching, and field targeting
 #[tauri::command]
 pub async fn advanced_search(state: State<'_, AppState>, input: SearchInput) -> Result<Vec<EmailMessage>, String> {
     let db = state.db.lock().await;
-    let limit = input.limit.unwrap_or(100) as i64;
+    let limit = input.limit.unwrap_or(500) as i64;
     
-    let query = input.query.trim();
-    let mut sql = String::from("SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,headers_raw,body_text,body_html,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags FROM emails WHERE case_id=?1");
+    let raw_query = input.query.trim();
+    let mut sql = String::from("
+        SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, 
+               subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, 
+               folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags 
+        FROM emails 
+        WHERE case_id = ?1
+    ");
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(input.case_id.clone())];
-    
-    if query.contains(':') {
-        let parts: Vec<&str> = query.split_whitespace().collect();
-        for part in &parts {
-            if let Some((key, value)) = part.split_once(':') {
-                let value = value.trim_matches('"');
-                match key.to_lowercase().as_str() {
-                    "from" => {
-                        sql.push_str(" AND from_addr LIKE ?");
-                        params.push(Box::new(format!("%{}%", value)));
+
+    if raw_query.is_empty() {
+        sql.push_str(" ORDER BY date_sent_utc DESC LIMIT ?");
+        params.push(Box::new(limit));
+        let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = db.conn.prepare(&sql).map_err(|e| e.to_string())?;
+        let emails = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+        }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+        return Ok(emails);
+    }
+
+    // Split tokens respecting quoted phrases
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+
+    for c in raw_query.chars() {
+        if c == '"' {
+            in_quotes = !in_quotes;
+        } else if c.is_whitespace() && !in_quotes {
+            if !current.is_empty() {
+                tokens.push(current.clone());
+                current.clear();
+            }
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+
+    for token in tokens {
+        let t = token.trim_matches('"');
+        if t.is_empty() { continue; }
+
+        if let Some((key, value)) = t.split_once(':') {
+            let key_lower = key.to_lowercase();
+            let val = value.trim_matches('"');
+
+            match key_lower.as_str() {
+                "from" => {
+                    sql.push_str(" AND (from_addr LIKE ? OR from_display LIKE ?)");
+                    let pat = format!("%{}%", val);
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat));
+                }
+                "to" => {
+                    sql.push_str(" AND (to_addrs LIKE ? OR cc_addrs LIKE ?)");
+                    let pat = format!("%{}%", val);
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat));
+                }
+                "subject" => {
+                    sql.push_str(" AND subject LIKE ?");
+                    params.push(Box::new(format!("%{}%", val)));
+                }
+                "body" => {
+                    sql.push_str(" AND (body_text LIKE ? OR body_html LIKE ?)");
+                    let pat = format!("%{}%", val);
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat));
+                }
+                "domain" => {
+                    sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?)");
+                    let pat = format!("%{}%", val);
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat));
+                }
+                "after" => {
+                    sql.push_str(" AND date_sent_utc >= ?");
+                    params.push(Box::new(val.to_string()));
+                }
+                "before" => {
+                    sql.push_str(" AND date_sent_utc <= ?");
+                    params.push(Box::new(val.to_string()));
+                }
+                "risk" => {
+                    if val.starts_with('>') {
+                        let threshold: i64 = val[1..].parse().unwrap_or(50);
+                        sql.push_str(" AND risk_score >= ?");
+                        params.push(Box::new(threshold));
+                    } else if val == "high" {
+                        sql.push_str(" AND risk_score >= 50");
+                    } else if val == "medium" {
+                        sql.push_str(" AND risk_score >= 25 AND risk_score < 50");
+                    } else if val == "critical" {
+                        sql.push_str(" AND risk_score >= 75");
+                    } else if let Ok(n) = val.parse::<i64>() {
+                        sql.push_str(" AND risk_score >= ?");
+                        params.push(Box::new(n));
                     }
-                    "to" => {
-                        sql.push_str(" AND (to_addrs LIKE ? OR cc_addrs LIKE ?)");
-                        params.push(Box::new(format!("%{}%", value)));
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "subject" => {
-                        sql.push_str(" AND subject LIKE ?");
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "body" => {
-                        sql.push_str(" AND body_text LIKE ?");
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "domain" => {
-                        sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ?)");
-                        params.push(Box::new(format!("%{}%", value)));
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "after" => {
-                        sql.push_str(" AND date_sent_utc >= ?");
-                        params.push(Box::new(value.to_string()));
-                    }
-                    "before" => {
-                        sql.push_str(" AND date_sent_utc <= ?");
-                        params.push(Box::new(value.to_string()));
-                    }
-                    "risk" => {
-                        if value.starts_with('>') {
-                            let threshold: i64 = value[1..].parse().unwrap_or(50);
-                            sql.push_str(" AND risk_score >= ?");
-                            params.push(Box::new(threshold));
+                }
+                "is" | "has" => {
+                    match val.to_lowercase().as_str() {
+                        "deleted" | "recycle" => {
+                            sql.push_str(" AND (is_deleted = 1 OR deleted_recovered = 1 OR folder_category LIKE '%deleted%')");
                         }
-                    }
-                    "has" => {
-                        match value.to_lowercase().as_str() {
-                            "attachment" | "attachments" => {
-                                sql.push_str(" AND id IN (SELECT email_id FROM attachments)");
-                            }
-                            "url" | "urls" => {
-                                sql.push_str(" AND (body_text LIKE '%http%' OR body_html LIKE '%http%')");
-                            }
-                            "ip" | "ips" => {
-                                sql.push_str(" AND headers_raw LIKE '%[0-9]%'");
-                            }
-                            _ => {}
+                        "attachment" | "attachments" => {
+                            sql.push_str(" AND id IN (SELECT email_id FROM attachments)");
                         }
+                        "url" | "urls" => {
+                            sql.push_str(" AND (body_text LIKE '%http%' OR body_html LIKE '%http%')");
+                        }
+                        "flagged" | "suspicious" => {
+                            sql.push_str(" AND risk_score >= 25");
+                        }
+                        _ => {}
                     }
-                    "ip" => {
-                        sql.push_str(" AND headers_raw LIKE ?");
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "hash" => {
-                        sql.push_str(" AND id IN (SELECT email_id FROM attachments WHERE sha256 LIKE ?)");
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "filename" => {
-                        sql.push_str(" AND id IN (SELECT email_id FROM attachments WHERE filename LIKE ?)");
-                        params.push(Box::new(format!("%{}%", value)));
-                    }
-                    "folder" => {
-                        sql.push_str(" AND folder_category = ?");
-                        params.push(Box::new(value.to_lowercase()));
-                    }
-                    _ => {}
+                }
+                "folder" => {
+                    sql.push_str(" AND (folder_category LIKE ? OR folder_name LIKE ?)");
+                    let pat = format!("%{}%", val.to_lowercase());
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat));
+                }
+                "filename" => {
+                    sql.push_str(" AND id IN (SELECT email_id FROM attachments WHERE filename LIKE ?)");
+                    params.push(Box::new(format!("%{}%", val)));
+                }
+                _ => {
+                    // Fallback to general keyword match for unknown operator
+                    sql.push_str(" AND (from_addr LIKE ? OR from_display LIKE ? OR to_addrs LIKE ? OR subject LIKE ? OR body_text LIKE ?)");
+                    let pat = format!("%{}%", t);
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat.clone()));
+                    params.push(Box::new(pat));
                 }
             }
+        } else {
+            // General keyword / phrase match across all fields including from_display
+            sql.push_str(" AND (from_addr LIKE ? OR from_display LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ? OR subject LIKE ? OR body_text LIKE ?)");
+            let pat = format!("%{}%", t);
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat.clone()));
+            params.push(Box::new(pat));
         }
-    } else {
-        sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR subject LIKE ? OR body_text LIKE ?)");
-        let pattern = format!("%{}%", query);
-        params.push(Box::new(pattern.clone()));
-        params.push(Box::new(pattern.clone()));
-        params.push(Box::new(pattern.clone()));
-        params.push(Box::new(pattern));
     }
-    
+
     sql.push_str(" ORDER BY date_sent_utc DESC LIMIT ?");
     params.push(Box::new(limit));
-    
+
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = db.conn.prepare(&sql).map_err(|e| e.to_string())?;
     let emails = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+        Ok(EmailMessage { 
+            id: row.get(0)?, 
+            evidence_id: row.get(1)?, 
+            case_id: row.get(2)?, 
+            message_id: row.get(3)?, 
+            from_addr: row.get(4)?, 
+            from_display: row.get(5)?, 
+            to_addrs: row.get(6)?, 
+            cc_addrs: row.get(7)?, 
+            subject: row.get(8)?, 
+            date_sent: row.get(9)?, 
+            date_sent_utc: row.get(10)?, 
+            headers_raw: row.get(11)?, 
+            body_text: row.get(12)?, 
+            body_html: row.get(13)?, 
+            folder_name: row.get(14)?, 
+            folder_category: row.get(15)?, 
+            is_deleted: boolv(row,16), 
+            deleted_recovered: boolv(row,17), 
+            risk_score: u8v(row,18), 
+            flags: row.get(19)? 
+        })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
     Ok(emails)
 }
 
-/// Extract and store entities from emails
+fn extract_email_from_dn(dn: &str) -> Option<String> {
+    if let Some(cn_idx) = dn.rfind("CN=") {
+        let username = dn[cn_idx + 3..].trim();
+        if !username.is_empty() {
+            return Some(format!("{}@enron.com", username.to_lowercase()));
+        }
+    }
+    None
+}
+
+fn normalize_entity_address(s: &str) -> (String, Option<String>) {
+    let raw = s.trim();
+    if raw.is_empty() {
+        return (String::new(), None);
+    }
+
+    let email = crate::parser::extract_email(raw);
+    let display = crate::parser::extract_display_name(raw);
+
+    let final_email = if email.contains('@') {
+        email.to_lowercase()
+    } else if let Some(real_email) = extract_email_from_dn(raw) {
+        real_email
+    } else {
+        String::new()
+    };
+
+    (final_email, display)
+}
+
+fn clean_entity_name(s: &str) -> String {
+    let (email, _) = normalize_entity_address(s);
+    if email.is_empty() {
+        s.trim().to_string()
+    } else {
+        email
+    }
+}
+
+fn normalize_human_key(name: &str) -> Option<String> {
+    let cleaned = crate::parser::clean_display_name_str(name)?;
+    let parts: Vec<&str> = cleaned
+        .split_whitespace()
+        .filter(|w| !w.is_empty() && w.len() > 1 && !w.ends_with('.'))
+        .collect();
+    if parts.len() >= 2 {
+        let first = parts[0].to_lowercase();
+        let last = parts[parts.len() - 1].to_lowercase();
+        Some(format!("{} {}", first, last))
+    } else {
+        None
+    }
+}
+
+/// Extract and store entities from emails with smart alias unification
 #[tauri::command]
 pub async fn extract_entities(state: State<'_, AppState>, case_id: String) -> Result<u32, String> {
     let db = state.db.lock().await;
-    
+
     let mut stmt = db.conn.prepare("SELECT from_addr, from_display, to_addrs, cc_addrs, date_sent_utc FROM emails WHERE case_id=?1").map_err(|e| e.to_string())?;
     let rows = stmt.query_map([&case_id], |row| {
         Ok((
@@ -830,44 +1031,252 @@ pub async fn extract_entities(state: State<'_, AppState>, case_id: String) -> Re
             row.get::<_, Option<String>>(4)?,
         ))
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    
-    let mut entity_counts: std::collections::HashMap<String, (Option<String>, i64, i64, Option<String>, Option<String>)> = std::collections::HashMap::new();
-    
+
+    // Map: raw_email -> (set_of_display_names, sent_count, received_count, first_seen, last_seen)
+    struct RawStats {
+        display_names: std::collections::HashSet<String>,
+        sent: i64,
+        received: i64,
+        first_seen: Option<String>,
+        last_seen: Option<String>,
+    }
+
+    let mut raw_map: std::collections::HashMap<String, RawStats> = std::collections::HashMap::new();
+
     for (from_addr, from_display, to_addrs, cc_addrs, date) in rows {
-        // From address (sent)
-        let entry = entity_counts.entry(from_addr.clone()).or_insert((from_display.clone(), 0, 0, date.clone(), date.clone()));
-        entry.1 += 1;
-        update_date_range(&mut entry.3, &mut entry.4, &date);
-        
-        // To addresses (received)
-        let to_list: Vec<String> = serde_json::from_str(&to_addrs).unwrap_or_default();
-        for to_addr in to_list {
-            let entry = entity_counts.entry(to_addr).or_insert((None, 0, 0, date.clone(), date.clone()));
-            entry.2 += 1;
-            update_date_range(&mut entry.3, &mut entry.4, &date);
+        let (from_email, from_extracted_name) = normalize_entity_address(&from_addr);
+        let best_from_display = from_display
+            .and_then(|d| crate::parser::clean_display_name_str(&d))
+            .or(from_extracted_name);
+
+        if !from_email.is_empty() && from_email.contains('@') {
+            let entry = raw_map.entry(from_email).or_insert_with(|| RawStats {
+                display_names: std::collections::HashSet::new(),
+                sent: 0,
+                received: 0,
+                first_seen: date.clone(),
+                last_seen: date.clone(),
+            });
+            entry.sent += 1;
+            if let Some(d) = best_from_display {
+                entry.display_names.insert(d);
+            }
+            update_date_range(&mut entry.first_seen, &mut entry.last_seen, &date);
         }
-        
-        // CC addresses
-        let cc_list: Vec<String> = serde_json::from_str(&cc_addrs).unwrap_or_default();
-        for cc_addr in cc_list {
-            let entry = entity_counts.entry(cc_addr).or_insert((None, 0, 0, date.clone(), date.clone()));
-            entry.2 += 1;
-            update_date_range(&mut entry.3, &mut entry.4, &date);
+
+        let to_list: Vec<String> = if to_addrs.starts_with('[') {
+            serde_json::from_str(&to_addrs).unwrap_or_default()
+        } else {
+            crate::parser::split_address_list(&to_addrs)
+        };
+        for to_item in to_list {
+            let (to_email, to_extracted_name) = normalize_entity_address(&to_item);
+            if !to_email.is_empty() && to_email.contains('@') {
+                let entry = raw_map.entry(to_email).or_insert_with(|| RawStats {
+                    display_names: std::collections::HashSet::new(),
+                    sent: 0,
+                    received: 0,
+                    first_seen: date.clone(),
+                    last_seen: date.clone(),
+                });
+                entry.received += 1;
+                if let Some(d) = to_extracted_name {
+                    entry.display_names.insert(d);
+                }
+                update_date_range(&mut entry.first_seen, &mut entry.last_seen, &date);
+            }
+        }
+
+        let cc_list: Vec<String> = if cc_addrs.starts_with('[') {
+            serde_json::from_str(&cc_addrs).unwrap_or_default()
+        } else {
+            crate::parser::split_address_list(&cc_addrs)
+        };
+        for cc_item in cc_list {
+            let (cc_email, cc_extracted_name) = normalize_entity_address(&cc_item);
+            if !cc_email.is_empty() && cc_email.contains('@') {
+                let entry = raw_map.entry(cc_email).or_insert_with(|| RawStats {
+                    display_names: std::collections::HashSet::new(),
+                    sent: 0,
+                    received: 0,
+                    first_seen: date.clone(),
+                    last_seen: date.clone(),
+                });
+                entry.received += 1;
+                if let Some(d) = cc_extracted_name {
+                    entry.display_names.insert(d);
+                }
+                update_date_range(&mut entry.first_seen, &mut entry.last_seen, &date);
+            }
         }
     }
-    
+
+    // Pass 2: Cluster addresses by Human Name Key or Username Aliasing
+    struct Cluster {
+        canonical_email: String,
+        best_display: Option<String>,
+        sent: i64,
+        received: i64,
+        first_seen: Option<String>,
+        last_seen: Option<String>,
+        aliases: std::collections::HashSet<String>,
+    }
+
+    let mut name_to_cluster: std::collections::HashMap<String, Cluster> = std::collections::HashMap::new();
+    let mut standalone_clusters: Vec<Cluster> = Vec::new();
+
+    // First, create clusters for addresses with verified full human names
+    for (email, stats) in raw_map {
+        // Find best human name
+        let best_name = stats.display_names.iter().find_map(|d| {
+            if d.contains(' ') && d.len() > 3 {
+                Some(d.clone())
+            } else {
+                None
+            }
+        });
+
+        let human_key = best_name.as_deref().and_then(normalize_human_key);
+
+        if let Some(key) = human_key {
+            let cluster = name_to_cluster.entry(key.clone()).or_insert_with(|| {
+                Cluster {
+                    canonical_email: email.clone(),
+                    best_display: best_name.clone(),
+                    sent: 0,
+                    received: 0,
+                    first_seen: stats.first_seen.clone(),
+                    last_seen: stats.last_seen.clone(),
+                    aliases: std::collections::HashSet::new(),
+                }
+            });
+
+            cluster.sent += stats.sent;
+            cluster.received += stats.received;
+            cluster.aliases.insert(email.clone());
+            update_date_range(&mut cluster.first_seen, &mut cluster.last_seen, &stats.first_seen);
+            update_date_range(&mut cluster.first_seen, &mut cluster.last_seen, &stats.last_seen);
+
+            // Promote better canonical email: prefer dot-separated email (e.g. stacey.white@enron.com) over w..white or swhite
+            let current_is_dotted = cluster.canonical_email.split('@').next().unwrap_or("").contains('.') 
+                && !cluster.canonical_email.contains("..");
+            let new_is_dotted = email.split('@').next().unwrap_or("").contains('.') && !email.contains("..");
+
+            if (!current_is_dotted && new_is_dotted) || (new_is_dotted && stats.sent > 0) {
+                cluster.canonical_email = email;
+            }
+
+            if cluster.best_display.is_none() && best_name.is_some() {
+                cluster.best_display = best_name;
+            }
+        } else {
+            // Standalone / External / Distribution list
+            standalone_clusters.push(Cluster {
+                canonical_email: email.clone(),
+                best_display: stats.display_names.into_iter().next(),
+                sent: stats.sent,
+                received: stats.received,
+                first_seen: stats.first_seen,
+                last_seen: stats.last_seen,
+                aliases: std::collections::HashSet::new(),
+            });
+        }
+    }
+
+    // Also match standalone short Enron usernames (e.g. swhite, cevans, jpostle) to existing clusters
+    let mut remaining_standalones = Vec::new();
+    for standalone in standalone_clusters {
+        let local_part = standalone.canonical_email.split('@').next().unwrap_or("").to_lowercase();
+        let domain = standalone.canonical_email.split('@').nth(1).unwrap_or("");
+
+        let mut matched_key = None;
+        if domain == "enron.com" && !local_part.contains('.') {
+            // Try matching first_initial + last_name
+            for (key, _cluster) in name_to_cluster.iter() {
+                let parts: Vec<&str> = key.split_whitespace().collect();
+                if parts.len() == 2 {
+                    let first_init = parts[0].chars().next().unwrap_or(' ');
+                    let last_name = parts[1];
+                    let expected_short = format!("{}{}", first_init, last_name);
+                    let expected_prefix = format!("{}{}", first_init, &last_name[..last_name.len().min(6)]);
+                    if local_part == expected_short || local_part == expected_prefix {
+                        matched_key = Some(key.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(key) = matched_key {
+            let cluster = name_to_cluster.get_mut(&key).unwrap();
+            cluster.sent += standalone.sent;
+            cluster.received += standalone.received;
+            cluster.aliases.insert(standalone.canonical_email);
+            update_date_range(&mut cluster.first_seen, &mut cluster.last_seen, &standalone.first_seen);
+            update_date_range(&mut cluster.first_seen, &mut cluster.last_seen, &standalone.last_seen);
+        } else {
+            remaining_standalones.push(standalone);
+        }
+    }
+
     db.conn.execute("DELETE FROM entities WHERE case_id=?1", [&case_id]).ok();
-    
-    let mut count = 0;
-    for (email, (display_name, sent, received, first_seen, last_seen)) in entity_counts {
+
+    let mut count: u32 = 0;
+
+    // Insert unified human clusters
+    for (_key, cluster) in name_to_cluster {
         let id = generate_id();
+        let mut alias_vec: Vec<String> = cluster.aliases.into_iter().filter(|a| a != &cluster.canonical_email).collect();
+        alias_vec.sort();
+        let aliases_json = if alias_vec.is_empty() { None } else { Some(serde_json::to_string(&alias_vec).unwrap_or_default()) };
+
         db.conn.execute(
-            "INSERT INTO entities (id, case_id, email_address, display_name, first_seen, last_seen, sent_count, received_count, role) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'unknown')",
-            rusqlite::params![&id, &case_id, &email, &display_name, &first_seen, &last_seen, sent as i64, received as i64],
+            "INSERT INTO entities (id, case_id, email_address, display_name, first_seen, last_seen, sent_count, received_count, role, aliases) 
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'unknown',?9)",
+            rusqlite::params![
+                &id,
+                &case_id,
+                &cluster.canonical_email,
+                &cluster.best_display,
+                &cluster.first_seen,
+                &cluster.last_seen,
+                cluster.sent,
+                cluster.received,
+                &aliases_json
+            ],
         ).map_err(|e| format!("Insert entity: {}", e))?;
         count += 1;
     }
-    
+
+    // Insert remaining standalone entities
+    for standalone in remaining_standalones {
+        let id = generate_id();
+        let display = standalone.best_display.or_else(|| {
+            let prefix = standalone.canonical_email.split('@').next().unwrap_or(&standalone.canonical_email);
+            if prefix.contains('.') {
+                Some(prefix.replace('.', " ").to_string())
+            } else {
+                None
+            }
+        });
+
+        db.conn.execute(
+            "INSERT INTO entities (id, case_id, email_address, display_name, first_seen, last_seen, sent_count, received_count, role, aliases) 
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'unknown',NULL)",
+            rusqlite::params![
+                &id,
+                &case_id,
+                &standalone.canonical_email,
+                &display,
+                &standalone.first_seen,
+                &standalone.last_seen,
+                standalone.sent,
+                standalone.received
+            ],
+        ).map_err(|e| format!("Insert entity: {}", e))?;
+        count += 1;
+    }
+
     Ok(count)
 }
 
@@ -875,9 +1284,20 @@ pub async fn extract_entities(state: State<'_, AppState>, case_id: String) -> Re
 #[tauri::command]
 pub async fn entity_list(state: State<'_, AppState>, input: EmptyInput) -> Result<Vec<Entity>, String> {
     let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare("SELECT id,case_id,email_address,display_name,first_seen,last_seen,sent_count,received_count,role FROM entities WHERE case_id=?1 ORDER BY (sent_count + received_count) DESC").map_err(|e| e.to_string())?;
+    let mut stmt = db.conn.prepare("SELECT id,case_id,email_address,display_name,first_seen,last_seen,sent_count,received_count,role,aliases FROM entities WHERE case_id=?1 ORDER BY (sent_count + received_count) DESC").map_err(|e| e.to_string())?;
     let entities = stmt.query_map([&input.case_id], |row| {
-        Ok(Entity { id: row.get(0)?, case_id: row.get(1)?, email_address: row.get(2)?, display_name: row.get(3)?, first_seen: row.get(4)?, last_seen: row.get(5)?, sent_count: row.get(6)?, received_count: row.get(7)?, role: row.get(8)? })
+        Ok(Entity { 
+            id: row.get(0)?, 
+            case_id: row.get(1)?, 
+            email_address: row.get(2)?, 
+            display_name: row.get(3)?, 
+            first_seen: row.get(4)?, 
+            last_seen: row.get(5)?, 
+            sent_count: row.get(6)?, 
+            received_count: row.get(7)?, 
+            role: row.get(8)?,
+            aliases: row.get(9)?,
+        })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     Ok(entities)
 }
@@ -886,83 +1306,189 @@ pub async fn entity_list(state: State<'_, AppState>, input: EmptyInput) -> Resul
 #[tauri::command]
 pub async fn entity_dive(state: State<'_, AppState>, input: EntityInput) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;
-    
-    let entity: (String, Option<String>, Option<String>, Option<String>, i64, i64) = db.conn.query_row(
-        "SELECT email_address, display_name, first_seen, last_seen, sent_count, received_count FROM entities WHERE case_id=?1 AND email_address=?2",
+
+    let (email, display_name, first_seen, last_seen, sent_count, received_count, aliases_json): 
+        (String, Option<String>, Option<String>, Option<String>, i64, i64, Option<String>) = db.conn.query_row(
+        "SELECT email_address, display_name, first_seen, last_seen, sent_count, received_count, aliases FROM entities WHERE case_id=?1 AND email_address=?2",
         rusqlite::params![&input.case_id, &input.email_address],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
     ).map_err(|e| e.to_string())?;
-    
-    let mut stmt = db.conn.prepare(
-        "SELECT from_addr, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2) GROUP BY from_addr ORDER BY cnt DESC LIMIT 10"
-    ).map_err(|e| e.to_string())?;
-    let sent_to: Vec<(String, i64)> = stmt.query_map(rusqlite::params![&input.case_id, format!("%{}%", entity.0)], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    
-    let mut stmt2 = db.conn.prepare(
-        "SELECT to_addrs FROM emails WHERE case_id=?1 AND from_addr=?2"
-    ).map_err(|e| e.to_string())?;
-    let received_from_rows: Vec<Vec<String>> = stmt2.query_map(rusqlite::params![&input.case_id, entity.0.clone()], |row| {
-        let to_addrs: String = row.get(0)?;
-        let addrs: Vec<String> = serde_json::from_str(&to_addrs).unwrap_or_default();
-        Ok(addrs)
-    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    
-    let mut received_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
-    for addrs in received_from_rows {
-        for addr in addrs {
-            *received_counts.entry(addr).or_insert(0) += 1;
+
+    let mut all_aliases: Vec<String> = vec![email.clone()];
+    if let Some(ref json_str) = aliases_json {
+        if let Ok(list) = serde_json::from_str::<Vec<String>>(json_str) {
+            all_aliases.extend(list);
         }
     }
-    let mut received_from_vec: Vec<(String, i64)> = received_counts.into_iter().collect();
-    received_from_vec.sort_by(|a, b| b.1.cmp(&a.1));
-    received_from_vec.truncate(10);
-    
-    // Get top subjects for this entity
-    let mut stmt3 = db.conn.prepare(
-        "SELECT subject, COUNT(*) as cnt FROM emails WHERE case_id=?1 AND (from_addr=?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3) AND subject IS NOT NULL AND subject != '' GROUP BY subject ORDER BY cnt DESC LIMIT 10"
+
+    let email_prefix = email.split('@').next().unwrap_or(&email);
+
+    // Deleted count involving this entity
+    let deleted_count: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2) AND (is_deleted = 1 OR deleted_recovered = 1 OR folder_category LIKE '%deleted%')",
+        rusqlite::params![&input.case_id, format!("%{}%", email_prefix)],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Flagged count involving this entity
+    let flagged_count: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2) AND risk_score >= 25",
+        rusqlite::params![&input.case_id, format!("%{}%", email_prefix)],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
+    // Top Sent To: who this entity sent emails to
+    let mut stmt_sent = db.conn.prepare(
+        "SELECT to_addrs FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR from_addr LIKE ?3)"
     ).map_err(|e| e.to_string())?;
-    let top_subjects: Vec<(String, i64)> = stmt3.query_map(rusqlite::params![&input.case_id, entity.0.clone(), format!("%{}%", entity.0)], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     
+    let sent_rows: Vec<String> = stmt_sent.query_map(
+        rusqlite::params![&input.case_id, format!("%{}%", email), format!("%{}%", email_prefix)],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    let mut sent_to_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for to_str in sent_rows {
+        let addrs: Vec<String> = if to_str.starts_with('[') {
+            serde_json::from_str(&to_str).unwrap_or_default()
+        } else {
+            crate::parser::split_address_list(&to_str)
+        };
+        for a in addrs {
+            let clean = crate::parser::extract_email(&a);
+            if !clean.is_empty() && clean != email && !clean.contains(email_prefix) && !all_aliases.contains(&clean) {
+                *sent_to_map.entry(clean).or_insert(0) += 1;
+            }
+        }
+    }
+    let mut sent_to_vec: Vec<(String, i64)> = sent_to_map.into_iter().collect();
+    sent_to_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    sent_to_vec.truncate(10);
+
+    // Top Received From: who sent emails to this entity
+    let mut stmt_recv = db.conn.prepare(
+        "SELECT from_addr, COUNT(*) as cnt FROM emails 
+         WHERE case_id=?1 AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2) AND from_addr NOT LIKE ?2
+         GROUP BY from_addr ORDER BY cnt DESC LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+
+    let received_from_vec: Vec<(String, i64)> = stmt_recv.query_map(
+        rusqlite::params![&input.case_id, format!("%{}%", email_prefix)],
+        |row| {
+            let raw: String = row.get(0)?;
+            let clean = crate::parser::extract_email(&raw);
+            Ok((if clean.is_empty() { raw } else { clean }, row.get::<_, i64>(1)?))
+        },
+    ).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    // Top subjects for this entity
+    let mut stmt3 = db.conn.prepare(
+        "SELECT subject, COUNT(*) as cnt FROM emails 
+         WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2) 
+           AND subject IS NOT NULL AND subject != '' 
+         GROUP BY subject ORDER BY cnt DESC LIMIT 10"
+    ).map_err(|e| e.to_string())?;
+    
+    let top_subjects: Vec<(String, i64)> = stmt3.query_map(
+        rusqlite::params![&input.case_id, format!("%{}%", email_prefix)],
+        |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+    ).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect();
+
+    let display_aliases: Vec<String> = all_aliases.into_iter().filter(|a| a != &email).collect();
+
     Ok(serde_json::json!({
-        "email": entity.0,
-        "display_name": entity.1,
-        "first_seen": entity.2,
-        "last_seen": entity.3,
-        "sent_count": entity.4,
-        "received_count": entity.5,
-        "sent_to": sent_to,
+        "email": email,
+        "display_name": display_name,
+        "first_seen": first_seen,
+        "last_seen": last_seen,
+        "sent_count": sent_count,
+        "received_count": received_count,
+        "deleted_count": deleted_count,
+        "flagged_count": flagged_count,
+        "total_count": sent_count + received_count,
+        "aliases": display_aliases,
+        "sent_to": sent_to_vec,
         "received_from": received_from_vec,
         "top_subjects": top_subjects,
     }))
 }
 
-/// Get emails for a specific entity (with date/attachment filters)
+/// Get emails for a specific entity (with category, partner thread, date, and text filters)
 #[tauri::command]
 pub async fn entity_emails(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<EmailMessage>, String> {
     let db = state.db.lock().await;
     let case_id = input["case_id"].as_str().unwrap_or("");
     let email_addr = input["email"].as_str().unwrap_or("");
+    let email_prefix = email_addr.split('@').next().unwrap_or(email_addr);
+    let filter_type = input["filter_type"].as_str().unwrap_or("all"); // "all", "sent", "received", "deleted", "flagged"
+    let partner_email = input["partner_email"].as_str().unwrap_or("");
+    let query_text = input["q"].as_str().unwrap_or("").trim();
     let date_from = input["date_from"].as_str().unwrap_or("");
     let date_to = input["date_to"].as_str().unwrap_or("");
     let has_attachment = input["has_attachment"].as_bool().unwrap_or(false);
-    
+
     let mut sql = String::from("
         SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, 
                subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, 
                folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
         FROM emails 
-        WHERE case_id=?1 AND (from_addr=?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3)
+        WHERE case_id=?1
     ");
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![
-        Box::new(case_id.to_string()),
-        Box::new(email_addr.to_string()),
-        Box::new(format!("%{}%", email_addr)),
-    ];
-    
+
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(case_id.to_string())];
+
+    // Direction / Category Filtering
+    match filter_type {
+        "sent" => {
+            sql.push_str(" AND (from_addr LIKE ? OR from_addr LIKE ?)");
+            params.push(Box::new(format!("%{}%", email_addr)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+        }
+        "received" => {
+            sql.push_str(" AND (to_addrs LIKE ? OR cc_addrs LIKE ?)");
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+        }
+        "deleted" => {
+            sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?) AND (is_deleted = 1 OR deleted_recovered = 1 OR folder_category LIKE '%deleted%')");
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+        }
+        "flagged" => {
+            sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?) AND risk_score >= 25");
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+        }
+        _ => {
+            // "all"
+            sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?)");
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+            params.push(Box::new(format!("%{}%", email_prefix)));
+        }
+    }
+
+    // Direct Conversation Partner Filter
+    if !partner_email.is_empty() {
+        let partner_prefix = partner_email.split('@').next().unwrap_or(partner_email);
+        sql.push_str(" AND (from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ?)");
+        params.push(Box::new(format!("%{}%", partner_prefix)));
+        params.push(Box::new(format!("%{}%", partner_prefix)));
+        params.push(Box::new(format!("%{}%", partner_prefix)));
+    }
+
+    // Search Query
+    if !query_text.is_empty() {
+        sql.push_str(" AND (subject LIKE ? OR body_text LIKE ? OR from_addr LIKE ? OR to_addrs LIKE ?)");
+        let q_wildcard = format!("%{}%", query_text);
+        params.push(Box::new(q_wildcard.clone()));
+        params.push(Box::new(q_wildcard.clone()));
+        params.push(Box::new(q_wildcard.clone()));
+        params.push(Box::new(q_wildcard));
+    }
+
     if !date_from.is_empty() {
         sql.push_str(" AND date_sent_utc >= ?");
         params.push(Box::new(date_from.to_string()));
@@ -974,14 +1500,36 @@ pub async fn entity_emails(state: State<'_, AppState>, input: serde_json::Value)
     if has_attachment {
         sql.push_str(" AND id IN (SELECT email_id FROM attachments)");
     }
-    
-    sql.push_str(" ORDER BY date_sent_utc DESC LIMIT 200");
-    
+
+    sql.push_str(" ORDER BY date_sent_utc DESC LIMIT 500");
+
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut stmt = db.conn.prepare(&sql).map_err(|e| e.to_string())?;
     let emails = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+        Ok(EmailMessage { 
+            id: row.get(0)?, 
+            evidence_id: row.get(1)?, 
+            case_id: row.get(2)?, 
+            message_id: row.get(3)?, 
+            from_addr: row.get(4)?, 
+            from_display: row.get(5)?, 
+            to_addrs: row.get(6)?, 
+            cc_addrs: row.get(7)?, 
+            subject: row.get(8)?, 
+            date_sent: row.get(9)?, 
+            date_sent_utc: row.get(10)?, 
+            headers_raw: row.get(11)?, 
+            body_text: row.get(12)?, 
+            body_html: row.get(13)?, 
+            folder_name: row.get(14)?, 
+            folder_category: row.get(15)?, 
+            is_deleted: boolv(row,16), 
+            deleted_recovered: boolv(row,17), 
+            risk_score: u8v(row,18), 
+            flags: row.get(19)? 
+        })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
     Ok(emails)
 }
 #[tauri::command]
@@ -1017,17 +1565,22 @@ pub async fn add_finding_note(
 ) -> Result<(), String> {
     let db = state.db.lock().await;
     
-    // Get existing description and append note
-    let existing: String = db.conn.query_row(
-        "SELECT description FROM findings WHERE id=?1",
+    // Get existing notes and append
+    let existing_opt: Option<String> = db.conn.query_row(
+        "SELECT notes FROM findings WHERE id=?1",
         [&finding_id],
         |row| row.get(0),
-    ).map_err(|e| e.to_string())?;
+    ).unwrap_or(None);
     
-    let updated = format!("{}\n\n[{}] {}", existing, Utc::now().format("%Y-%m-%d %H:%M"), note);
+    let time_str = Utc::now().to_rfc3339();
+    let new_entry = format!("[{}] {}: {}", time_str, author, note);
+    let updated = match existing_opt {
+        Some(prev) if !prev.trim().is_empty() => format!("{}\n---\n{}", prev, new_entry),
+        _ => new_entry,
+    };
     
     db.conn.execute(
-        "UPDATE findings SET description = ?1 WHERE id = ?2",
+        "UPDATE findings SET notes = ?1 WHERE id = ?2",
         rusqlite::params![&updated, &finding_id],
     ).map_err(|e| e.to_string())?;
     
@@ -1039,6 +1592,57 @@ pub async fn add_finding_note(
     ).ok();
     
     Ok(())
+}
+
+/// Retrieve full emails attached to a specific finding
+#[tauri::command]
+pub async fn finding_emails(state: State<'_, AppState>, finding_id: String) -> Result<Vec<EmailMessage>, String> {
+    let db = state.db.lock().await;
+    let email_ids_str: String = db.conn.query_row(
+        "SELECT email_ids FROM findings WHERE id = ?1",
+        [&finding_id],
+        |row| row.get(0),
+    ).unwrap_or_else(|_| "[]".to_string());
+
+    let email_ids: Vec<String> = serde_json::from_str(&email_ids_str).unwrap_or_default();
+    if email_ids.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut result = Vec::new();
+    for eid in email_ids {
+        if let Ok(mut stmt) = db.conn.prepare("SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,headers_raw,body_text,body_html,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags FROM emails WHERE id=?1") {
+            let email_opt = stmt.query_row([&eid], |row| {
+                Ok(EmailMessage {
+                    id: row.get(0)?,
+                    evidence_id: row.get(1)?,
+                    case_id: row.get(2)?,
+                    message_id: row.get(3)?,
+                    from_addr: row.get(4)?,
+                    from_display: row.get(5)?,
+                    to_addrs: row.get(6)?,
+                    cc_addrs: row.get(7)?,
+                    subject: row.get(8)?,
+                    date_sent: row.get(9)?,
+                    date_sent_utc: row.get(10)?,
+                    headers_raw: row.get(11)?,
+                    body_text: row.get(12)?,
+                    body_html: row.get(13)?,
+                    folder_name: row.get(14)?,
+                    folder_category: row.get(15)?,
+                    is_deleted: boolv(row, 16),
+                    deleted_recovered: boolv(row, 17),
+                    risk_score: u8v(row, 18),
+                    flags: row.get(19)?,
+                })
+            }).ok();
+            if let Some(e) = email_opt {
+                result.push(e);
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Helper to update first_seen/last_seen date range
@@ -1118,23 +1722,49 @@ pub async fn emails_between(state: State<'_, AppState>, input: serde_json::Value
     let from_addr = input["from"].as_str().unwrap_or("");
     let to_addr = input["to"].as_str().unwrap_or("");
     
+    let from_p = from_addr.split('@').next().unwrap_or(from_addr);
+    let to_p = to_addr.split('@').next().unwrap_or(to_addr);
+
     let mut stmt = db.conn.prepare("
         SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, 
                subject, date_sent, date_sent_utc, headers_raw, body_text, body_html, 
                folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
         FROM emails 
         WHERE case_id=?1 AND (
-            (from_addr=?2 AND (to_addrs LIKE ?3 OR cc_addrs LIKE ?3))
-            OR (from_addr=?4 AND (to_addrs LIKE ?5 OR cc_addrs LIKE ?5))
+            ((from_addr LIKE ?2 OR from_addr LIKE ?3) AND (to_addrs LIKE ?4 OR cc_addrs LIKE ?4 OR to_addrs LIKE ?5 OR cc_addrs LIKE ?5))
+            OR ((from_addr LIKE ?4 OR from_addr LIKE ?5) AND (to_addrs LIKE ?2 OR cc_addrs LIKE ?2 OR to_addrs LIKE ?3 OR cc_addrs LIKE ?3))
         )
         ORDER BY date_sent_utc DESC
         LIMIT 200
     ").map_err(|e| e.to_string())?;
     
     let emails = stmt.query_map(rusqlite::params![
-        case_id, from_addr, format!("%{}%", to_addr), to_addr, format!("%{}%", from_addr)
+        case_id, 
+        format!("%{}%", from_addr), format!("%{}%", from_p),
+        format!("%{}%", to_addr), format!("%{}%", to_p)
     ], |row| {
-        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+        Ok(EmailMessage { 
+            id: row.get(0)?, 
+            evidence_id: row.get(1)?, 
+            case_id: row.get(2)?, 
+            message_id: row.get(3)?, 
+            from_addr: row.get(4)?, 
+            from_display: row.get(5)?, 
+            to_addrs: row.get(6)?, 
+            cc_addrs: row.get(7)?, 
+            subject: row.get(8)?, 
+            date_sent: row.get(9)?, 
+            date_sent_utc: row.get(10)?, 
+            headers_raw: row.get(11)?, 
+            body_text: row.get(12)?, 
+            body_html: row.get(13)?, 
+            folder_name: row.get(14)?, 
+            folder_category: row.get(15)?, 
+            is_deleted: boolv(row,16), 
+            deleted_recovered: boolv(row,17), 
+            risk_score: u8v(row,18), 
+            flags: row.get(19)? 
+        })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
     Ok(emails)
 }
@@ -1164,41 +1794,967 @@ pub async fn entity_heatmap(state: State<'_, AppState>, input: EntityInput) -> R
     
     Ok(serde_json::json!({ "data": data }))
 }
+
 #[tauri::command]
 pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result<serde_json::Value, String> {
     let db = state.db.lock().await;
-    
+
+    let (target_email, _target_name): (Option<String>, Option<String>) = db.conn.query_row(
+        "SELECT target_email, target_name FROM cases WHERE id = ?1",
+        [&input.case_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap_or((None, None));
+
     let mut stmt = db.conn.prepare("
-        SELECT email_address, display_name, sent_count, received_count, (sent_count + received_count) as total
-        FROM entities WHERE case_id=?1 ORDER BY total DESC LIMIT 100
+        SELECT email_address, display_name, sent_count, received_count, (sent_count + received_count) as total, aliases
+        FROM entities WHERE case_id=?1 ORDER BY total DESC LIMIT 150
     ").map_err(|e| e.to_string())?;
-    
+
+    // Build alias -> canonical mapping
+    let mut alias_to_canonical: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+
     let nodes: Vec<serde_json::Value> = stmt.query_map([&input.case_id], |row| {
+        let email: String = row.get(0)?;
+        let name: Option<String> = row.get(1)?;
+        let sent: i64 = row.get(2)?;
+        let received: i64 = row.get(3)?;
+        let total: i64 = row.get(4)?;
+        let aliases_str: Option<String> = row.get(5)?;
+
+        let is_target = target_email.as_ref().map(|t| t == &email).unwrap_or(false);
+
+        Ok((email, name, sent, received, total, aliases_str, is_target))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).map(|(email, name, sent, received, total, aliases_str, is_target)| {
+        alias_to_canonical.insert(email.clone(), email.clone());
+        if let Some(ref a_json) = aliases_str {
+            if let Ok(alias_vec) = serde_json::from_str::<Vec<String>>(a_json) {
+                for a in alias_vec {
+                    alias_to_canonical.insert(a, email.clone());
+                }
+            }
+        }
+
+        serde_json::json!({
+            "id": email,
+            "name": name,
+            "sent": sent,
+            "received": received,
+            "total": total,
+            "is_target": is_target,
+        })
+    }).collect();
+
+    let node_set: std::collections::HashSet<String> = nodes.iter()
+        .filter_map(|n| n["id"].as_str().map(|s| s.to_string()))
+        .collect();
+
+    // Query email pairs directly from emails table - FAST
+    let mut email_stmt = db.conn.prepare("
+        SELECT from_addr, to_addrs, cc_addrs FROM emails WHERE case_id = ?1
+    ").map_err(|e| e.to_string())?;
+
+    let mut edge_counts: std::collections::HashMap<(String, String), i64> = std::collections::HashMap::new();
+
+    let email_rows = email_stmt.query_map([&input.case_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    }).map_err(|e| e.to_string())?;
+
+    for row_res in email_rows {
+        if let Ok((from_raw, to_raw, cc_raw)) = row_res {
+            let from_clean = clean_entity_name(&from_raw);
+            let from_canonical = alias_to_canonical.get(&from_clean).unwrap_or(&from_clean);
+
+            if !node_set.contains(from_canonical) {
+                continue;
+            }
+
+            let to_list: Vec<String> = if to_raw.starts_with('[') {
+                serde_json::from_str(&to_raw).unwrap_or_default()
+            } else {
+                crate::parser::split_address_list(&to_raw)
+            };
+            for to_addr in to_list {
+                let to_clean = clean_entity_name(&to_addr);
+                let to_canonical = alias_to_canonical.get(&to_clean).unwrap_or(&to_clean);
+                if from_canonical != to_canonical && node_set.contains(to_canonical) {
+                    *edge_counts.entry((from_canonical.clone(), to_canonical.clone())).or_insert(0) += 1;
+                }
+            }
+
+            let cc_list: Vec<String> = if cc_raw.starts_with('[') {
+                serde_json::from_str(&cc_raw).unwrap_or_default()
+            } else {
+                crate::parser::split_address_list(&cc_raw)
+            };
+            for cc_addr in cc_list {
+                let cc_clean = clean_entity_name(&cc_addr);
+                let cc_canonical = alias_to_canonical.get(&cc_clean).unwrap_or(&cc_clean);
+                if from_canonical != cc_canonical && node_set.contains(cc_canonical) {
+                    *edge_counts.entry((from_canonical.clone(), cc_canonical.clone())).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let mut edges: Vec<serde_json::Value> = edge_counts.into_iter().map(|((src, tgt), w)| {
+        serde_json::json!({
+            "source": src,
+            "target": tgt,
+            "weight": w,
+        })
+    }).collect();
+
+    // Sort edges by weight descending and limit to top 400
+    edges.sort_by(|a, b| {
+        let wa = a["weight"].as_i64().unwrap_or(0);
+        let wb = b["weight"].as_i64().unwrap_or(0);
+        wb.cmp(&wa)
+    });
+    edges.truncate(400);
+    
+    Ok(serde_json::json!({ 
+        "nodes": nodes, 
+        "edges": edges,
+        "target_email": target_email 
+    }))
+}
+
+/// Case Notes CRUD
+#[tauri::command]
+pub async fn case_notes_list(state: State<'_, AppState>, input: EmptyInput) -> Result<Vec<CaseNote>, String> {
+    let db = state.db.lock().await;
+    let mut stmt = db.conn.prepare(
+        "SELECT id, case_id, author, title, content, category, pinned, created_at, updated_at 
+         FROM case_notes 
+         WHERE case_id = ?1 
+         ORDER BY pinned DESC, created_at DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let notes = stmt.query_map([&input.case_id], |row| {
+        Ok(CaseNote {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            author: row.get(2)?,
+            title: row.get(3)?,
+            content: row.get(4)?,
+            category: row.get(5)?,
+            pinned: boolv(row, 6),
+            created_at: row.get(7)?,
+            updated_at: row.get(8)?,
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    Ok(notes)
+}
+
+#[tauri::command]
+pub async fn case_note_create(state: State<'_, AppState>, input: CaseNoteCreateInput) -> Result<CaseNote, String> {
+    let db = state.db.lock().await;
+    let id = generate_id();
+    let now = Utc::now().to_rfc3339();
+    let author = input.author.unwrap_or_else(|| "admin".to_string());
+    let category = input.category.unwrap_or_else(|| "general".to_string());
+    let pinned = input.pinned.unwrap_or(false);
+
+    db.conn.execute(
+        "INSERT INTO case_notes (id, case_id, author, title, content, category, pinned, created_at, updated_at) 
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![&id, &input.case_id, &author, &input.title, &input.content, &category, if pinned { 1 } else { 0 }, &now, &now],
+    ).map_err(|e| e.to_string())?;
+
+    // Audit log
+    db.conn.execute(
+        "INSERT INTO audit_log (id, actor, action, target_type, target_id, timestamp, detail) 
+         VALUES (?1, ?2, 'case_note_created', 'case_note', ?3, ?4, ?5)",
+        rusqlite::params![&generate_id(), &author, &id, &now, &format!("Created note: {}", input.title)],
+    ).ok();
+
+    Ok(CaseNote {
+        id,
+        case_id: input.case_id,
+        author,
+        title: input.title,
+        content: input.content,
+        category,
+        pinned,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub async fn case_note_update(state: State<'_, AppState>, input: CaseNoteUpdateInput) -> Result<(), String> {
+    let db = state.db.lock().await;
+    let now = Utc::now().to_rfc3339();
+
+    if let Some(ref title) = input.title {
+        db.conn.execute("UPDATE case_notes SET title = ?1, updated_at = ?2 WHERE id = ?3", rusqlite::params![title, &now, &input.id]).map_err(|e| e.to_string())?;
+    }
+    if let Some(ref content) = input.content {
+        db.conn.execute("UPDATE case_notes SET content = ?1, updated_at = ?2 WHERE id = ?3", rusqlite::params![content, &now, &input.id]).map_err(|e| e.to_string())?;
+    }
+    if let Some(ref category) = input.category {
+        db.conn.execute("UPDATE case_notes SET category = ?1, updated_at = ?2 WHERE id = ?3", rusqlite::params![category, &now, &input.id]).map_err(|e| e.to_string())?;
+    }
+    if let Some(pinned) = input.pinned {
+        db.conn.execute("UPDATE case_notes SET pinned = ?1, updated_at = ?2 WHERE id = ?3", rusqlite::params![if pinned { 1 } else { 0 }, &now, &input.id]).map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn case_note_toggle_pin(state: State<'_, AppState>, note_id: String) -> Result<bool, String> {
+    let db = state.db.lock().await;
+    let now = Utc::now().to_rfc3339();
+    let current_pinned: i64 = db.conn.query_row(
+        "SELECT pinned FROM case_notes WHERE id = ?1",
+        [&note_id],
+        |row| row.get(0),
+    ).map_err(|e| e.to_string())?;
+
+    let new_pinned = if current_pinned == 1 { 0 } else { 1 };
+    db.conn.execute(
+        "UPDATE case_notes SET pinned = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![new_pinned, &now, &note_id],
+    ).map_err(|e| e.to_string())?;
+
+    Ok(new_pinned == 1)
+}
+
+#[tauri::command]
+pub async fn case_note_delete(state: State<'_, AppState>, note_id: String) -> Result<(), String> {
+    let db = state.db.lock().await;
+    let now = Utc::now().to_rfc3339();
+
+    db.conn.execute("DELETE FROM case_notes WHERE id = ?1", [&note_id]).map_err(|e| e.to_string())?;
+
+    // Audit log
+    db.conn.execute(
+        "INSERT INTO audit_log (id, actor, action, target_type, target_id, timestamp, detail) 
+         VALUES (?1, 'admin', 'case_note_deleted', 'case_note', ?2, ?3, 'Deleted case note')",
+        rusqlite::params![&generate_id(), &note_id, &now],
+    ).ok();
+
+    Ok(())
+}
+
+/// Email Tags
+#[tauri::command]
+pub async fn email_tags_list(state: State<'_, AppState>, case_id: String) -> Result<Vec<EmailTag>, String> {
+    let db = state.db.lock().await;
+    let mut stmt = db.conn.prepare(
+        "SELECT id, case_id, email_id, tag, color, created_by, created_at 
+         FROM email_tags 
+         WHERE case_id = ?1 
+         ORDER BY created_at ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let tags = stmt.query_map([&case_id], |row| {
+        Ok(EmailTag {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            email_id: row.get(2)?,
+            tag: row.get(3)?,
+            color: row.get(4)?,
+            created_by: row.get(5)?,
+            created_at: row.get(6)?,
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    Ok(tags)
+}
+
+#[tauri::command]
+pub async fn email_tag_add(state: State<'_, AppState>, input: EmailTagAddInput) -> Result<EmailTag, String> {
+    let db = state.db.lock().await;
+    let id = generate_id();
+    let now = Utc::now().to_rfc3339();
+    let author = input.created_by.unwrap_or_else(|| "admin".to_string());
+    let color = input.color.unwrap_or_else(|| match input.tag.to_lowercase().as_str() {
+        "key evidence" | "hot" => "#ef4444".to_string(),
+        "privileged" | "confidential" => "#8b5cf6".to_string(),
+        "responsive" => "#22c55e".to_string(),
+        "suspicious" => "#f97316".to_string(),
+        _ => "#3b82f6".to_string(),
+    });
+
+    db.conn.execute(
+        "INSERT INTO email_tags (id, case_id, email_id, tag, color, created_by, created_at) 
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(case_id, email_id, tag) DO NOTHING",
+        rusqlite::params![&id, &input.case_id, &input.email_id, &input.tag, &color, &author, &now],
+    ).map_err(|e| e.to_string())?;
+
+    // Audit log
+    db.conn.execute(
+        "INSERT INTO audit_log (id, actor, action, target_type, target_id, timestamp, detail) 
+         VALUES (?1, ?2, 'email_tagged', 'email', ?3, ?4, ?5)",
+        rusqlite::params![&generate_id(), &author, &input.email_id, &now, &format!("Tagged email as '{}'", input.tag)],
+    ).ok();
+
+    Ok(EmailTag {
+        id,
+        case_id: input.case_id,
+        email_id: input.email_id,
+        tag: input.tag,
+        color,
+        created_by: author,
+        created_at: now,
+    })
+}
+
+#[tauri::command]
+pub async fn email_tag_remove(state: State<'_, AppState>, input: EmailTagRemoveInput) -> Result<(), String> {
+    let db = state.db.lock().await;
+    let now = Utc::now().to_rfc3339();
+
+    db.conn.execute(
+        "DELETE FROM email_tags WHERE case_id = ?1 AND email_id = ?2 AND tag = ?3",
+        rusqlite::params![&input.case_id, &input.email_id, &input.tag],
+    ).map_err(|e| e.to_string())?;
+
+    // Audit log
+    db.conn.execute(
+        "INSERT INTO audit_log (id, actor, action, target_type, target_id, timestamp, detail) 
+         VALUES (?1, 'admin', 'email_untagged', 'email', ?2, ?3, ?4)",
+        rusqlite::params![&generate_id(), &input.email_id, &now, &format!("Removed tag '{}'", input.tag)],
+    ).ok();
+
+    Ok(())
+}
+
+/// Email Notes
+#[tauri::command]
+pub async fn email_notes_list(state: State<'_, AppState>, email_id: String) -> Result<Vec<EmailNote>, String> {
+    let db = state.db.lock().await;
+    let mut stmt = db.conn.prepare(
+        "SELECT id, case_id, email_id, author, content, created_at, updated_at 
+         FROM email_notes 
+         WHERE email_id = ?1 
+         ORDER BY created_at ASC"
+    ).map_err(|e| e.to_string())?;
+
+    let notes = stmt.query_map([&email_id], |row| {
+        Ok(EmailNote {
+            id: row.get(0)?,
+            case_id: row.get(1)?,
+            email_id: row.get(2)?,
+            author: row.get(3)?,
+            content: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
+
+    Ok(notes)
+}
+
+#[tauri::command]
+pub async fn email_note_add(state: State<'_, AppState>, input: EmailNoteInput) -> Result<EmailNote, String> {
+    let db = state.db.lock().await;
+    let id = generate_id();
+    let now = Utc::now().to_rfc3339();
+    let author = input.author.unwrap_or_else(|| "admin".to_string());
+
+    db.conn.execute(
+        "INSERT INTO email_notes (id, case_id, email_id, author, content, created_at, updated_at) 
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![&id, &input.case_id, &input.email_id, &author, &input.content, &now, &now],
+    ).map_err(|e| e.to_string())?;
+
+    // Audit log
+    db.conn.execute(
+        "INSERT INTO audit_log (id, actor, action, target_type, target_id, timestamp, detail) 
+         VALUES (?1, ?2, 'email_note_added', 'email', ?3, ?4, ?5)",
+        rusqlite::params![&generate_id(), &author, &input.email_id, &now, &"Added note to email".to_string()],
+    ).ok();
+
+    Ok(EmailNote {
+        id,
+        case_id: input.case_id,
+        email_id: input.email_id,
+        author,
+        content: input.content,
+        created_at: now.clone(),
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub async fn email_note_delete(state: State<'_, AppState>, note_id: String) -> Result<(), String> {
+    let db = state.db.lock().await;
+    db.conn.execute("DELETE FROM email_notes WHERE id = ?1", [&note_id]).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// === PHASE 5: REPORTING ===
+
+#[tauri::command]
+pub async fn generate_report_data(state: State<'_, AppState>, input: serde_json::Value) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("");
+
+    // Case info
+    let case_info = db.conn.query_row(
+        "SELECT id, title, case_number, description, status, target_name, target_email, target_organization FROM cases WHERE id = ?1",
+        [case_id],
+        |row| Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "title": row.get::<_, String>(1)?,
+            "case_number": row.get::<_, Option<String>>(2)?,
+            "description": row.get::<_, Option<String>>(3)?,
+            "status": row.get::<_, String>(4)?,
+            "target_name": row.get::<_, Option<String>>(5)?,
+            "target_email": row.get::<_, Option<String>>(6)?,
+            "target_organization": row.get::<_, Option<String>>(7)?,
+        }))
+    ).map_err(|e| e.to_string())?;
+
+    // Methodology
+    let methodology = serde_json::json!({
+        "tool_name": "J12 Forensic Investigation Platform",
+        "tool_version": "0.1.0",
+        "parser_version": "J12Parser 0.1.0",
+        "analysis_engine": "J12Analysis 0.1.0",
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    // Custody chain
+    let mut custody_stmt = db.conn.prepare("SELECT ce.action, ce.actor, ce.timestamp, ce.tool, ce.tool_version, ce.detail FROM custody_events ce JOIN evidence_items ei ON ce.evidence_id = ei.id WHERE ei.case_id = ?1 ORDER BY ce.timestamp ASC").map_err(|e| e.to_string())?;
+    let custody_chain: Vec<serde_json::Value> = custody_stmt.query_map([case_id], |row| {
+        Ok(serde_json::json!({
+            "action": row.get::<_, String>(0)?,
+            "actor": row.get::<_, String>(1)?,
+            "timestamp": row.get::<_, String>(2)?,
+            "tool": row.get::<_, String>(3)?,
+            "tool_version": row.get::<_, String>(4)?,
+            "detail": row.get::<_, Option<String>>(5)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
+    // Evidence inventory
+    let mut evidence_stmt = db.conn.prepare("SELECT id, filename, format, sha256, sha512, size_bytes, parse_status, message_count, acquired_at FROM evidence_items WHERE case_id = ?1 ORDER BY acquired_at ASC").map_err(|e| e.to_string())?;
+    let evidence_inventory: Vec<serde_json::Value> = evidence_stmt.query_map([case_id], |row| {
         Ok(serde_json::json!({
             "id": row.get::<_, String>(0)?,
-            "name": row.get::<_, Option<String>>(1)?,
+            "filename": row.get::<_, String>(1)?,
+            "format": row.get::<_, String>(2)?,
+            "sha256": row.get::<_, String>(3)?,
+            "sha512": row.get::<_, Option<String>>(4)?,
+            "size_bytes": row.get::<_, i64>(5)?,
+            "parse_status": row.get::<_, String>(6)?,
+            "message_count": row.get::<_, i64>(7)?,
+            "acquired_at": row.get::<_, String>(8)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
+    // Findings
+    let mut findings_stmt = db.conn.prepare("SELECT id, type, severity, confidence, title, description, status, created_at FROM findings WHERE case_id = ?1 ORDER BY severity ASC, created_at ASC").map_err(|e| e.to_string())?;
+    let findings: Vec<serde_json::Value> = findings_stmt.query_map([case_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "type": row.get::<_, String>(1)?,
+            "severity": row.get::<_, String>(2)?,
+            "confidence": row.get::<_, String>(3)?,
+            "title": row.get::<_, String>(4)?,
+            "description": row.get::<_, Option<String>>(5)?,
+            "status": row.get::<_, String>(6)?,
+            "created_at": row.get::<_, String>(7)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
+    // Entity summary (top 50)
+    let mut entity_stmt = db.conn.prepare("SELECT email_address, display_name, sent_count, received_count FROM entities WHERE case_id = ?1 ORDER BY (sent_count + received_count) DESC LIMIT 50").map_err(|e| e.to_string())?;
+    let entities: Vec<serde_json::Value> = entity_stmt.query_map([case_id], |row| {
+        Ok(serde_json::json!({
+            "email": row.get::<_, String>(0)?,
+            "display_name": row.get::<_, Option<String>>(1)?,
             "sent": row.get::<_, i64>(2)?,
             "received": row.get::<_, i64>(3)?,
-            "total": row.get::<_, i64>(4)?,
         }))
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    
-    let mut stmt2 = db.conn.prepare("
-        SELECT e1.email_address as src, e2.email_address as tgt, COUNT(*) as w
-        FROM emails em, entities e1, entities e2
-        WHERE em.case_id=?1 AND e1.case_id=?1 AND e2.case_id=?1
-          AND em.from_addr = e1.email_address
-          AND em.to_addrs LIKE '%' || e2.email_address || '%'
-        GROUP BY src, tgt ORDER BY w DESC LIMIT 200
-    ").map_err(|e| e.to_string())?;
-    
-    let edges: Vec<serde_json::Value> = stmt2.query_map([&input.case_id], |row| {
+
+    // Email statistics
+    let email_stats = db.conn.query_row(
+        "SELECT COUNT(*), SUM(CASE WHEN folder_category='inbox' THEN 1 ELSE 0 END), SUM(CASE WHEN folder_category='sent' THEN 1 ELSE 0 END), SUM(CASE WHEN folder_category='soft_deleted' THEN 1 ELSE 0 END), SUM(CASE WHEN folder_category='spam' THEN 1 ELSE 0 END), SUM(CASE WHEN folder_category='drafts' THEN 1 ELSE 0 END), SUM(CASE WHEN folder_category='other' THEN 1 ELSE 0 END), MIN(date_sent_utc), MAX(date_sent_utc) FROM emails WHERE case_id = ?1",
+        [case_id],
+        |row| Ok(serde_json::json!({
+            "total": row.get::<_, i64>(0)?,
+            "inbox": row.get::<_, i64>(1)?,
+            "sent": row.get::<_, i64>(2)?,
+            "deleted": row.get::<_, i64>(3)?,
+            "spam": row.get::<_, i64>(4)?,
+            "drafts": row.get::<_, i64>(5)?,
+            "other": row.get::<_, i64>(6)?,
+            "date_from": row.get::<_, Option<String>>(7)?,
+            "date_to": row.get::<_, Option<String>>(8)?,
+        }))
+    ).map_err(|e| e.to_string())?;
+
+    // Hash manifest
+    let mut hash_stmt = db.conn.prepare("SELECT filename, sha256, sha512 FROM evidence_items WHERE case_id = ?1").map_err(|e| e.to_string())?;
+    let hash_manifest: Vec<serde_json::Value> = hash_stmt.query_map([case_id], |row| {
         Ok(serde_json::json!({
-            "source": row.get::<_, String>(0)?,
-            "target": row.get::<_, String>(1)?,
-            "weight": row.get::<_, i64>(2)?,
+            "filename": row.get::<_, String>(0)?,
+            "sha256": row.get::<_, String>(1)?,
+            "sha512": row.get::<_, Option<String>>(2)?,
         }))
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
-    
-    Ok(serde_json::json!({ "nodes": nodes, "edges": edges }))
+
+    // Target profile if specified
+    let target_email = case_info["target_email"].as_str().unwrap_or("");
+    let target_profile = if !target_email.is_empty() {
+        let mut target_stmt = db.conn.prepare("SELECT email_address, display_name, sent_count, received_count, aliases FROM entities WHERE case_id = ?1 AND (email_address LIKE ?2 OR aliases LIKE ?2) LIMIT 1").ok();
+        if let Some(mut stmt) = target_stmt {
+            let row = stmt.query_row(rusqlite::params![case_id, format!("%{}%", target_email)], |r| {
+                Ok(serde_json::json!({
+                    "email": r.get::<_, String>(0)?,
+                    "display_name": r.get::<_, Option<String>>(1)?,
+                    "sent": r.get::<_, i64>(2)?,
+                    "received": r.get::<_, i64>(3)?,
+                    "aliases": r.get::<_, Option<String>>(4)?,
+                }))
+            }).ok();
+            row
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Folder hierarchy breakdown
+    let mut folder_stmt = db.conn.prepare("
+        SELECT COALESCE(folder_name, 'Root') as fname, folder_category, COUNT(*) as cnt, MIN(date_sent_utc), MAX(date_sent_utc)
+        FROM emails 
+        WHERE case_id = ?1 
+        GROUP BY folder_name, folder_category 
+        ORDER BY cnt DESC
+    ").map_err(|e| e.to_string())?;
+    let folder_breakdown: Vec<serde_json::Value> = folder_stmt.query_map([&case_id], |row| {
+        Ok(serde_json::json!({
+            "folder_name": row.get::<_, String>(0)?,
+            "folder_category": row.get::<_, String>(1)?,
+            "count": row.get::<_, i64>(2)?,
+            "date_from": row.get::<_, Option<String>>(3)?,
+            "date_to": row.get::<_, Option<String>>(4)?,
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
+    // Attachments inventory
+    let attachments_manifest: Vec<serde_json::Value> = match db.conn.prepare("
+        SELECT a.filename, a.mime_type, a.size_bytes, a.sha256, e.subject, e.from_addr, e.date_sent_utc 
+        FROM attachments a 
+        JOIN emails e ON a.email_id = e.id 
+        WHERE e.case_id = ?1 
+        ORDER BY a.size_bytes DESC 
+        LIMIT 150
+    ") {
+        Ok(mut attach_stmt) => {
+            attach_stmt.query_map([case_id], |row| {
+                Ok(serde_json::json!({
+                    "filename": row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "attachment".to_string()),
+                    "file_type": row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "application/octet-stream".to_string()),
+                    "size_bytes": row.get::<_, i64>(2)?,
+                    "sha256": row.get::<_, String>(3)?,
+                    "email_subject": row.get::<_, Option<String>>(4)?,
+                    "from_addr": row.get::<_, String>(5)?,
+                    "date_sent_utc": row.get::<_, Option<String>>(6)?,
+                }))
+            }).map(|rows| rows.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        }
+        Err(_) => Vec::new(),
+    };
+
+    // Detailed Flagged / High-Risk / Deleted Email Ledger (top 150)
+    let mut ledger_stmt = db.conn.prepare("
+        SELECT id, from_addr, from_display, to_addrs, subject, date_sent_utc, folder_category, is_deleted, deleted_recovered, risk_score 
+        FROM emails 
+        WHERE case_id = ?1 AND (risk_score >= 25 OR is_deleted = 1 OR deleted_recovered = 1)
+        ORDER BY risk_score DESC, date_sent_utc DESC 
+        LIMIT 150
+    ").map_err(|e| e.to_string())?;
+    let key_messages_ledger: Vec<serde_json::Value> = ledger_stmt.query_map([&case_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "from_addr": row.get::<_, String>(1)?,
+            "from_display": row.get::<_, Option<String>>(2)?,
+            "to_addrs": row.get::<_, String>(3)?,
+            "subject": row.get::<_, Option<String>>(4)?,
+            "date_sent_utc": row.get::<_, Option<String>>(5)?,
+            "folder_category": row.get::<_, String>(6)?,
+            "is_deleted": boolv(row, 7),
+            "deleted_recovered": boolv(row, 8),
+            "risk_score": u8v(row, 9),
+        }))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "case_info": case_info,
+        "methodology": methodology,
+        "custody_chain": custody_chain,
+        "evidence_inventory": evidence_inventory,
+        "findings": findings,
+        "entities": entities,
+        "email_stats": email_stats,
+        "hash_manifest": hash_manifest,
+        "target_profile": target_profile,
+        "folder_breakdown": folder_breakdown,
+        "attachments_manifest": attachments_manifest,
+        "key_messages_ledger": key_messages_ledger,
+    }))
 }
+
+#[tauri::command]
+pub async fn export_report_pdf(state: State<'_, AppState>, case_id: String, sections: Vec<String>, exhibits: Vec<serde_json::Value>) -> Result<String, String> {
+    let db = state.db.lock().await;
+
+    // Generate HTML report
+    let mut html = String::from("<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Forensic Report</title>");
+    html.push_str("<style>");
+    html.push_str("body{font-family:Georgia,serif;line-height:1.6;max-width:800px;margin:0 auto;padding:40px;color:#1a1a2e}");
+    html.push_str("h1{text-align:center;border-bottom:2px solid #1a1a2e;padding-bottom:16px}");
+    html.push_str("h2{border-bottom:1px solid #ddd;padding-bottom:8px;margin-top:32px}");
+    html.push_str("table{width:100%;border-collapse:collapse;margin:16px 0}");
+    html.push_str("th,td{border:1px solid #ddd;padding:8px;text-align:left}");
+    html.push_str("th{background:#f5f5f5}");
+    html.push_str(".mono{font-family:monospace;font-size:12px}");
+    html.push_str(".severity-critical{color:#ef4444;font-weight:700}");
+    html.push_str(".severity-high{color:#f97316;font-weight:700}");
+    html.push_str(".severity-medium{color:#eab308;font-weight:700}");
+    html.push_str(".severity-low{color:#22c55e;font-weight:700}");
+    html.push_str(".exhibit{border:2px solid #1a1a2e;padding:16px;margin:16px 0;page-break-inside:avoid}");
+    html.push_str(".certification{margin-top:48px;padding:24px;border:2px solid #1a1a2e}");
+    html.push_str(".signature-line{border-top:1px solid #1a1a2e;width:200px;margin-top:48px;padding-top:8px}");
+    html.push_str("</style></head><body>");
+
+    // Header
+    html.push_str("<h1>FORENSIC INVESTIGATION REPORT</h1>");
+    html.push_str(&format!("p style='text-align:center;color:#666'>Generated: {}</p>", chrono::Utc::now().to_rfc3339()));
+
+    // Case info
+    if sections.contains(&"case_info".to_string()) {
+        let case = db.conn.query_row(
+            "SELECT title, case_number, description, status, target_name, target_email FROM cases WHERE id = ?1",
+            [&case_id],
+            |row| Ok((
+                row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?, row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?, row.get::<_, Option<String>>(4)?, row.get::<_, Option<String>>(5)?,
+            ))
+        ).map_err(|e| e.to_string())?;
+
+        html.push_str("<h2>1. Case Information</h2>");
+        html.push_str("<table>");
+        html.push_str(&format!("<tr><th>Case Title</th><td>{}</td></tr>", case.0));
+        html.push_str(&format!("<tr><th>Case Number</th><td>{}</td></tr>", case.1.unwrap_or_default()));
+        html.push_str(&format!("<tr><th>Status</th><td>{}</td></tr>", case.3));
+        html.push_str(&format!("<tr><th>Target Name</th><td>{}</td></tr>", case.4.unwrap_or_default()));
+        html.push_str(&format!("<tr><th>Target Email</th><td>{}</td></tr>", case.5.unwrap_or_default()));
+        html.push_str(&format!("<tr><th>Description</th><td>{}</td></tr>", case.2.unwrap_or_default()));
+        html.push_str("</table>");
+    }
+
+    // Methodology
+    if sections.contains(&"methodology".to_string()) {
+        html.push_str("<h2>2. Methodology & Tool Versions</h2>");
+        html.push_str("<table>");
+        html.push_str("<tr><th>Tool</th><td>J12 Forensic Investigation Platform</td></tr>");
+        html.push_str("<tr><th>Version</th><td>0.1.0</td></tr>");
+        html.push_str("<tr><th>Parser</th><td>J12Parser 0.1.0</td></tr>");
+        html.push_str("<tr><th>Analysis Engine</th><td>J12Analysis 0.1.0</td></tr>");
+        html.push_str("</table>");
+    }
+
+    // Evidence inventory
+    if sections.contains(&"evidence_inventory".to_string()) {
+        html.push_str("<h2>4. Evidence Inventory</h2>");
+        html.push_str("<table><tr><th>Filename</th><th>Format</th><th>Size</th><th>SHA-256</th><th>Status</th></tr>");
+        let mut stmt = db.conn.prepare("SELECT filename, format, size_bytes, sha256, parse_status FROM evidence_items WHERE case_id = ?1").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([&case_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, String>(3)?, row.get::<_, String>(4)?))
+        }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+        for row in rows {
+            html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td class='mono'>{}</td><td>{}</td></tr>", row.0, row.1, row.2, row.3, row.4));
+        }
+        html.push_str("</table>");
+    }
+
+    // Findings
+    if sections.contains(&"findings".to_string()) {
+        html.push_str("<h2>5. Findings by Severity</h2>");
+        let mut stmt = db.conn.prepare("SELECT severity, type, title, description, status FROM findings WHERE case_id = ?1 ORDER BY severity ASC").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([&case_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, Option<String>>(3)?, row.get::<_, String>(4)?))
+        }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+        for row in rows {
+            let severity_class = format!("severity-{}", row.0);
+            html.push_str(&format!("<div style='margin:12px 0;padding:12px;border-left:4px solid #ddd'><span class='{}'>[{}]</span> <strong>{}</strong> - {} <span style='color:#666'>({})</span></div>", severity_class, row.0.to_uppercase(), row.1, row.2, row.4));
+        }
+    }
+
+    // === EVIDENCE MAPS ===
+    html.push_str("<h2>6. Evidence Maps</h2>");
+    html.push_str("<p>Mapping of evidence sources to findings and key entities:</p>");
+    html.push_str("<table><tr><th>Evidence File</th><th>Format</th><th>Messages</th><th>Key Entities</th></tr>");
+    let mut evidence_map_stmt = db.conn.prepare("
+        SELECT e.filename, e.format, e.message_count, 
+               (SELECT GROUP_CONCAT(DISTINCT SUBSTR(em.from_addr, 1, 30)) FROM emails em WHERE em.evidence_id = e.id LIMIT 5)
+        FROM evidence_items e WHERE e.case_id = ?1 ORDER BY e.acquired_at
+    ").map_err(|e| e.to_string())?;
+    let evidence_map_rows = evidence_map_stmt.query_map([&case_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, i64>(2)?, row.get::<_, Option<String>>(3)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    for row in evidence_map_rows {
+        html.push_str(&format!("<tr><td>{}</td><td>{}</td><td>{}</td><td class='mono'>{}</td></tr>", row.0, row.1, row.2, row.3.unwrap_or_default()));
+    }
+    html.push_str("</table>");
+
+    // === TIMELINE VISUALIZATION ===
+    html.push_str("<h2>8. Timeline Visualization</h2>");
+    html.push_str("<p>Email activity over time:</p>");
+    html.push_str("<table><tr><th>Month</th><th>Count</th><th>Activity</th></tr>");
+    let mut timeline_stmt = db.conn.prepare("
+        SELECT strftime('%Y-%m', date_sent_utc) as month, COUNT(*) as cnt 
+        FROM emails WHERE case_id = ?1 AND date_sent_utc IS NOT NULL 
+        GROUP BY month ORDER BY month
+    ").map_err(|e| e.to_string())?;
+    let timeline_rows = timeline_stmt.query_map([&case_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    let max_timeline = timeline_rows.iter().map(|r| r.1).max().unwrap_or(1);
+    for row in &timeline_rows {
+        let bar_len = ((row.1 as f64 / max_timeline as f64) * 30.0) as usize;
+        let bar = "█".repeat(bar_len.max(1));
+        html.push_str(&format!("<tr><td class='mono'>{}</td><td>{}</td><td style='color:#3b82f6;white-space:nowrap'>{}</td></tr>", row.0, row.1, bar));
+    }
+    html.push_str("</table>");
+
+    // === COMMUNICATION GRAPH ===
+    html.push_str("<h2>9. Communication Graph</h2>");
+    html.push_str("<p>Top communication pairs (sender → recipient):</p>");
+    html.push_str("<table><tr><th>#</th><th>Sender</th><th>Recipient</th><th>Messages</th></tr>");
+    let mut graph_stmt = db.conn.prepare("SELECT from_addr, to_addrs FROM emails WHERE case_id = ?1").map_err(|e| e.to_string())?;
+    let graph_rows = graph_stmt.query_map([&case_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    let mut pair_counts: std::collections::HashMap<(String, String), i64> = std::collections::HashMap::new();
+    for row in &graph_rows {
+        let to_list: Vec<String> = serde_json::from_str(&row.1).unwrap_or_default();
+        for to in to_list {
+            *pair_counts.entry((row.0.clone(), to)).or_insert(0) += 1;
+        }
+    }
+    let mut pair_vec: Vec<((String, String), i64)> = pair_counts.into_iter().collect();
+    pair_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    for (i, pair) in pair_vec.iter().take(25).enumerate() {
+        html.push_str(&format!("<tr><td>{}</td><td class='mono'>{}</td><td class='mono'>{}</td><td>{}</td></tr>", i+1, pair.0.0, pair.0.1, pair.1));
+    }
+    html.push_str("</table>");
+
+    // Exhibits
+    if sections.contains(&"exhibits".to_string()) && !exhibits.is_empty() {
+        html.push_str("<h2>7. Exhibits</h2>");
+        for (i, exhibit) in exhibits.iter().enumerate() {
+            let letter = (b'A' + i as u8) as char;
+            html.push_str("<div class='exhibit'>");
+            html.push_str(&format!("<h3>Exhibit {}: {}</h3>", letter, exhibit["subject"].as_str().unwrap_or("")));
+            html.push_str(&format!("<p><strong>From:</strong> {}</p>", exhibit["from_display"].as_str().unwrap_or(exhibit["from_addr"].as_str().unwrap_or(""))));
+            html.push_str(&format!("<p><strong>Date:</strong> {}</p>", exhibit["date_sent"].as_str().unwrap_or("")));
+            html.push_str(&format!("<p class='mono'><strong>SHA-256:</strong> {}</p>", exhibit["sha256"].as_str().unwrap_or("")));
+            html.push_str(&format!("<p class='mono'><strong>Headers:</strong><br>{}</p>", exhibit["headers_full"].as_str().unwrap_or("").replace("\n", "<br>")));
+            html.push_str("</div>");
+        }
+    }
+
+    // Certification
+    if sections.contains(&"certification".to_string()) {
+        html.push_str("<div class='certification'>");
+        html.push_str("<h2>11. Certification</h2>");
+        html.push_str("<p>I hereby certify that the information contained in this report is true and accurate to the best of my knowledge. The evidence described herein was collected and handled in accordance with established forensic procedures.</p>");
+        html.push_str("<div style='display:flex;justify-content:space-between;margin-top:48px'>");
+        html.push_str("<div class='signature-line'>Investigator Signature</div>");
+        html.push_str("<div class='signature-line'>Date</div>");
+        html.push_str("</div></div>");
+    }
+
+    html.push_str("</body></html>");
+
+    // Save HTML file (deterministic - same content = same filename)
+    let output_dir = std::path::PathBuf::from("/Users/macbookpro/Project/email-forensic-desktop/reports");
+    std::fs::create_dir_all(&output_dir).ok();
+    // Use content hash for deterministic filename
+    let content_hash = format!("{:x}", md5::compute(&html));
+    let filename = format!("forensic_report_{}_{}.html", case_id, &content_hash[..12]);
+    let output_path = output_dir.join(&filename);
+    std::fs::write(&output_path, html).map_err(|e| e.to_string())?;
+
+    Ok(output_path.to_string_lossy().to_string())
+}
+
+// === PHASE 6: HARDENING ===
+
+/// Verify all evidence hashes on demand
+#[tauri::command]
+pub async fn verify_evidence_hashes(state: State<'_, AppState>, input: EmptyInput) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    let mut stmt = db.conn.prepare("SELECT id, filename, sha256, sha512, stored_path FROM evidence_items WHERE case_id = ?1").map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([&input.case_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, String>(4)?,
+        ))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let mut results = Vec::new();
+    let mut verified = 0;
+    let mut failed = 0;
+    let mut missing = 0;
+    
+    for (id, filename, stored_sha256, _stored_sha512, stored_path) in rows {
+        let path = std::path::PathBuf::from(&stored_path);
+        let status = if !path.exists() {
+            missing += 1;
+            "missing"
+        } else if let Ok(data) = std::fs::read(&path) {
+            use sha2::Digest;
+            let mut hasher = sha2::Sha256::new();
+            hasher.update(&data);
+            let computed = format!("{:x}", hasher.finalize());
+            if computed == stored_sha256 {
+                verified += 1;
+                "verified"
+            } else {
+                failed += 1;
+                "modified"
+            }
+        } else {
+            missing += 1;
+            "missing"
+        };
+        results.push(serde_json::json!({
+            "id": id,
+            "filename": filename,
+            "status": status,
+        }));
+    }
+    
+    Ok(serde_json::json!({
+        "total": results.len(),
+        "verified": verified,
+        "failed": failed,
+        "missing": missing,
+        "results": results,
+    }))
+}
+
+/// Export audit/custody log
+#[tauri::command]
+pub async fn export_audit_log(state: State<'_, AppState>, input: EmptyInput) -> Result<String, String> {
+    let db = state.db.lock().await;
+    
+    // Build CSV
+    let mut csv = String::from("Timestamp,Action,Actor,Tool,Version,Detail,Hash\n");
+    
+    let mut stmt = db.conn.prepare(
+        "SELECT ce.action, ce.actor, ce.timestamp, ce.tool, ce.tool_version, ce.detail, ce.hash_after 
+         FROM custody_events ce 
+         JOIN evidence_items ei ON ce.evidence_id = ei.id 
+         WHERE ei.case_id = ?1 
+         ORDER BY ce.timestamp"
+    ).map_err(|e| e.to_string())?;
+    
+    let rows = stmt.query_map([&input.case_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+        ))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    for (action, actor, timestamp, tool, version, detail, hash) in rows {
+        csv.push_str(&format!("{},{},{},{},{},{},{}\n",
+            timestamp,
+            escape_csv(&action),
+            escape_csv(&actor),
+            escape_csv(&tool),
+            escape_csv(&version),
+            escape_csv(&detail.unwrap_or_default()),
+            hash.unwrap_or_default()
+        ));
+    }
+    
+    // Save CSV file
+    let output_dir = std::path::PathBuf::from("/Users/macbookpro/Project/email-forensic-desktop/reports");
+    std::fs::create_dir_all(&output_dir).ok();
+    let filename = format!("audit_log_{}.csv", if input.case_id.len() >= 8 { &input.case_id[..8] } else { &input.case_id });
+    let output_path = output_dir.join(&filename);
+    std::fs::write(&output_path, csv).map_err(|e| e.to_string())?;
+    
+    Ok(output_path.to_string_lossy().to_string())
+}
+
+/// Check custody chain for gaps
+#[tauri::command]
+pub async fn check_custody_chain(state: State<'_, AppState>, input: EmptyInput) -> Result<serde_json::Value, String> {
+    let db = state.db.lock().await;
+    
+    // Get all evidence items
+    let mut evidence_stmt = db.conn.prepare("SELECT id, filename FROM evidence_items WHERE case_id = ?1").map_err(|e| e.to_string())?;
+    let evidence_items: Vec<(String, String)> = evidence_stmt.query_map([&input.case_id], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+    
+    let mut gaps = Vec::new();
+    let mut valid = 0;
+    
+    for (evidence_id, filename) in &evidence_items {
+        // Check if there's at least an "ingested" event
+        let count: i64 = db.conn.query_row(
+            "SELECT COUNT(*) FROM custody_events WHERE evidence_id = ?1",
+            [evidence_id],
+            |row| row.get(0)
+        ).unwrap_or(0);
+        
+        if count == 0 {
+            gaps.push(serde_json::json!({
+                "evidence": filename,
+                "issue": "No custody events recorded",
+            }));
+        } else {
+            valid += 1;
+        }
+    }
+    
+    Ok(serde_json::json!({
+        "total_evidence": evidence_items.len(),
+        "valid": valid,
+        "gaps": gaps,
+        "chain_intact": gaps.is_empty(),
+    }))
+}
+
+fn escape_csv(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace("\"", "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+

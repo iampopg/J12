@@ -60,7 +60,7 @@ export function TargetProfileView({ caseId, caseData }: Props) {
       const targets: DetectedTarget[] = det.targets || [];
       setDetected(targets);
       if (targets.length > 0 && !selectedEmail) {
-        const top = targets.reduce((a, b) => (a.total_emails > b.total_emails ? a : b));
+        const top = targets[0];
         setSelectedEmail(top.email);
         loadProfile(top.email);
       } else if (selectedEmail) {
@@ -70,9 +70,18 @@ export function TargetProfileView({ caseId, caseData }: Props) {
     setLoading(false);
   };
 
+  const reExtract = async () => {
+    setLoading(true);
+    try {
+      await invoke<number>("extract_entities", { caseId });
+      await loadData();
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
   const loadProfile = async (email: string) => {
     try {
-      const prof = await invoke<TargetProfile>("target_profile", { caseId });
+      const prof = await invoke<TargetProfile>("target_profile", { caseId, targetEmail: email });
       setProfile(prof);
     } catch (e) { console.error(e); }
   };
@@ -100,7 +109,10 @@ export function TargetProfileView({ caseId, caseData }: Props) {
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile</h2>
           <p className="muted">Main investigation subject — {selected.display_name || selected.email}</p>
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
+        <div className="row gap-2">
+          <button className="btn btn-ghost btn-sm" onClick={reExtract} title="Re-scan and clean all entities and aliases">⚡ Re-Extract & Clean</button>
+          <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
+        </div>
       </div>
 
       {/* Main Identity Card */}
