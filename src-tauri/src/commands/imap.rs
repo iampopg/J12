@@ -1,12 +1,20 @@
 use chrono::Utc;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::AppState;
 use crate::db::generate_id;
 use crate::imap_acquisition::{self, ImapConfig, StreamingMessage};
 use crate::parser;
+
+fn emit_imap_event(app: &AppHandle, payload: serde_json::Value) {
+    let _ = app.emit("imap_progress", payload.clone());
+    let _ = app.emit_to("main", "imap_progress", payload.clone());
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.emit("imap_progress", payload);
+    }
+}
 
 #[tauri::command]
 pub async fn imap_cancel_acquisition(state: State<'_, AppState>) -> Result<bool, String> {
@@ -77,7 +85,7 @@ pub async fn imap_fetch_emails(
     // Reset cancel flag
     state.cancel_imap.store(false, std::sync::atomic::Ordering::Relaxed);
 
-    let _ = app.emit("imap_progress", json!({
+    emit_imap_event(&app, json!({
         "status": "connecting",
         "log": format!("Connecting to {}:{} (SSL: {})...", server, port, if use_ssl { "YES" } else { "NO" })
     }));
@@ -127,7 +135,7 @@ pub async fn imap_fetch_emails(
             max_messages,
             &cancel_flag,
             |folder, count, f_idx, total_f| {
-                let _ = app_handle_inner.emit("imap_progress", json!({
+                emit_imap_event(&app_handle_inner, json!({
                     "status": "folder_discovered",
                     "folder": folder,
                     "folder_count": count,
@@ -162,7 +170,7 @@ pub async fn imap_fetch_emails(
 
                     if is_duplicate {
                         duplicates_skipped += 1;
-                        let _ = app_handle_clone.emit("imap_progress", json!({
+                        emit_imap_event(&app_handle_clone, json!({
                             "status": "duplicate_skipped",
                             "folder": msg.folder_name,
                             "msg_seq": msg.seq_id,
@@ -284,7 +292,7 @@ pub async fn imap_fetch_emails(
                         String::new()
                     };
 
-                    let _ = app_handle_clone.emit("imap_progress", json!({
+                    emit_imap_event(&app_handle_clone, json!({
                         "status": "ingested",
                         "folder": msg.folder_name,
                         "msg_seq": msg.seq_id,
@@ -331,7 +339,7 @@ pub async fn imap_fetch_emails(
         ],
     );
 
-    let _ = app.emit("imap_progress", json!({
+    emit_imap_event(&app, json!({
         "status": final_status,
         "ingested_count": ingested_count,
         "duplicates_skipped": duplicates_skipped,
