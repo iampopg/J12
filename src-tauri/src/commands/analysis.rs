@@ -481,19 +481,22 @@ pub async fn entity_emails(state: State<'_, AppState>, input: Value) -> Result<V
     let e_like = format!("%{}%", email_addr);
     let mut stmt = db.conn.prepare(
         "SELECT id, evidence_id, case_id, message_id, from_addr, from_display, to_addrs, cc_addrs, subject,
-                date_sent, date_sent_utc, headers_raw, body_text, body_html, folder_name, folder_category,
+                date_sent, date_sent_utc, folder_name, folder_category,
                 is_deleted, deleted_recovered, risk_score, flags
          FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR cc_addrs LIKE ?2)
-         ORDER BY date_sent_utc DESC"
+         ORDER BY date_sent_utc DESC LIMIT 1000"
     ).map_err(|e| e.to_string())?;
 
     let emails = stmt.query_map(rusqlite::params![case_id, e_like], |row| {
         Ok(EmailMessage {
             id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?,
             from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?,
-            subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?,
-            body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?,
-            is_deleted: boolv(row, 16), deleted_recovered: boolv(row, 17), risk_score: u8v(row, 18), flags: row.get(19)?
+            subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?,
+            headers_raw: None,
+            body_text: None,
+            body_html: None,
+            folder_name: row.get(11)?, folder_category: row.get(12)?,
+            is_deleted: boolv(row, 13), deleted_recovered: boolv(row, 14), risk_score: u8v(row, 15), flags: row.get(16)?
         })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
 
