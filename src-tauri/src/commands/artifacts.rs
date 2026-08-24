@@ -99,11 +99,54 @@ pub fn validate_ssn(ssn_str: &str) -> bool {
     true
 }
 
-/// Base58 Bitcoin Address Character Validator
+/// Base58 Bitcoin Address Character & Cryptographic Checksum Validator
 pub fn validate_btc_base58(addr: &str) -> bool {
     if addr.len() < 26 || addr.len() > 35 { return false; }
-    let forbidden = ['0', 'O', 'I', 'l'];
-    !addr.chars().any(|c| forbidden.contains(&c)) && (addr.starts_with('1') || addr.starts_with('3'))
+    if !addr.starts_with('1') && !addr.starts_with('3') { return false; }
+    let alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let mut decoded = [0u8; 35];
+    let mut decoded_len = 0;
+    
+    for c in addr.chars() {
+        let mut carry = match alphabet.find(c) {
+            Some(idx) => idx as u32,
+            None => return false,
+        };
+        for i in 0..decoded_len {
+            carry += (decoded[i] as u32) * 58;
+            decoded[i] = (carry & 0xFF) as u8;
+            carry >>= 8;
+        }
+        while carry > 0 {
+            if decoded_len >= 35 { return false; }
+            decoded[decoded_len] = (carry & 0xFF) as u8;
+            decoded_len += 1;
+            carry >>= 8;
+        }
+    }
+    for c in addr.chars() {
+        if c == '1' {
+            if decoded_len >= 35 { return false; }
+            decoded[decoded_len] = 0;
+            decoded_len += 1;
+        } else {
+            break;
+        }
+    }
+    if decoded_len != 25 { return false; }
+    decoded[0..decoded_len].reverse();
+    
+    // Verify 4-byte double SHA-256 checksum
+    use sha2::{Sha256, Digest};
+    let mut hasher1 = Sha256::new();
+    hasher1.update(&decoded[0..21]);
+    let hash1 = hasher1.finalize();
+    
+    let mut hasher2 = Sha256::new();
+    hasher2.update(&hash1);
+    let hash2 = hasher2.finalize();
+    
+    &hash2[0..4] == &decoded[21..25]
 }
 
 /// Phone Number Sanitizer & Quality Check

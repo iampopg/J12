@@ -345,12 +345,12 @@ export function ArtifactsView({ caseId }: Props) {
       )}
 
       {/* Main Two-Column Taxonomy Workspace */}
-      <div style={{ display: "grid", gridTemplateColumns: "310px 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: 14, minWidth: 0, width: "100%" }}>
         
         {/* Left Column: Artifact Taxonomy Category Tree */}
-        <div className="card" style={{ padding: 12, maxHeight: "calc(100vh - 180px)", overflowY: "auto" }}>
-          <div className="row between mb-2" style={{ padding: "4px 8px" }}>
-            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.8px", color: "var(--text-3)" }}>
+        <div className="card" style={{ padding: 10, maxHeight: "calc(100vh - 160px)", overflowY: "auto", minWidth: 0 }}>
+          <div className="row between mb-2" style={{ padding: "4px 6px" }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.8px", color: "var(--text-3)" }}>
               AVAILABLE ARTIFACTS ({visibleTaxonomy.length})
             </span>
             <button 
@@ -369,27 +369,27 @@ export function ArtifactsView({ caseId }: Props) {
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
-              padding: "8px 10px",
+              padding: "7px 8px",
               borderRadius: "var(--r-sm)",
               cursor: "pointer",
               marginBottom: 6,
               background: selectedDomain === "all" ? "var(--accent)" : "transparent",
               color: selectedDomain === "all" ? "#000" : "var(--text-0)",
               fontWeight: selectedDomain === "all" ? 700 : 500,
-              fontSize: 13,
+              fontSize: 12,
             }}
             onClick={() => { setSelectedDomain("all"); setSelectedSubcategory("all"); }}
           >
-            <div className="row gap-2" style={{ alignItems: "center" }}>
+            <div className="row gap-1" style={{ alignItems: "center", overflow: "hidden" }}>
               <span>📁</span>
-              <span>All Available Artifacts</span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>All Artifacts</span>
             </div>
             <span 
               className="badge" 
               style={{ 
                 background: selectedDomain === "all" ? "#000" : "var(--bg-3)", 
                 color: selectedDomain === "all" ? "#fff" : "var(--text-1)",
-                fontSize: 11 
+                fontSize: 10 
               }}
             >
               {totalAllArtifacts}
@@ -397,7 +397,7 @@ export function ArtifactsView({ caseId }: Props) {
           </div>
 
           {/* Domain List */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             {visibleTaxonomy.length === 0 ? (
               <div className="muted text-xs p-3 text-center">No forensic artifacts detected in this case yet.</div>
             ) : (
@@ -410,13 +410,13 @@ export function ArtifactsView({ caseId }: Props) {
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "space-between",
-                        padding: "7px 10px",
+                        padding: "6px 8px",
                         borderRadius: "var(--r-sm)",
                         cursor: "pointer",
                         background: isDomainSelected && selectedSubcategory === "all" ? "var(--bg-3)" : "transparent",
                         color: isDomainSelected ? "var(--accent)" : "var(--text-1)",
                         fontWeight: isDomainSelected ? 700 : 500,
-                        fontSize: 12.5,
+                        fontSize: 12,
                         borderLeft: isDomainSelected ? "3px solid var(--accent)" : "3px solid transparent",
                       }}
                       onClick={() => {
@@ -424,16 +424,17 @@ export function ArtifactsView({ caseId }: Props) {
                         setSelectedSubcategory("all");
                       }}
                     >
-                      <div className="row gap-2" style={{ alignItems: "center", overflow: "hidden" }}>
+                      <div className="row gap-1" style={{ alignItems: "center", overflow: "hidden", minWidth: 0 }}>
                         <span>{dom.icon}</span>
                         <span style={{ textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}>{dom.name}</span>
                       </div>
                       <span 
                         style={{ 
-                          fontSize: 11, 
+                          fontSize: 10.5, 
                           fontFamily: "var(--mono)",
                           color: isDomainSelected ? "var(--accent)" : "var(--text-3)",
-                          fontWeight: 600
+                          fontWeight: 600,
+                          flexShrink: 0
                         }}
                       >
                         {dom.total_count}
@@ -442,7 +443,7 @@ export function ArtifactsView({ caseId }: Props) {
 
                     {/* Subcategories (if domain active) */}
                     {isDomainSelected && dom.subcategories.filter(s => showEmptyDomains || s.count > 0).length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", paddingLeft: 24, marginTop: 2, marginBottom: 4, gap: 2 }}>
+                      <div style={{ display: "flex", flexDirection: "column", paddingLeft: 18, marginTop: 2, marginBottom: 4, gap: 2 }}>
                         {dom.subcategories.filter(s => showEmptyDomains || s.count > 0).map((sub) => {
                           const isSubSelected = selectedSubcategory === sub.subcategory_id;
                           return (
@@ -452,10 +453,10 @@ export function ArtifactsView({ caseId }: Props) {
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "space-between",
-                                padding: "4px 8px",
+                                padding: "3px 6px",
                                 borderRadius: "var(--r-sm)",
                                 cursor: "pointer",
-                                fontSize: 11.5,
+                                fontSize: 11,
                                 color: isSubSelected ? "var(--accent)" : "var(--text-2)",
                                 background: isSubSelected ? "rgba(56, 189, 248, 0.1)" : "transparent",
                                 fontWeight: isSubSelected ? 700 : 400,
@@ -465,8 +466,8 @@ export function ArtifactsView({ caseId }: Props) {
                                 setSelectedSubcategory(sub.subcategory_id);
                               }}
                             >
-                              <span>↳ {sub.name}</span>
-                              <span style={{ fontSize: 10, fontFamily: "var(--mono)", color: "var(--text-3)" }}>
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↳ {sub.name}</span>
+                              <span style={{ fontSize: 9.5, fontFamily: "var(--mono)", color: "var(--text-3)", flexShrink: 0 }}>
                                 {sub.count}
                               </span>
                             </div>
@@ -482,16 +483,16 @@ export function ArtifactsView({ caseId }: Props) {
         </div>
 
         {/* Right Column: Artifacts Explorer & Live Inspector */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0, overflow: "hidden" }}>
           
           {/* Filter Bar */}
-          <div className="card" style={{ padding: "12px 16px" }}>
-            <form onSubmit={handleSearchSubmit} className="row between gap-3" style={{ flexWrap: "wrap" }}>
-              <div className="row gap-2" style={{ flex: 1, minWidth: 260 }}>
+          <div className="card" style={{ padding: "10px 14px", minWidth: 0 }}>
+            <form onSubmit={handleSearchSubmit} className="row between gap-2" style={{ flexWrap: "wrap", minWidth: 0 }}>
+              <div className="row gap-2" style={{ flex: 1, minWidth: 200 }}>
                 <input
                   className="input"
-                  style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
-                  placeholder="Search artifacts (e.g. password, routing, credit card, seed phrase, weapons, narcotics, anydesk)..."
+                  style={{ flex: 1, padding: "7px 10px", fontSize: 12.5 }}
+                  placeholder="Search artifacts (e.g. password, routing, credit card, anydesk)..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -522,24 +523,24 @@ export function ArtifactsView({ caseId }: Props) {
                 <span className="muted text-xs">TYPE:</span>
                 <select 
                   className="input text-xs" 
-                  style={{ padding: "6px 10px" }}
+                  style={{ padding: "5px 8px" }}
                   value={selectedArtifactType}
                   onChange={(e) => setSelectedArtifactType(e.target.value)}
                 >
                   <option value="all">All Types</option>
-                  <option value="native">📄 Native Evidence</option>
-                  <option value="recovered">🗑️ Recovered / Carved</option>
-                  <option value="derived">🧠 Derived Intelligence</option>
+                  <option value="native">📄 Native</option>
+                  <option value="recovered">🗑️ Recovered</option>
+                  <option value="derived">🧠 Derived</option>
                 </select>
               </div>
             </form>
           </div>
 
           {/* Main Grid: Feed & Inspector */}
-          <div style={{ display: "grid", gridTemplateColumns: selectedArtifact ? "1fr 380px" : "1fr", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: selectedArtifact ? "minmax(0, 1fr) 330px" : "1fr", gap: 14, minWidth: 0 }}>
             
             {/* Artifacts Feed */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
               {loading ? (
                 <div className="empty" style={{ padding: 40 }}>Classifying and indexing forensic taxonomy artifacts...</div>
               ) : displayedArtifacts.length === 0 ? (
@@ -554,28 +555,30 @@ export function ArtifactsView({ caseId }: Props) {
                       key={a.id}
                       className="card"
                       style={{
-                        padding: "12px 16px",
+                        padding: "10px 14px",
                         margin: 0,
                         cursor: "pointer",
                         borderLeft: a.severity === "critical" ? "4px solid var(--danger)" : a.severity === "high" ? "4px solid var(--warning)" : a.severity === "medium" ? "4px solid var(--accent)" : "4px solid var(--border)",
                         background: isSelected ? "var(--bg-3)" : "var(--bg-2)",
                         transition: "all 0.15s ease",
+                        minWidth: 0,
+                        overflow: "hidden"
                       }}
                       onClick={() => setSelectedArtifact(a)}
                     >
-                      <div className="row between mb-2">
-                        <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-0)" }}>{a.title}</span>
+                      <div className="row between mb-2" style={{ flexWrap: "wrap", gap: 6 }}>
+                        <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap", minWidth: 0 }}>
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-0)" }}>{a.title}</span>
                           {getSeverityBadge(a.severity)}
                           {getTypeBadge(a.artifact_type)}
                           {getConfidenceBadge(a.confidence)}
                           {a.occurrenceCount && a.occurrenceCount > 1 && (
-                            <span className="badge badge-blue" style={{ fontSize: 10 }}>
+                            <span className="badge badge-blue" style={{ fontSize: 9.5 }}>
                               x{a.occurrenceCount}
                             </span>
                           )}
                         </div>
-                        <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
+                        <span style={{ fontSize: 10.5, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
                           {a.date_sent_utc ? new Date(a.date_sent_utc).toLocaleDateString() : ""}
                         </span>
                       </div>
@@ -586,40 +589,53 @@ export function ArtifactsView({ caseId }: Props) {
                           background: "rgba(15, 23, 42, 0.9)",
                           border: "1px solid var(--border)",
                           borderRadius: "var(--r-sm)",
-                          padding: "8px 12px",
+                          padding: "7px 10px",
                           fontFamily: "var(--mono)",
-                          fontSize: 12.5,
+                          fontSize: 12,
                           color: a.domain_id === "credentials" ? "#f43f5e" : a.domain_id === "financial" ? "#22c55e" : a.domain_id === "crypto" ? "#eab308" : a.domain_id === "contraband" ? "#ef4444" : "#38bdf8",
-                          marginBottom: 8,
+                          marginBottom: 6,
                           display: "flex",
                           alignItems: "center",
                           justifyContent: "space-between",
-                          wordBreak: "break-all"
+                          gap: 8,
+                          wordBreak: "break-all",
+                          overflow: "hidden"
                         }}
                       >
-                        <span style={{ fontWeight: 600 }}>{a.primary_value}</span>
+                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                          {a.primary_value}
+                        </span>
                         <button 
                           className="btn btn-ghost btn-sm" 
-                          style={{ padding: "2px 8px", fontSize: 10 }}
-                          onClick={(e) => { e.stopPropagation(); copyToClipboard(a.primary_value); }}
+                          style={{ padding: "1px 6px", fontSize: 10, height: "auto", flexShrink: 0 }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            copyToClipboard(a.primary_value);
+                          }}
+                          title="Copy extracted value"
                         >
                           📋 Copy
                         </button>
                       </div>
 
-                      <div className="row between">
-                        <div style={{ fontSize: 11.5, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
-                          <span className="muted">Source:</span> {a.email_from} · <span className="muted">Subject:</span> {a.email_subject || "(No Subject)"}
+                      {/* Context & Source Row */}
+                      <div className="row between" style={{ fontSize: 11, color: "var(--text-3)", minWidth: 0 }}>
+                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                          Source: <strong style={{ color: "var(--text-2)" }}>{a.email_from}</strong>
+                          {a.email_subject && ` · Subject: ${a.email_subject}`}
                         </div>
-                        {a.email_id ? (
+                        {a.email_id && (
                           <button 
                             className="btn btn-ghost btn-sm" 
-                            style={{ fontSize: 11, padding: "2px 8px" }}
-                            onClick={(e) => { e.stopPropagation(); openEmailModal(a.email_id); }}
+                            style={{ padding: "1px 6px", fontSize: 10, height: "auto", marginLeft: 8, flexShrink: 0 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEmailModal(a.email_id);
+                            }}
                           >
                             ✉️ View Email
                           </button>
-                        ) : null}
+                        )}
                       </div>
                     </div>
                   );
@@ -629,9 +645,9 @@ export function ArtifactsView({ caseId }: Props) {
 
             {/* Live Inspector Drawer */}
             {selectedArtifact && (
-              <div className="card" style={{ position: "sticky", top: 16, height: "fit-content", padding: 18 }}>
+              <div className="card" style={{ position: "sticky", top: 16, height: "fit-content", padding: 16, minWidth: 0, overflow: "hidden" }}>
                 <div className="row between mb-3">
-                  <h3 style={{ fontSize: 15, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
                     Artifact Forensic Dossier
                   </h3>
                   <button className="btn btn-ghost btn-sm" onClick={() => setSelectedArtifact(null)}>✕</button>

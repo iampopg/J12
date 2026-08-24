@@ -60,6 +60,7 @@ interface EntityEmail {
   is_deleted: boolean;
   deleted_recovered: boolean;
   body_text: string | null;
+  body_html?: string | null;
   headers_raw: string | null;
 }
 
@@ -1090,20 +1091,10 @@ export function EntityDiveView({ caseId }: Props) {
                       <span className="mono">{selectedEmail.to_addrs}</span>
                     </div>
                     {selectedEmail.body_text && (
-                      <pre
-                        style={{
-                          background: "var(--bg-0)",
-                          border: "1px solid var(--border)",
-                          borderRadius: "var(--r-md)",
-                          padding: 12,
-                          fontSize: 12,
-                          maxHeight: 200,
-                          overflow: "auto",
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {selectedEmail.body_text}
-                      </pre>
+                      <RichEmailBodyViewer
+                        bodyText={selectedEmail.body_text}
+                        bodyHtml={selectedEmail.body_html}
+                      />
                     )}
                   </div>
                 )}
