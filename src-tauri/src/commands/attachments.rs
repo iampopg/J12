@@ -24,31 +24,33 @@ pub struct CaseAttachmentItem {
     pub category: String,
 }
 
-pub fn classify_attachment_category(filename: &str, mime: &str, entropy: Option<f64>, risk_flags: Option<&str>) -> String {
+pub fn classify_attachment_category(filename: &str, mime: &str, _entropy: Option<f64>, risk_flags: Option<&str>) -> String {
     let lower_name = filename.to_lowercase();
     let lower_mime = mime.to_lowercase();
-    let has_risk = risk_flags.map(|r| !r.is_empty() && r != "[]").unwrap_or(false);
-    let high_entropy = entropy.map(|e| e > 7.2).unwrap_or(false);
+    let has_exec_risk = risk_flags.map(|r| r.contains("executable") || r.contains("macro")).unwrap_or(false);
 
     if lower_name.ends_with(".exe") || lower_name.ends_with(".scr") || lower_name.ends_with(".bat") 
        || lower_name.ends_with(".vbs") || lower_name.ends_with(".js") || lower_name.ends_with(".ps1")
        || lower_name.ends_with(".hta") || lower_name.ends_with(".iso") || lower_name.ends_with(".img")
-       || has_risk {
+       || lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm") || lower_name.ends_with(".pptm")
+       || has_exec_risk {
         return "dangerous".to_string();
     }
     if lower_name.ends_with(".jpg") || lower_name.ends_with(".jpeg") || lower_name.ends_with(".png")
        || lower_name.ends_with(".gif") || lower_name.ends_with(".bmp") || lower_name.ends_with(".webp")
-       || lower_mime.starts_with("image/") {
+       || lower_name.ends_with(".tif") || lower_name.ends_with(".tiff") || lower_name.ends_with(".heic")
+       || lower_name.ends_with(".svg") || lower_mime.starts_with("image/") {
         return "images".to_string();
     }
     if lower_name.ends_with(".pdf") || lower_name.ends_with(".doc") || lower_name.ends_with(".docx")
        || lower_name.ends_with(".xls") || lower_name.ends_with(".xlsx") || lower_name.ends_with(".ppt")
        || lower_name.ends_with(".pptx") || lower_name.ends_with(".txt") || lower_name.ends_with(".csv")
+       || lower_name.ends_with(".rtf") || lower_name.ends_with(".html") || lower_name.ends_with(".htm")
        || lower_mime.contains("pdf") || lower_mime.contains("officedocument") || lower_mime.contains("msword") {
         return "documents".to_string();
     }
     if lower_name.ends_with(".zip") || lower_name.ends_with(".rar") || lower_name.ends_with(".7z")
-       || lower_name.ends_with(".tar") || lower_name.ends_with(".gz") || high_entropy {
+       || lower_name.ends_with(".tar") || lower_name.ends_with(".gz") || lower_name.ends_with(".bz2") {
         return "archives".to_string();
     }
     if lower_name.ends_with(".mp3") || lower_name.ends_with(".wav") || lower_name.ends_with(".mp4")
@@ -56,7 +58,7 @@ pub fn classify_attachment_category(filename: &str, mime: &str, entropy: Option<
        || lower_mime.starts_with("video/") {
         return "media".to_string();
     }
-    "other".to_string()
+    "documents".to_string()
 }
 
 #[tauri::command]
@@ -100,6 +102,9 @@ pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> 
         .unwrap_or("")
         .to_string();
 
+    let category = input["category"].as_str().unwrap_or("all");
+    let search = input["search"].as_str().unwrap_or("").to_lowercase();
+
     let db = state.db.lock().await;
     let mut stmt = db.conn.prepare(
         "SELECT a.id, a.email_id, a.filename, a.sha256, a.mime_type, a.size_bytes, 
@@ -112,12 +117,12 @@ pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> 
     ).map_err(|e| e.to_string())?;
 
     let items = stmt.query_map([&case_id], |row| {
-        let filename: String = row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "attachment".to_string());
+        let filename: String = row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "attachment.bin".to_string());
         let mime: String = row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "application/octet-stream".to_string());
         let entropy: Option<f64> = row.get(7)?;
         let risk_flags: Option<String> = row.get(8)?;
 
-        let category = classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref());
+        let cat = classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref());
 
         Ok(CaseAttachmentItem {
             id: row.get(0)?,
@@ -130,14 +135,29 @@ pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> 
             entropy,
             risk_flags,
             email_subject: row.get(9)?,
-            email_from: row.get(10)?,
+            email_from: row.get::<_, Option<String>>(10)?.unwrap_or_default(),
             email_date: row.get(11)?,
             email_risk_score: row.get::<_, Option<i64>>(12)?.unwrap_or(0) as u8,
-            category,
+            category: cat,
         })
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
-    Ok(items)
+    let filtered = items.into_iter().filter(|item| {
+        if category != "all" && item.category != category {
+            return false;
+        }
+        if !search.is_empty() {
+            let f_m = item.filename.to_lowercase().contains(&search);
+            let s_m = item.email_subject.as_deref().unwrap_or("").to_lowercase().contains(&search);
+            let from_m = item.email_from.to_lowercase().contains(&search);
+            if !f_m && !s_m && !from_m {
+                return false;
+            }
+        }
+        true
+    }).collect();
+
+    Ok(filtered)
 }
 
 #[tauri::command]

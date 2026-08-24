@@ -192,7 +192,21 @@ static APP_SIGNATURES: &[AppSignature] = &[
     AppSignature { name: "OnlyFans", domain_id: "dating_apps", subcategory: "onlyfans", keywords: &["onlyfans.com"], category_title: "Subscription Platform (OnlyFans)" },
     AppSignature { name: "Fansly", domain_id: "dating_apps", subcategory: "fansly", keywords: &["fansly.com"], category_title: "Subscription Platform (Fansly)" },
 
-    // 🏦 FINTECH, NEOBANKS & PAYMENTS
+    // 🏦 FINTECH, COMMERCIAL BANKS & PAYMENTS
+    AppSignature { name: "Huntington Bank", domain_id: "fintech_banking", subcategory: "huntington", keywords: &["huntington.com", "email.huntington.com", "huntingtononline"], category_title: "Commercial Bank (Huntington Bank)" },
+    AppSignature { name: "Chase Bank / JPMorgan", domain_id: "fintech_banking", subcategory: "chase", keywords: &["chase.com", "emailonline.chase.com", "chaseonline"], category_title: "Commercial Bank (Chase)" },
+    AppSignature { name: "Simmons Bank", domain_id: "fintech_banking", subcategory: "simmons", keywords: &["simmonsbank.com"], category_title: "Commercial Bank (Simmons Bank)" },
+    AppSignature { name: "Armed Forces Bank", domain_id: "fintech_banking", subcategory: "afbank", keywords: &["afbank.com"], category_title: "Military Bank (Armed Forces Bank)" },
+    AppSignature { name: "Bank of America", domain_id: "fintech_banking", subcategory: "bofa", keywords: &["bankofamerica.com", "bofa.com"], category_title: "Commercial Bank (Bank of America)" },
+    AppSignature { name: "Wells Fargo", domain_id: "fintech_banking", subcategory: "wells_fargo", keywords: &["wellsfargo.com"], category_title: "Commercial Bank (Wells Fargo)" },
+    AppSignature { name: "Citibank", domain_id: "fintech_banking", subcategory: "citi", keywords: &["citi.com", "citibank.com"], category_title: "Commercial Bank (Citibank)" },
+    AppSignature { name: "Capital One", domain_id: "fintech_banking", subcategory: "capital_one", keywords: &["capitalone.com"], category_title: "Commercial Bank (Capital One)" },
+    AppSignature { name: "PNC Bank", domain_id: "fintech_banking", subcategory: "pnc", keywords: &["pnc.com"], category_title: "Commercial Bank (PNC Bank)" },
+    AppSignature { name: "ApexPay", domain_id: "fintech_banking", subcategory: "apexpay", keywords: &["apexpay.org"], category_title: "Payment Platform (ApexPay)" },
+    AppSignature { name: "Paybis Crypto", domain_id: "crypto_platforms", subcategory: "paybis", keywords: &["paybis.com"], category_title: "Crypto Exchange (Paybis)" },
+    AppSignature { name: "Zypto Crypto", domain_id: "crypto_platforms", subcategory: "zypto", keywords: &["zypto.com"], category_title: "Crypto Wallet & Pay (Zypto)" },
+    AppSignature { name: "CoinCodex", domain_id: "crypto_platforms", subcategory: "coincodex", keywords: &["coincodex.com"], category_title: "Crypto Platform (CoinCodex)" },
+    AppSignature { name: "TaxAct / W-2 Taxes", domain_id: "financial", subcategory: "tax_filing", keywords: &["taxact.com", "turbotax.com", "hrblock.com"], category_title: "Tax Filing & IRS (TaxAct)" },
     AppSignature { name: "PayPal", domain_id: "fintech_banking", subcategory: "paypal", keywords: &["paypal.com", "service@paypal"], category_title: "Payment Service (PayPal)" },
     AppSignature { name: "Stripe", domain_id: "fintech_banking", subcategory: "stripe", keywords: &["stripe.com"], category_title: "Payment Gateway (Stripe)" },
     AppSignature { name: "Venmo", domain_id: "fintech_banking", subcategory: "venmo", keywords: &["venmo.com"], category_title: "P2P Payments (Venmo)" },
@@ -474,14 +488,14 @@ async fn extract_all_taxonomy_artifacts(
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "attachment.bin".to_string()),
                 row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
+                row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "application/octet-stream".to_string()),
                 row.get::<_, i64>(5)? as u64,
                 row.get::<_, Option<f64>>(6)?,
                 row.get::<_, Option<String>>(7)?,
                 row.get::<_, Option<String>>(8)?,
-                row.get::<_, String>(9)?,
+                row.get::<_, Option<String>>(9)?.unwrap_or_default(),
                 row.get::<_, Option<String>>(10)?,
             ))
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
@@ -495,12 +509,12 @@ async fn extract_all_taxonomy_artifacts(
         let evidence_items = ev_stmt.query_map([case_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
+                row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "Evidence".to_string()),
+                row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "unknown".to_string()),
+                row.get::<_, Option<String>>(3)?.unwrap_or_else(|| "unsealed".to_string()),
                 row.get::<_, i64>(4)? as u64,
                 row.get::<_, Option<String>>(5)?,
-                row.get::<_, String>(6)?,
+                row.get::<_, Option<String>>(6)?.unwrap_or_default(),
             ))
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
@@ -1157,6 +1171,45 @@ async fn extract_all_taxonomy_artifacts(
                         date_sent_utc: date_opt.clone(),
                     });
                 }
+            }
+        }
+
+        // Bank Statements & Financial E-Statements Detection
+        if subj_lower.contains("statement") || subj_lower.contains("estatement") || subj_lower.contains("electronic statement") || full_text_lower.contains("electronic statement notification") || full_text_lower.contains("bank statement") {
+            let bank_name = if from_lower.contains("huntington") || subj_lower.contains("huntington") {
+                "Huntington Bank"
+            } else if from_lower.contains("chase") || subj_lower.contains("chase") {
+                "Chase Bank"
+            } else if from_lower.contains("simmons") || subj_lower.contains("simmons") {
+                "Simmons Bank"
+            } else if from_lower.contains("afbank") || subj_lower.contains("afbank") {
+                "Armed Forces Bank"
+            } else if from_lower.contains("bankofamerica") || from_lower.contains("bofa") {
+                "Bank of America"
+            } else if from_lower.contains("wellsfargo") {
+                "Wells Fargo"
+            } else {
+                "Commercial Bank / Financial Institution"
+            };
+
+            let key = format!("statement:{}:{}", eid, bank_name);
+            if seen.insert(key) {
+                artifacts.push(ForensicTaxonomyArtifact {
+                    id: generate_id(),
+                    domain_id: "fintech_banking".to_string(),
+                    subcategory_id: "bank_statements".to_string(),
+                    title: format!("{} - Financial Statement Notification", bank_name),
+                    primary_value: subj.to_string(),
+                    secondary_value: Some(from_addr.clone()),
+                    details: format!("Electronic bank statement notification from {} ({})", bank_name, from_addr),
+                    severity: "critical".to_string(),
+                    artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
+                    email_id: eid.clone(),
+                    email_subject: subj_opt.clone(),
+                    email_from: from_addr.clone(),
+                    date_sent_utc: date_opt.clone(),
+                });
             }
         }
 
