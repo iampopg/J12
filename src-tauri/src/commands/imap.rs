@@ -1,5 +1,6 @@
 use chrono::Utc;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tauri::State;
 
 use crate::AppState;
@@ -115,7 +116,7 @@ pub async fn imap_fetch_emails(
                     from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, reply_to,
                     subject, date_sent, date_sent_utc, headers_raw, body_text, body_html,
                     folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
-                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?21,0,'[]')",
+                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0,'[]')",
                 rusqlite::params![
                     email_id,
                     evidence_id,
@@ -146,14 +147,14 @@ pub async fn imap_fetch_emails(
 
     // Save evidence batch metadata and SHA-256 seal
     let dummy_data = format!("imap_{}_{}_{}", username, parsed_count, now.to_rfc3339());
-    let mut hasher = sha2::Sha256::default();
-    use sha2::Digest;
+    let mut hasher = Sha256::new();
     hasher.update(dummy_data.as_bytes());
     let sha256_hex = format!("{:x}", hasher.finalize());
+    let total_bytes: usize = result.messages.iter().map(|m| m.raw_content.len()).sum();
 
     let _ = db.conn.execute(
-        "UPDATE evidence_items SET parse_status='parsed', sha256=?1, message_count = ?2 WHERE id=?3",
-        rusqlite::params![sha256_hex, parsed_count, evidence_id],
+        "UPDATE evidence_items SET parse_status='done', sha256=?1, message_count=?2, size_bytes=?3 WHERE id=?4",
+        rusqlite::params![sha256_hex, parsed_count, total_bytes as i64, evidence_id],
     );
 
     // Record custody chain entry

@@ -48,16 +48,65 @@ function cleanDisplayName(name: string | null): string {
 }
 
 export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () => void }) {
-  const [view, setView] = useState<View>("dashboard");
+  const [view, setViewState] = useState<View>(() => {
+    const saved = localStorage.getItem(`last_view_${caseId}`);
+    return (saved as View) || "dashboard";
+  });
+
+  const setView = (v: View) => {
+    localStorage.setItem(`last_view_${caseId}`, v);
+    setViewState(v);
+  };
+
   const [notesCount, setNotesCount] = useState(0);
   const [caseData, setCaseData] = useState<Case | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [evidence, setEvidence] = useState<Evidence[]>([]);
   const [loading, setLoading] = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [emailFolderOpen, setEmailFolderOpen] = useState(true);
-  const [evidenceFolderOpen, setEvidenceFolderOpen] = useState(true);
-  const [investigationFolderOpen, setInvestigationFolderOpen] = useState(true);
+
+  // Collapsible folder states with localStorage persistence
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState(() => localStorage.getItem("sb_collapsed") === "true");
+  const setSidebarCollapsed = (val: boolean) => {
+    localStorage.setItem("sb_collapsed", String(val));
+    setSidebarCollapsedState(val);
+  };
+
+  const [overviewOpen, setOverviewOpenState] = useState(() => localStorage.getItem("sb_overview_open") !== "false");
+  const setOverviewOpen = (val: boolean) => {
+    localStorage.setItem("sb_overview_open", String(val));
+    setOverviewOpenState(val);
+  };
+
+  const [evidenceFolderOpen, setEvidenceFolderOpenState] = useState(() => localStorage.getItem("sb_evidence_open") !== "false");
+  const setEvidenceFolderOpen = (val: boolean) => {
+    localStorage.setItem("sb_evidence_open", String(val));
+    setEvidenceFolderOpenState(val);
+  };
+
+  const [intelligenceOpen, setIntelligenceOpenState] = useState(() => localStorage.getItem("sb_intel_open") !== "false");
+  const setIntelligenceOpen = (val: boolean) => {
+    localStorage.setItem("sb_intel_open", String(val));
+    setIntelligenceOpenState(val);
+  };
+
+  const [emailFolderOpen, setEmailFolderOpenState] = useState(() => localStorage.getItem("sb_email_open") !== "false");
+  const setEmailFolderOpen = (val: boolean) => {
+    localStorage.setItem("sb_email_open", String(val));
+    setEmailFolderOpenState(val);
+  };
+
+  const [investigationFolderOpen, setInvestigationFolderOpenState] = useState(() => localStorage.getItem("sb_invest_open") !== "false");
+  const setInvestigationFolderOpen = (val: boolean) => {
+    localStorage.setItem("sb_invest_open", String(val));
+    setInvestigationFolderOpenState(val);
+  };
+
+  const [caseManagementOpen, setCaseManagementOpenState] = useState(() => localStorage.getItem("sb_manage_open") !== "false");
+  const setCaseManagementOpen = (val: boolean) => {
+    localStorage.setItem("sb_manage_open", String(val));
+    setCaseManagementOpenState(val);
+  };
+
   const [folderFilter, setFolderFilter] = useState<FolderFilter>("all");
   const [showDeleteCase, setShowDeleteCase] = useState(false);
   const [deletingCase, setDeletingCase] = useState(false);
@@ -76,7 +125,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
       setCaseData(c);
       setEvidence(ev);
       setDashboard(dash);
-      if (ev.length === 0) {
+      if (ev.length === 0 && !localStorage.getItem(`last_view_${caseId}`)) {
         setView("evidence");
       }
     } catch (e) { console.error(e); }
@@ -157,226 +206,207 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
 
       <div className="body">
          {/* Case Navigator Sidebar */}
-         <nav className="sidebar" style={{ width: sidebarCollapsed ? 50 : 220, minWidth: sidebarCollapsed ? 50 : 220 }}>
-           <div className="sb-section">
-             <button className="sb-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)}>
+         <nav className="sidebar" style={{ width: sidebarCollapsed ? 50 : 230, minWidth: sidebarCollapsed ? 50 : 230 }}>
+           <div className="sb-section" style={{ display: "flex", justifyContent: "flex-end", padding: "6px 8px" }}>
+             <button className="sb-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}>
                {sidebarCollapsed ? "→" : "←"}
              </button>
            </div>
 
-           {/* Case Dashboard - Always at top */}
+           {/* 1. Overview & Dossier */}
            {!sidebarCollapsed && (
-             <div className="sb-folder" style={{ marginBottom: 8 }}>
-               <button className={`sb-item ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")} style={{ fontWeight: 600 }}>
-                 <span className="sb-icon">◫</span> Case Dashboard
-               </button>
-             </div>
-           )}
-
-           {/* Target Profile */}
-           {!sidebarCollapsed && (
-             <div className="sb-folder" style={{ marginBottom: 8 }}>
-               <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")} style={{ fontWeight: 600 }}>
-                 <span className="sb-icon">👤</span> Target Profile
-               </button>
-             </div>
-           )}
-
-           {/* Artifacts & Attachments Hub */}
-           {!sidebarCollapsed && (
-             <div className="sb-folder" style={{ marginBottom: 8 }}>
-               <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")} style={{ fontWeight: 600 }}>
-                 <span className="sb-icon">🧩</span> Forensic Artifacts
-               </button>
-               <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")} style={{ fontWeight: 600 }}>
-                 <span className="sb-icon">📎</span> Attachments &amp; Payloads
-               </button>
-             </div>
-           )}
-
-          {/* Email Folders - Collapsible */}
-          <div className="sb-folder">
-            <div className="sb-folder-header" onClick={() => setEmailFolderOpen(!emailFolderOpen)}>
-              <span className="sb-folder-arrow">{emailFolderOpen ? "▼" : "▶"}</span>
-              <span className="sb-label" style={{ margin: 0 }}>Email Folders</span>
-            </div>
-            {emailFolderOpen && !sidebarCollapsed && (
-              <div className="sb-folder-content">
-                <button className={`sb-item ${folderFilter === "all" ? "active" : ""}`} onClick={() => { setFolderFilter("all"); setView("emails"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">📬</span> All Emails
-                  <span className="sb-count">{emailCounts.total || 0}</span>
-                </button>
-                <button className={`sb-item ${folderFilter === "inbox" ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">📥</span> Inbox
-                  <span className="sb-count">{emailCounts.inbox || 0}</span>
-                </button>
-                <button className={`sb-item ${folderFilter === "sent" ? "active" : ""}`} onClick={() => { setFolderFilter("sent"); setView("sent"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">📤</span> Sent
-                  <span className="sb-count">{emailCounts.sent || 0}</span>
-                </button>
-                <button className={`sb-item ${folderFilter === "drafts" ? "active" : ""}`} onClick={() => { setFolderFilter("drafts"); setView("drafts"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">📝</span> Drafts
-                  <span className="sb-count">{emailCounts.drafts || 0}</span>
-                </button>
-                <button className={`sb-item ${folderFilter === "soft_deleted" ? "active" : ""}`} onClick={() => { setFolderFilter("soft_deleted"); setView("soft_deleted"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">🗑️</span> Deleted (Recycle Bin)
-                  <span className="sb-count">{emailCounts.soft_deleted || 0}</span>
-                </button>
-                <button className={`sb-item ${folderFilter === "hard_deleted" ? "active" : ""}`} onClick={() => { setFolderFilter("hard_deleted"); setView("hard_deleted"); }} style={{ opacity: 0.5 }}>
-                  <span className="sb-icon">⚠</span> Permanently Deleted
-                </button>
-                <button className={`sb-item ${folderFilter === "recoverable" ? "active" : ""}`} onClick={() => { setFolderFilter("recoverable"); setView("recoverable"); }} style={{ opacity: 0.5 }}>
-                  <span className="sb-icon">♻</span> Recoverable Items
-                </button>
-                <button className={`sb-item ${folderFilter === "spam" ? "active" : ""}`} onClick={() => { setFolderFilter("spam"); setView("spam"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">⚠</span> Spam/Junk
-                  <span className="sb-count">{emailCounts.spam || 0}</span>
-                </button>
-                <button className={`sb-item ${folderFilter === "other" ? "active" : ""}`} onClick={() => { setFolderFilter("other"); setView("other"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">📁</span> Other
-                  <span className="sb-count">{emailCounts.other || 0}</span>
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Evidence Sources - Always Clickable */}
-          <div className="sb-folder">
-            <div
-              className="sb-folder-header"
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-              onClick={() => {
-                setView("evidence");
-                setEvidenceFolderOpen(true);
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span
-                  className="sb-folder-arrow"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setEvidenceFolderOpen(!evidenceFolderOpen);
-                  }}
-                  style={{ fontSize: 10, cursor: "pointer" }}
-                >
-                  {evidenceFolderOpen ? "▼" : "▶"}
-                </span>
-                <span className="sb-label" style={{ margin: 0, padding: 0 }}>Evidence Sources</span>
-              </div>
-              <button
-                className="btn btn-ghost btn-sm"
-                style={{ padding: "2px 8px", fontSize: 10, height: 22 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setView("evidence");
-                }}
-              >
-                + Add
-              </button>
-            </div>
-            {evidenceFolderOpen && !sidebarCollapsed && (
-              <div className="sb-folder-content">
-                <button
-                  className={`sb-item ${view === "evidence" ? "active" : ""}`}
-                  onClick={() => setView("evidence")}
-                >
-                  <span className="sb-icon">📥</span>
-                  <span>Acquire / Upload</span>
-                  <span className="sb-count">{evidence.length}</span>
-                </button>
-                {evidence.map((e) => (
-                  <button
-                    key={e.id}
-                    className={`sb-item ${view === "evidence" ? "active" : ""}`}
-                    onClick={() => setView("evidence")}
-                    style={{ paddingLeft: 24 }}
-                  >
-                    <span className="sb-icon">{e.format === "eml" ? "📧" : e.format === "mbox" ? "📦" : "📄"}</span>
-                    <span className="sb-text-truncate">{e.filename}</span>
-                    <span className={`sb-status sb-${e.parse_status}`}>{e.parse_status === "done" ? "✓" : e.parse_status === "error" ? "!" : "•"}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Investigation - Collapsible */}
-          <div className="sb-folder">
-            <div className="sb-folder-header" onClick={() => setInvestigationFolderOpen(!investigationFolderOpen)}>
-              <span className="sb-folder-arrow">{investigationFolderOpen ? "▼" : "▶"}</span>
-              <span className="sb-label" style={{ margin: 0 }}>Investigation</span>
-            </div>
-            {investigationFolderOpen && !sidebarCollapsed && (
-              <div className="sb-folder-content">
-                <button className={`sb-item ${view === "graph" ? "active" : ""}`} onClick={() => hasDone && setView("graph")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">◎</span> Graph
-                </button>
-                <button className={`sb-item ${view === "entities" ? "active" : ""}`} onClick={() => hasDone && setView("entities")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">◉</span> Entities
-                </button>
-                <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")}>
-                  <span className="sb-icon">🧩</span> Artifacts Hub
-                </button>
-                <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")}>
-                  <span className="sb-icon">📎</span> Attachments
-                </button>
-                <button className={`sb-item ${view === "findings" ? "active" : ""}`} onClick={() => setView("findings")}>
-                  <span className="sb-icon">⚠</span> Findings
-                  {dashboard && dashboard.finding_count > 0 && <span className="sb-count">{dashboard.finding_count}</span>}
-                </button>
-                <button className={`sb-item ${view === "search" ? "active" : ""}`} onClick={() => hasDone && setView("search")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                  <span className="sb-icon">🔍</span> Search
-                </button>
-                  <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                    <span className="sb-icon">◷</span> Timeline
-                  </button>
+             <div className="sb-folder">
+               <div className="sb-folder-header" onClick={() => setOverviewOpen(!overviewOpen)}>
+                 <span className="sb-folder-arrow">{overviewOpen ? "▼" : "▶"}</span>
+                 <span className="sb-label" style={{ margin: 0 }}>Case Overview</span>
                </div>
-            )}
-          </div>
+               {overviewOpen && (
+                 <div className="sb-folder-content">
+                   <button className={`sb-item ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")} style={{ fontWeight: 600 }}>
+                     <span className="sb-icon">◫</span> Case Dashboard
+                   </button>
+                   <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")}>
+                     <span className="sb-icon">🎯</span> Target Dossier
+                   </button>
+                 </div>
+               )}
+             </div>
+           )}
 
-          {/* Case Management */}
-          <div className="sb-folder">
-            <div className="sb-folder-header">
-              <span className="sb-folder-arrow">▼</span>
-              <span className="sb-label" style={{ margin: 0 }}>Case Management</span>
-            </div>
-            {!sidebarCollapsed && (
-              <div className="sb-folder-content">
-                <button className={`sb-item ${view === "case_manage" ? "active" : ""}`} onClick={() => setView("case_manage")}>
-                  <span className="sb-icon">⚙️</span> Manage Case
-                </button>
-                <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
-                  <span className="sb-icon">📋</span> Chain of Custody
-                </button>
-                <button className={`sb-item ${view === "notes" ? "active" : ""}`} onClick={() => setView("notes")}>
-                  <span className="sb-icon">📝</span> Notes
-                  {notesCount > 0 && <span className="sb-count">{notesCount}</span>}
-                </button>
-                <button className={`sb-item ${view === "report" ? "active" : ""}`} onClick={() => setView("report")}>
-                  <span className="sb-icon">📄</span> Generate Report
-                </button>
-                <button className="sb-item" style={{ color: "var(--red)" }} onClick={() => setShowDeleteCase(true)}>
-                  <span className="sb-icon">🗑️</span> Delete Case
-                </button>
-              </div>
-            )}
-          </div>
+           {/* 2. Evidence Sources & Acquisition */}
+           <div className="sb-folder">
+             <div
+               className="sb-folder-header"
+               style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+               onClick={() => {
+                 setEvidenceFolderOpen(!evidenceFolderOpen);
+               }}
+             >
+               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                 <span className="sb-folder-arrow" style={{ fontSize: 10 }}>
+                   {evidenceFolderOpen ? "▼" : "▶"}
+                 </span>
+                 <span className="sb-label" style={{ margin: 0, padding: 0 }}>Evidence Sources</span>
+               </div>
+               {!sidebarCollapsed && (
+                 <button
+                   className="btn btn-ghost btn-sm"
+                   style={{ padding: "2px 6px", fontSize: 10, height: 20 }}
+                   onClick={(e) => {
+                     e.stopPropagation();
+                     setView("evidence");
+                   }}
+                 >
+                   + Add
+                 </button>
+               )}
+             </div>
+             {evidenceFolderOpen && !sidebarCollapsed && (
+               <div className="sb-folder-content">
+                 <button
+                   className={`sb-item ${view === "evidence" ? "active" : ""}`}
+                   onClick={() => setView("evidence")}
+                 >
+                   <span className="sb-icon">📥</span>
+                   <span>Acquire / Ingest</span>
+                   <span className="sb-count">{evidence.length}</span>
+                 </button>
+                 {evidence.map((e) => (
+                   <button
+                     key={e.id}
+                     className={`sb-item ${view === "evidence" ? "active" : ""}`}
+                     onClick={() => setView("evidence")}
+                     style={{ paddingLeft: 20 }}
+                     title={e.filename}
+                   >
+                     <span className="sb-icon">{e.format === "imap" ? "☁️" : e.format === "eml" ? "📧" : e.format === "mbox" ? "📦" : "📄"}</span>
+                     <span className="sb-text-truncate">{e.filename}</span>
+                     <span className={`sb-status sb-${e.parse_status}`}>{e.parse_status === "done" ? "✓" : e.parse_status === "error" ? "!" : "•"}</span>
+                   </button>
+                 ))}
+               </div>
+             )}
+           </div>
 
-          {/* Integrity & Verification (Phase 6) */}
-          <div className="sb-folder">
-            <div className="sb-folder-header">
-              <span className="sb-folder-arrow">▼</span>
-              <span className="sb-label" style={{ margin: 0 }}>Integrity &amp; Verification</span>
-            </div>
-            {!sidebarCollapsed && (
-              <div className="sb-folder-content">
-                <button className={`sb-item ${view === "integrity" ? "active" : ""}`} onClick={() => setView("integrity")}>
-                  <span className="sb-icon">🔒</span> Verify Evidence
-                </button>
-              </div>
-            )}
-          </div>
-        </nav>
+           {/* 3. Forensic Intelligence */}
+           {!sidebarCollapsed && (
+             <div className="sb-folder">
+               <div className="sb-folder-header" onClick={() => setIntelligenceOpen(!intelligenceOpen)}>
+                 <span className="sb-folder-arrow">{intelligenceOpen ? "▼" : "▶"}</span>
+                 <span className="sb-label" style={{ margin: 0 }}>Forensic Intelligence</span>
+               </div>
+               {intelligenceOpen && (
+                 <div className="sb-folder-content">
+                   <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")}>
+                     <span className="sb-icon">🧩</span> Artifacts Hub
+                   </button>
+                   <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")}>
+                     <span className="sb-icon">📎</span> Attachments &amp; Files
+                   </button>
+                   <button className={`sb-item ${view === "findings" ? "active" : ""}`} onClick={() => setView("findings")}>
+                     <span className="sb-icon">🚨</span> Security Findings
+                     {dashboard && dashboard.finding_count > 0 && <span className="sb-count" style={{ background: "rgba(239, 68, 68, 0.2)", color: "#ef4444" }}>{dashboard.finding_count}</span>}
+                   </button>
+                 </div>
+               )}
+             </div>
+           )}
+
+           {/* 4. Email Folders - Collapsible */}
+           <div className="sb-folder">
+             <div className="sb-folder-header" onClick={() => setEmailFolderOpen(!emailFolderOpen)}>
+               <span className="sb-folder-arrow">{emailFolderOpen ? "▼" : "▶"}</span>
+               <span className="sb-label" style={{ margin: 0 }}>Email Messages</span>
+             </div>
+             {emailFolderOpen && !sidebarCollapsed && (
+               <div className="sb-folder-content">
+                 <button className={`sb-item ${folderFilter === "all" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("all"); setView("emails"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">📬</span> All Emails
+                   <span className="sb-count">{emailCounts.total || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "inbox" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">📥</span> Inbox
+                   <span className="sb-count">{emailCounts.inbox || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "sent" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("sent"); setView("sent"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">📤</span> Sent
+                   <span className="sb-count">{emailCounts.sent || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "drafts" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("drafts"); setView("drafts"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">📝</span> Drafts
+                   <span className="sb-count">{emailCounts.drafts || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "soft_deleted" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("soft_deleted"); setView("soft_deleted"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">🗑️</span> Deleted (Recycle Bin)
+                   <span className="sb-count">{emailCounts.soft_deleted || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "spam" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("spam"); setView("spam"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">⚠</span> Spam / Junk
+                   <span className="sb-count">{emailCounts.spam || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "other" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("other"); setView("other"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">📁</span> Other Folders
+                   <span className="sb-count">{emailCounts.other || 0}</span>
+                 </button>
+               </div>
+             )}
+           </div>
+
+           {/* 5. Investigation & Analytics - Collapsible */}
+           <div className="sb-folder">
+             <div className="sb-folder-header" onClick={() => setInvestigationFolderOpen(!investigationFolderOpen)}>
+               <span className="sb-folder-arrow">{investigationFolderOpen ? "▼" : "▶"}</span>
+               <span className="sb-label" style={{ margin: 0 }}>Investigation &amp; Graph</span>
+             </div>
+             {investigationFolderOpen && !sidebarCollapsed && (
+               <div className="sb-folder-content">
+                 <button className={`sb-item ${view === "search" ? "active" : ""}`} onClick={() => setView("search")}>
+                   <span className="sb-icon">🔍</span> Advanced Search
+                 </button>
+                 <button className={`sb-item ${view === "graph" ? "active" : ""}`} onClick={() => hasDone && setView("graph")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">🕸️</span> Network Graph
+                 </button>
+                 <button className={`sb-item ${view === "entities" ? "active" : ""}`} onClick={() => hasDone && setView("entities")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">👥</span> Entity Profiles
+                 </button>
+                 <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">📅</span> Incident Timeline
+                 </button>
+               </div>
+             )}
+           </div>
+
+           {/* 6. Case Management & Integrity - Collapsible */}
+           <div className="sb-folder">
+             <div className="sb-folder-header" onClick={() => setCaseManagementOpen(!caseManagementOpen)}>
+               <span className="sb-folder-arrow">{caseManagementOpen ? "▼" : "▶"}</span>
+               <span className="sb-label" style={{ margin: 0 }}>Case Management</span>
+             </div>
+             {caseManagementOpen && !sidebarCollapsed && (
+               <div className="sb-folder-content">
+                 <button className={`sb-item ${view === "case_manage" ? "active" : ""}`} onClick={() => setView("case_manage")}>
+                   <span className="sb-icon">⚙️</span> Manage Case &amp; Directory
+                 </button>
+                 <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
+                   <span className="sb-icon">📋</span> Chain of Custody
+                 </button>
+                 <button className={`sb-item ${view === "integrity" ? "active" : ""}`} onClick={() => setView("integrity")}>
+                   <span className="sb-icon">🔒</span> Verify Integrity &amp; Hashes
+                 </button>
+                 <button className={`sb-item ${view === "notes" ? "active" : ""}`} onClick={() => setView("notes")}>
+                   <span className="sb-icon">📝</span> Case Notes
+                   {notesCount > 0 && <span className="sb-count">{notesCount}</span>}
+                 </button>
+                 <button className={`sb-item ${view === "report" ? "active" : ""}`} onClick={() => setView("report")}>
+                   <span className="sb-icon">📄</span> Generate Report
+                 </button>
+                 <button className="sb-item" style={{ color: "var(--red)" }} onClick={() => setShowDeleteCase(true)}>
+                   <span className="sb-icon">🗑️</span> Delete Case
+                 </button>
+               </div>
+             )}
+           </div>
+         </nav>
 
         {/* Main content area */}
         <main className="content">
@@ -1460,18 +1490,31 @@ function IntegrityView({ caseId }: { caseId: string }) {
 }
 
 function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: () => void }) {
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [server, setServer] = useState("imap.gmail.com");
-  const [port, setPort] = useState("993");
-  const [useSsl, setUseSsl] = useState(true);
-  const [mailboxScope, setMailboxScope] = useState("ALL");
+  const getSaved = () => {
+    try {
+      return JSON.parse(localStorage.getItem(`imap_creds_${caseId}`) || "{}");
+    } catch { return {}; }
+  };
+  const saved = getSaved();
+
+  const [username, setUsername] = useState(saved.username || "");
+  const [password, setPassword] = useState(saved.password || "");
+  const [server, setServer] = useState(saved.server || "imap.gmail.com");
+  const [port, setPort] = useState(saved.port || "993");
+  const [useSsl, setUseSsl] = useState(saved.useSsl !== undefined ? saved.useSsl : true);
+  const [mailboxScope, setMailboxScope] = useState(saved.mailboxScope || "ALL");
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [mailboxes, setMailboxes] = useState<string[]>([]);
+  const [mailboxes, setMailboxes] = useState<string[]>(saved.mailboxes || []);
   const [connecting, setConnecting] = useState(false);
   const [fetching, setFetching] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [logs, setLogs] = useState<string[]>([]);
+  const [result, setResult] = useState<any>(saved.result || null);
+  const [logs, setLogs] = useState<string[]>(saved.logs || []);
+
+  useEffect(() => {
+    localStorage.setItem(`imap_creds_${caseId}`, JSON.stringify({
+      username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs
+    }));
+  }, [caseId, username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs]);
 
   // Automatically detect IMAP server settings based on email domain
   const handleEmailChange = (val: string) => {

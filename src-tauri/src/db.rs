@@ -20,6 +20,11 @@ impl Database {
         std::fs::create_dir_all(&data_dir).ok();
         let db_path = data_dir.join("forensic.db");
         let conn = Connection::open(&db_path).expect("Failed to open database");
+        let _ = conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA foreign_keys = ON;
+        ");
         let mut db = Database { conn };
         db.init_schema();
         db
@@ -243,8 +248,29 @@ impl Database {
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
-        "        ).expect("Failed to initialize schema");
+
+            CREATE TABLE IF NOT EXISTS chain_of_custody (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(id),
+                evidence_id TEXT,
+                action TEXT NOT NULL,
+                performed_by TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                notes TEXT
+            );
+        ").expect("Failed to initialize schema");
         
+        // Migration: ensure chain_of_custody table exists
+        self.conn.execute("CREATE TABLE IF NOT EXISTS chain_of_custody (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
+            evidence_id TEXT,
+            action TEXT NOT NULL,
+            performed_by TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            notes TEXT
+        )", []).ok();
+
         // Migration: add target_email column if missing
         self.conn.execute("ALTER TABLE cases ADD COLUMN target_email TEXT", []).ok();
         // Migration: add target_name column if missing
