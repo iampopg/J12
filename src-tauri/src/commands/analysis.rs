@@ -160,16 +160,22 @@ pub async fn run_analysis(state: State<'_, AppState>, input: Value) -> Result<u3
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
         let mut att_stmt = db.conn.prepare(
-            "SELECT id, email_id, filename, mime_type, size_bytes, sha256, md5, entropy, is_inline, is_macro_enabled, is_executable, risk_flags
+            "SELECT id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags
              FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE case_id = ?1)"
         ).map_err(|e| e.to_string())?;
 
         let attachments = att_stmt.query_map([&case_id], |row| {
-            let risk_flags_str: String = row.get::<_, Option<String>>(11)?.unwrap_or_default();
+            let risk_flags_str: String = row.get::<_, Option<String>>(8)?.unwrap_or_else(|| "[]".to_string());
             Ok(Attachment {
-                id: row.get(0)?, email_id: row.get(1)?, filename: row.get(2)?, sha256: row.get(5)?,
-                mime_type: row.get(3)?, size_bytes: row.get::<_, i64>(4)? as u64, stored_path: String::new(),
-                entropy: row.get(7)?, risk_flags: risk_flags_str,
+                id: row.get(0)?,
+                email_id: row.get(1)?,
+                filename: row.get(2)?,
+                sha256: row.get(3)?,
+                mime_type: row.get(4)?,
+                size_bytes: row.get::<_, i64>(5)? as u64,
+                stored_path: row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+                entropy: row.get(7)?,
+                risk_flags: risk_flags_str,
             })
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
