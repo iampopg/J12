@@ -25,6 +25,7 @@ export interface ForensicTaxonomyArtifact {
   details: string;
   severity: "critical" | "high" | "medium" | "low" | "info";
   artifact_type: "native" | "recovered" | "derived";
+  confidence?: "high" | "medium" | "low" | null;
   email_id: string;
   email_subject: string | null;
   email_from: string;
@@ -66,10 +67,11 @@ export function ArtifactsView({ caseId }: Props) {
   const [selectedSubcategory, setSelectedSubcategory] = useState<string>("all");
   const [selectedArtifactType, setSelectedArtifactType] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
+  const [showEmptyDomains, setShowEmptyDomains] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [selectedArtifact, setSelectedArtifact] = useState<ForensicTaxonomyArtifact | null>(null);
   const [previewEmail, setPreviewEmail] = useState<EmailMessage | null>(null);
-  const [loadingEmail, setLoadingEmail] = useState<boolean>(false);
+  const [_loadingEmail, setLoadingEmail] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -79,7 +81,7 @@ export function ArtifactsView({ caseId }: Props) {
 
   useEffect(() => {
     loadTaxonomy();
-  }, [caseId]);
+  }, [caseId, showEmptyDomains]);
 
   useEffect(() => {
     loadArtifacts();
@@ -87,7 +89,12 @@ export function ArtifactsView({ caseId }: Props) {
 
   const loadTaxonomy = async () => {
     try {
-      const domains = await invoke<TaxonomyDomainSummary[]>("case_artifacts_summary", { input: { case_id: caseId } });
+      const domains = await invoke<TaxonomyDomainSummary[]>("case_artifacts_summary", { 
+        input: { 
+          case_id: caseId,
+          show_all: showEmptyDomains
+        } 
+      });
       setTaxonomy(domains);
     } catch (e) {
       console.error("Failed to load taxonomy:", e);
@@ -142,17 +149,20 @@ export function ArtifactsView({ caseId }: Props) {
     }
   };
 
-  const totalAllArtifacts = taxonomy.reduce((acc, d) => acc + d.total_count, 0);
+  // Only display domains with count > 0 unless showEmptyDomains is active
+  const visibleTaxonomy = taxonomy.filter(d => showEmptyDomains || d.total_count > 0);
+  const totalAllArtifacts = visibleTaxonomy.reduce((acc, d) => acc + d.total_count, 0);
 
   const exportArtifactsCSV = () => {
     if (artifacts.length === 0) return;
-    const headers = ["Domain", "Subcategory", "Title", "Primary Value", "Secondary Value", "Type", "Severity", "Subject", "From", "Date Sent"];
+    const headers = ["Domain", "Subcategory", "Title", "Primary Value", "Secondary Value", "Confidence", "Type", "Severity", "Subject", "From", "Date Sent"];
     const rows = artifacts.map(a => [
       `"${a.domain_id}"`,
       `"${a.subcategory_id}"`,
       `"${(a.title || "").replace(/"/g, '""')}"`,
       `"${(a.primary_value || "").replace(/"/g, '""')}"`,
       `"${(a.secondary_value || "").replace(/"/g, '""')}"`,
+      `"${a.confidence || "high"}"`,
       `"${a.artifact_type}"`,
       `"${a.severity}"`,
       `"${(a.email_subject || "").replace(/"/g, '""')}"`,
@@ -164,7 +174,7 @@ export function ArtifactsView({ caseId }: Props) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `J12_Forensic_Taxonomy_Artifacts_${caseId.slice(0, 8)}.csv`);
+    link.setAttribute("download", `J12_Forensic_Artifacts_${caseId.slice(0, 8)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -186,6 +196,16 @@ export function ArtifactsView({ caseId }: Props) {
       case "derived": return <span className="badge" style={{ background: "rgba(168, 85, 247, 0.15)", color: "#c084fc" }}>🧠 DERIVED</span>;
       default: return <span className="badge" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8" }}>📄 NATIVE</span>;
     }
+  };
+
+  const getConfidenceBadge = (c?: string | null) => {
+    const conf = c || "high";
+    if (conf === "high") {
+      return <span className="badge" style={{ background: "rgba(34, 197, 94, 0.15)", color: "#22c55e", fontSize: 10 }}>✓ VALIDATED</span>;
+    } else if (conf === "medium") {
+      return <span className="badge" style={{ background: "rgba(234, 179, 8, 0.15)", color: "#eab308", fontSize: 10 }}>⚡ PATTERN</span>;
+    }
+    return <span className="badge" style={{ background: "rgba(148, 163, 184, 0.15)", color: "#94a3b8", fontSize: 10 }}>HEURISTIC</span>;
   };
 
   return (
@@ -219,12 +239,12 @@ export function ArtifactsView({ caseId }: Props) {
             Forensic Artifact Taxonomy &amp; Intelligence Hub
           </h2>
           <p className="muted" style={{ margin: 0 }}>
-            Belkasoft-grade structured evidence taxonomy — Credentials, Banking, Crypto Wallets, Contraband, Secrets, and Relays across 17 forensic domains.
+            Structured evidence taxonomy — Credentials, Banking, Crypto Wallets, Contraband, Secrets, and Relays with False-Positive validation.
           </p>
         </div>
         <div className="row gap-2">
           <button className="btn btn-ghost btn-sm" onClick={exportArtifactsCSV} title="Export artifacts to CSV">
-            📥 Export Intelligence CSV
+            📥 Export CSV
           </button>
           <button className="btn btn-ghost btn-sm" onClick={() => { loadTaxonomy(); loadArtifacts(); }}>
             ↻ Refresh
@@ -237,17 +257,18 @@ export function ArtifactsView({ caseId }: Props) {
         
         {/* Left Column: Artifact Taxonomy Category Tree */}
         <div className="card" style={{ padding: 12, maxHeight: "calc(100vh - 180px)", overflowY: "auto" }}>
-          <div 
-            style={{ 
-              fontSize: 11, 
-              fontWeight: 800, 
-              letterSpacing: "0.8px", 
-              color: "var(--text-3)", 
-              marginBottom: 10,
-              padding: "4px 8px"
-            }}
-          >
-            ARTIFACT TAXONOMY
+          <div className="row between mb-2" style={{ padding: "4px 8px" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.8px", color: "var(--text-3)" }}>
+              AVAILABLE ARTIFACTS ({visibleTaxonomy.length})
+            </span>
+            <button 
+              className="btn btn-ghost btn-sm"
+              style={{ fontSize: 10, padding: "1px 6px", height: "auto" }}
+              onClick={() => setShowEmptyDomains(!showEmptyDomains)}
+              title={showEmptyDomains ? "Hide empty categories" : "Show all categories including 0"}
+            >
+              {showEmptyDomains ? "Hide 0s" : "Show All"}
+            </button>
           </div>
 
           {/* All Artifacts Root */}
@@ -269,7 +290,7 @@ export function ArtifactsView({ caseId }: Props) {
           >
             <div className="row gap-2" style={{ alignItems: "center" }}>
               <span>📁</span>
-              <span>All Artifacts</span>
+              <span>All Available Artifacts</span>
             </div>
             <span 
               className="badge" 
@@ -285,82 +306,86 @@ export function ArtifactsView({ caseId }: Props) {
 
           {/* Domain List */}
           <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            {taxonomy.map((dom) => {
-              const isDomainSelected = selectedDomain === dom.domain_id;
-              return (
-                <div key={dom.domain_id} style={{ display: "flex", flexDirection: "column" }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      padding: "7px 10px",
-                      borderRadius: "var(--r-sm)",
-                      cursor: "pointer",
-                      background: isDomainSelected && selectedSubcategory === "all" ? "var(--bg-3)" : "transparent",
-                      color: isDomainSelected ? "var(--accent)" : "var(--text-1)",
-                      fontWeight: isDomainSelected ? 700 : 500,
-                      fontSize: 12.5,
-                      borderLeft: isDomainSelected ? "3px solid var(--accent)" : "3px solid transparent",
-                    }}
-                    onClick={() => {
-                      setSelectedDomain(dom.domain_id);
-                      setSelectedSubcategory("all");
-                    }}
-                  >
-                    <div className="row gap-2" style={{ alignItems: "center", overflow: "hidden" }}>
-                      <span>{dom.icon}</span>
-                      <span style={{ textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}>{dom.name}</span>
-                    </div>
-                    <span 
-                      style={{ 
-                        fontSize: 11, 
-                        fontFamily: "var(--mono)",
-                        color: isDomainSelected ? "var(--accent)" : "var(--text-3)",
-                        fontWeight: 600
+            {visibleTaxonomy.length === 0 ? (
+              <div className="muted text-xs p-3 text-center">No forensic artifacts detected in this case yet.</div>
+            ) : (
+              visibleTaxonomy.map((dom) => {
+                const isDomainSelected = selectedDomain === dom.domain_id;
+                return (
+                  <div key={dom.domain_id} style={{ display: "flex", flexDirection: "column" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        padding: "7px 10px",
+                        borderRadius: "var(--r-sm)",
+                        cursor: "pointer",
+                        background: isDomainSelected && selectedSubcategory === "all" ? "var(--bg-3)" : "transparent",
+                        color: isDomainSelected ? "var(--accent)" : "var(--text-1)",
+                        fontWeight: isDomainSelected ? 700 : 500,
+                        fontSize: 12.5,
+                        borderLeft: isDomainSelected ? "3px solid var(--accent)" : "3px solid transparent",
+                      }}
+                      onClick={() => {
+                        setSelectedDomain(dom.domain_id);
+                        setSelectedSubcategory("all");
                       }}
                     >
-                      {dom.total_count}
-                    </span>
-                  </div>
-
-                  {/* Subcategories (if domain active) */}
-                  {isDomainSelected && dom.subcategories.length > 0 && (
-                    <div style={{ display: "flex", flexDirection: "column", paddingLeft: 24, marginTop: 2, marginBottom: 4, gap: 2 }}>
-                      {dom.subcategories.map((sub) => {
-                        const isSubSelected = selectedSubcategory === sub.subcategory_id;
-                        return (
-                          <div
-                            key={sub.subcategory_id}
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "space-between",
-                              padding: "4px 8px",
-                              borderRadius: "var(--r-sm)",
-                              cursor: "pointer",
-                              fontSize: 11.5,
-                              color: isSubSelected ? "var(--accent)" : "var(--text-2)",
-                              background: isSubSelected ? "rgba(56, 189, 248, 0.1)" : "transparent",
-                              fontWeight: isSubSelected ? 700 : 400,
-                            }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedSubcategory(sub.subcategory_id);
-                            }}
-                          >
-                            <span>↳ {sub.name}</span>
-                            <span style={{ fontSize: 10, fontFamily: "var(--mono)", color: "var(--text-3)" }}>
-                              {sub.count}
-                            </span>
-                          </div>
-                        );
-                      })}
+                      <div className="row gap-2" style={{ alignItems: "center", overflow: "hidden" }}>
+                        <span>{dom.icon}</span>
+                        <span style={{ textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}>{dom.name}</span>
+                      </div>
+                      <span 
+                        style={{ 
+                          fontSize: 11, 
+                          fontFamily: "var(--mono)",
+                          color: isDomainSelected ? "var(--accent)" : "var(--text-3)",
+                          fontWeight: 600
+                        }}
+                      >
+                        {dom.total_count}
+                      </span>
                     </div>
-                  )}
-                </div>
-              );
-            })}
+
+                    {/* Subcategories (if domain active) */}
+                    {isDomainSelected && dom.subcategories.filter(s => showEmptyDomains || s.count > 0).length > 0 && (
+                      <div style={{ display: "flex", flexDirection: "column", paddingLeft: 24, marginTop: 2, marginBottom: 4, gap: 2 }}>
+                        {dom.subcategories.filter(s => showEmptyDomains || s.count > 0).map((sub) => {
+                          const isSubSelected = selectedSubcategory === sub.subcategory_id;
+                          return (
+                            <div
+                              key={sub.subcategory_id}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                                padding: "4px 8px",
+                                borderRadius: "var(--r-sm)",
+                                cursor: "pointer",
+                                fontSize: 11.5,
+                                color: isSubSelected ? "var(--accent)" : "var(--text-2)",
+                                background: isSubSelected ? "rgba(56, 189, 248, 0.1)" : "transparent",
+                                fontWeight: isSubSelected ? 700 : 400,
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedSubcategory(sub.subcategory_id);
+                              }}
+                            >
+                              <span>↳ {sub.name}</span>
+                              <span style={{ fontSize: 10, fontFamily: "var(--mono)", color: "var(--text-3)" }}>
+                                {sub.count}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
 
@@ -374,7 +399,7 @@ export function ArtifactsView({ caseId }: Props) {
                 <input
                   className="input"
                   style={{ flex: 1, padding: "8px 12px", fontSize: 13 }}
-                  placeholder="Search artifacts (e.g. password, routing, credit card, seed phrase, glock, fentanyl, anydesk)..."
+                  placeholder="Search artifacts (e.g. password, routing, credit card, seed phrase, weapons, narcotics, anydesk)..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
@@ -437,10 +462,11 @@ export function ArtifactsView({ caseId }: Props) {
                       onClick={() => setSelectedArtifact(a)}
                     >
                       <div className="row between mb-2">
-                        <div className="row gap-2" style={{ alignItems: "center" }}>
+                        <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                           <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text-0)" }}>{a.title}</span>
                           {getSeverityBadge(a.severity)}
                           {getTypeBadge(a.artifact_type)}
+                          {getConfidenceBadge(a.confidence)}
                         </div>
                         <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
                           {a.date_sent_utc ? new Date(a.date_sent_utc).toLocaleDateString() : ""}
@@ -478,13 +504,15 @@ export function ArtifactsView({ caseId }: Props) {
                         <div style={{ fontSize: 11.5, color: "var(--text-2)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "70%" }}>
                           <span className="muted">Source:</span> {a.email_from} · <span className="muted">Subject:</span> {a.email_subject || "(No Subject)"}
                         </div>
-                        <button 
-                          className="btn btn-ghost btn-sm" 
-                          style={{ fontSize: 11, padding: "2px 8px" }}
-                          onClick={(e) => { e.stopPropagation(); openEmailModal(a.email_id); }}
-                        >
-                          ✉️ View Email
-                        </button>
+                        {a.email_id ? (
+                          <button 
+                            className="btn btn-ghost btn-sm" 
+                            style={{ fontSize: 11, padding: "2px 8px" }}
+                            onClick={(e) => { e.stopPropagation(); openEmailModal(a.email_id); }}
+                          >
+                            ✉️ View Email
+                          </button>
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -566,26 +594,30 @@ export function ArtifactsView({ caseId }: Props) {
                   </div>
                 </div>
 
-                <div style={{ marginBottom: 16 }}>
-                  <div className="label">ORIGINATING EMAIL</div>
-                  <div style={{ fontSize: 12, color: "var(--text-1)", marginBottom: 4 }}>
-                    <strong>Subject:</strong> {selectedArtifact.email_subject || "(No Subject)"}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)", marginBottom: 4 }}>
-                    <strong>From:</strong> {selectedArtifact.email_from}
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                    <strong>Date:</strong> {selectedArtifact.date_sent_utc || "Unknown"}
-                  </div>
-                </div>
+                {selectedArtifact.email_id ? (
+                  <>
+                    <div style={{ marginBottom: 16 }}>
+                      <div className="label">ORIGINATING EMAIL</div>
+                      <div style={{ fontSize: 12, color: "var(--text-1)", marginBottom: 4 }}>
+                        <strong>Subject:</strong> {selectedArtifact.email_subject || "(No Subject)"}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)", marginBottom: 4 }}>
+                        <strong>From:</strong> {selectedArtifact.email_from}
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>
+                        <strong>Date:</strong> {selectedArtifact.date_sent_utc || "Unknown"}
+                      </div>
+                    </div>
 
-                <button 
-                  className="btn btn-primary btn-sm" 
-                  style={{ width: "100%" }}
-                  onClick={() => openEmailModal(selectedArtifact.email_id)}
-                >
-                  ✉️ Open Email in Forensic Viewer
-                </button>
+                    <button 
+                      className="btn btn-primary btn-sm" 
+                      style={{ width: "100%" }}
+                      onClick={() => openEmailModal(selectedArtifact.email_id)}
+                    >
+                      ✉️ Open Email in Forensic Viewer
+                    </button>
+                  </>
+                ) : null}
               </div>
             )}
           </div>
@@ -649,28 +681,25 @@ export function ArtifactsView({ caseId }: Props) {
                 <span className="muted" style={{ width: 80, fontWeight: 600 }}>To:</span>
                 <span style={{ color: "#e2e8f0" }}>{previewEmail.to_addrs}</span>
               </div>
-              {previewEmail.cc_addrs && previewEmail.cc_addrs !== "[]" && (
+              {previewEmail.cc_addrs && (
                 <div className="row mb-1">
                   <span className="muted" style={{ width: 80, fontWeight: 600 }}>Cc:</span>
-                  <span style={{ color: "#e2e8f0" }}>{previewEmail.cc_addrs}</span>
+                  <span style={{ color: "#94a3b8" }}>{previewEmail.cc_addrs}</span>
                 </div>
               )}
               <div className="row mb-1">
-                <span className="muted" style={{ width: 80, fontWeight: 600 }}>Date:</span>
-                <span style={{ color: "#e2e8f0" }}>{previewEmail.date_sent_utc || previewEmail.date_sent || "Unknown"}</span>
+                <span className="muted" style={{ width: 80, fontWeight: 600 }}>Date UTC:</span>
+                <span style={{ color: "#94a3b8", fontFamily: "var(--mono)" }}>{previewEmail.date_sent_utc || previewEmail.date_sent || "Unknown"}</span>
               </div>
               <div className="row">
                 <span className="muted" style={{ width: 80, fontWeight: 600 }}>Folder:</span>
-                <span className="badge badge-gray">{previewEmail.folder_name || previewEmail.folder_category}</span>
-                {previewEmail.risk_score > 50 && (
-                  <span className="badge badge-red ml-2" style={{ marginLeft: 8 }}>High Risk ({previewEmail.risk_score}%)</span>
-                )}
+                <span className="badge badge-gray">{previewEmail.folder_name || previewEmail.folder_category || "inbox"}</span>
               </div>
             </div>
 
-            {/* Body Tabs / Content */}
-            <div className="mb-3">
-              <div className="label" style={{ marginBottom: 6 }}>MESSAGE CONTENT</div>
+            {/* Email Body View */}
+            <div style={{ marginBottom: 16 }}>
+              <div className="label">EMAIL MESSAGE CONTENT</div>
               <div 
                 style={{
                   background: "#020617",
@@ -678,36 +707,42 @@ export function ArtifactsView({ caseId }: Props) {
                   borderRadius: "var(--r-sm)",
                   padding: 16,
                   fontSize: 13,
-                  color: "#f1f5f9",
-                  lineHeight: 1.6,
-                  maxHeight: 380,
-                  overflowY: "auto",
+                  color: "#cbd5e1",
                   whiteSpace: "pre-wrap",
-                  fontFamily: "var(--font-sans, inherit)",
+                  lineHeight: 1.6,
+                  maxHeight: 350,
+                  overflowY: "auto",
+                  fontFamily: "var(--font-sans)",
                 }}
               >
-                {previewEmail.body_text || previewEmail.body_html || "(No message body content found)"}
+                {previewEmail.body_text || previewEmail.body_html || "(Empty message body)"}
               </div>
             </div>
 
-            {/* Raw Headers Accordion */}
+            {/* Raw Headers Toggle Section */}
             {previewEmail.headers_raw && (
-              <details style={{ marginTop: 12, background: "#090d16", border: "1px solid #1e293b", borderRadius: "var(--r-sm)", padding: 10 }}>
+              <details style={{ marginTop: 12 }}>
                 <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>
-                  📜 View Raw RFC-822 Transport Headers
+                  🧬 View Raw Transport Headers ({previewEmail.headers_raw.length} bytes)
                 </summary>
-                <pre style={{ fontSize: 11, fontFamily: "var(--mono)", color: "#cbd5e1", maxHeight: 180, overflowY: "auto", marginTop: 8, whiteSpace: "pre-wrap" }}>
+                <pre 
+                  style={{ 
+                    marginTop: 8, 
+                    padding: 12, 
+                    background: "#020617", 
+                    border: "1px solid #1e293b", 
+                    borderRadius: "var(--r-sm)", 
+                    fontSize: 11, 
+                    color: "#64748b", 
+                    maxHeight: 200, 
+                    overflowY: "auto",
+                    whiteSpace: "pre-wrap"
+                  }}
+                >
                   {previewEmail.headers_raw}
                 </pre>
               </details>
             )}
-
-            <div className="row between mt-4" style={{ borderTop: "1px solid #1e293b", paddingTop: 12 }}>
-              <span className="muted" style={{ fontSize: 11 }}>Investigator Mode: Forensic In-Modal Inspection</span>
-              <button className="btn btn-primary btn-sm" onClick={() => setPreviewEmail(null)}>
-                Done / Back to Artifacts Hub
-              </button>
-            </div>
           </div>
         </div>
       )}

@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, HashSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::State;
@@ -33,16 +34,25 @@ pub struct ForensicTaxonomyArtifact {
     pub details: String,
     pub severity: String,
     pub artifact_type: String,
+    pub confidence: Option<String>,
     pub email_id: String,
     pub email_subject: Option<String>,
     pub email_from: String,
     pub date_sent_utc: Option<String>,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HIGH-PRECISION FALSE POSITIVE (FP) REDUCTION VALIDATORS
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Luhn algorithm for validating credit card numbers
 pub fn luhn_check(num_str: &str) -> bool {
     let digits: Vec<u32> = num_str.chars().filter_map(|c| c.to_digit(10)).collect();
     if digits.len() < 13 || digits.len() > 19 {
+        return false;
+    }
+    // Reject repeated digits like 0000-0000-0000-0000 or 1111-1111-1111-1111
+    if digits.iter().all(|&d| d == digits[0]) {
         return false;
     }
     let mut sum = 0;
@@ -60,7 +70,56 @@ pub fn luhn_check(num_str: &str) -> bool {
     sum % 10 == 0
 }
 
-/// Case Artifacts Summary by Taxonomy Domains (Complete 34-Domain Forensic Taxonomy)
+/// US 9-Digit ABA Bank Routing Checksum Validator
+pub fn validate_routing_number(num_str: &str) -> bool {
+    let digits: Vec<u32> = num_str.chars().filter_map(|c| c.to_digit(10)).collect();
+    if digits.len() != 9 || digits.iter().all(|&d| d == digits[0]) {
+        return false;
+    }
+    let sum = 3 * (digits[0] + digits[3] + digits[6])
+            + 7 * (digits[1] + digits[4] + digits[7])
+            + 1 * (digits[2] + digits[5] + digits[8]);
+    sum % 10 == 0
+}
+
+/// US Social Security Number (SSN) Structure Validator
+pub fn validate_ssn(ssn_str: &str) -> bool {
+    let clean: String = ssn_str.chars().filter(|c| c.is_ascii_digit()).collect();
+    if clean.len() != 9 || clean.chars().all(|c| c == clean.chars().next().unwrap()) {
+        return false;
+    }
+    let area: u32 = clean[0..3].parse().unwrap_or(0);
+    let group: u32 = clean[3..5].parse().unwrap_or(0);
+    let serial: u32 = clean[5..9].parse().unwrap_or(0);
+    if area == 0 || area == 666 || area >= 900 || group == 0 || serial == 0 {
+        return false;
+    }
+    if clean == "123456789" || clean == "987654321" {
+        return false;
+    }
+    true
+}
+
+/// Base58 Bitcoin Address Character Validator
+pub fn validate_btc_base58(addr: &str) -> bool {
+    if addr.len() < 26 || addr.len() > 35 { return false; }
+    let forbidden = ['0', 'O', 'I', 'l'];
+    !addr.chars().any(|c| forbidden.contains(&c)) && (addr.starts_with('1') || addr.starts_with('3'))
+}
+
+/// Phone Number Sanitizer & Quality Check
+pub fn validate_phone(p: &str) -> bool {
+    let digits: Vec<char> = p.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() < 10 || digits.len() > 15 { return false; }
+    if digits.iter().all(|&c| c == digits[0]) { return false; }
+    // Exclude date patterns like 2024-05-12 or 2023-11-04
+    if (p.starts_with("19") || p.starts_with("20")) && p.contains('-') && digits.len() <= 8 {
+        return false;
+    }
+    true
+}
+
+/// Case Artifacts Summary by Taxonomy Domains (Hides 0-count domains by default)
 #[tauri::command]
 pub async fn case_artifacts_summary(
     state: State<'_, AppState>,
@@ -72,47 +131,42 @@ pub async fn case_artifacts_summary(
         .unwrap_or("")
         .to_string();
 
+    let show_all = input["show_all"].as_bool().unwrap_or(false);
     let all_artifacts = extract_all_taxonomy_artifacts(&state, &case_id).await?;
 
     let domain_defs = [
-        ("messages", "Email Messages", "📧"),
-        ("people", "People & Identities", "👤"),
-        ("contacts", "Contacts & Address Books", "📇"),
-        ("threads", "Conversations & Threads", "🧵"),
+        ("credentials", "Credentials & Secrets", "🔑"),
+        ("financial", "Financial & Banking", "🏦"),
+        ("crypto", "Cryptocurrency & Seeds", "🪙"),
+        ("identity_docs", "PII & Identity Documents", "🪪"),
         ("network", "Network & Infrastructure", "🌐"),
-        ("web", "URLs & Web Intelligence", "🔗"),
+        ("messaging_apps", "Communication & Messengers", "💬"),
+        ("locations", "Locations & Travel", "📍"),
+        ("contraband", "Threats & Contraband", "🛑"),
+        ("malware_threats", "Malware & Cyber Threats", "🦠"),
+        ("secrets", "Corporate & Legal", "📄"),
+        ("phishing", "Phishing & Social Engineering", "🎣"),
         ("authentication", "Authentication & Security", "🔐"),
         ("attachments", "Attachments & Files", "📎"),
+        ("timeline_events", "Timeline & Metadata", "🕐"),
+        ("anomalies", "Behavioral & Content", "⚠️"),
+        ("messages", "Email Messages", "📧"),
+        ("people", "People & Identities", "👤"),
+        ("contacts", "Contacts & Signatures", "📇"),
+        ("threads", "Conversations & Threads", "🧵"),
         ("calendar", "Calendar & Meetings", "📅"),
         ("client", "Email Clients & Devices", "💻"),
         ("containers", "Mailboxes & Containers", "🗂️"),
-        ("headers_meta", "Headers & Metadata", "🧬"),
-        ("timeline_events", "Timeline Events", "🕐"),
+        ("headers_meta", "Transport Headers & Metadata", "🧬"),
         ("graph_network", "Communication Graph", "🕸️"),
-        ("credentials", "Credentials & Secrets", "🔑"),
-        ("security_otp", "2FA & Account Recovery", "🛡️"),
-        ("financial", "Banking & Financial", "🏦"),
-        ("crypto", "Cryptocurrency & Seeds", "🪙"),
-        ("identity_docs", "Identity Documents (SSN/Passports)", "🪪"),
-        ("corporate_intel", "Corporate Intelligence", "🏢"),
-        ("messaging_apps", "Messaging App Relays", "💬"),
+        ("security_otp", "2FA & OTP Tokens", "🛡️"),
         ("fraud_bec", "Fraud & BEC Wire Demands", "🚨"),
-        ("phishing", "Phishing & Social Engineering", "🎣"),
         ("spoofing", "Spoofing & Impersonation", "🎭"),
-        ("malware_threats", "Malware & Threats", "🦠"),
         ("remote_access", "Remote Access Tools", "🖥️"),
-        ("legal_docs", "Documents & Legal", "📄"),
-        ("locations", "Locations, Travel & Addresses", "📍"),
-        ("phone_numbers", "Phone Numbers & VoIP", "📞"),
-        ("named_entities", "Named Entities", "🧠"),
-        ("campaigns", "Campaigns & Bulk Blasts", "🎯"),
-        ("anomalies", "Anomalies & Anti-Forensics", "⚠️"),
-        ("deleted_recovered", "Deleted & Recovered", "🗑️"),
-        ("case_artifacts", "Evidence & Case Integrity", "⚖️"),
         ("dating_romance", "Romance & Dating Scams", "❤️"),
         ("gift_cards", "Gift Card Laundering", "🎁"),
-        ("contraband", "Narcotics, Weapons & Violent Crime", "🛑"),
-        ("secrets", "Classified, NDA & Secrets", "🤫"),
+        ("deleted_recovered", "Deleted & Recovered", "🗑️"),
+        ("case_artifacts", "Evidence & Integrity Seals", "⚖️"),
     ];
 
     let mut result = Vec::new();
@@ -121,12 +175,17 @@ pub async fn case_artifacts_summary(
         let domain_artifacts: Vec<&ForensicTaxonomyArtifact> = all_artifacts.iter().filter(|a| a.domain_id == *dom_id).collect();
         let total_count = domain_artifacts.len();
 
-        let mut sub_map: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        // If total_count == 0 and not show_all, SKIP this domain completely
+        if total_count == 0 && !show_all {
+            continue;
+        }
+
+        let mut sub_map: BTreeMap<String, usize> = BTreeMap::new();
         for a in &domain_artifacts {
             *sub_map.entry(a.subcategory_id.clone()).or_insert(0) += 1;
         }
 
-        let subcategories = sub_map.into_iter().map(|(k, v)| {
+        let subcategories = sub_map.into_iter().filter(|(_, cnt)| *cnt > 0).map(|(k, v)| {
             let name = k.replace('_', " ").to_uppercase();
             TaxonomySubcategorySummary {
                 subcategory_id: k,
@@ -257,7 +316,6 @@ async fn extract_all_taxonomy_artifacts(
             ))
         }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
-        // Fetch evidence containers
         let mut ev_stmt = db.conn.prepare("
             SELECT id, filename, format, sha256, size_bytes, source_description, acquired_at
             FROM evidence_items
@@ -293,6 +351,7 @@ async fn extract_all_taxonomy_artifacts(
             details: format!("Format: {} | Size: {} B | Acquired: {} | Source: {}", format, size_bytes, acquired_at, source_desc.unwrap_or_default()),
             severity: "info".to_string(),
             artifact_type: "native".to_string(),
+            confidence: Some("high".to_string()),
             email_id: String::new(),
             email_subject: Some(format!("Evidence Container: {}", filename)),
             email_from: "Case Evidence Store".to_string(),
@@ -309,6 +368,7 @@ async fn extract_all_taxonomy_artifacts(
             details: format!("Cryptographic SHA-256 evidence integrity seal established at acquisition on {}", acquired_at),
             severity: "info".to_string(),
             artifact_type: "native".to_string(),
+            confidence: Some("high".to_string()),
             email_id: String::new(),
             email_subject: Some("Chain of Custody Hash Seal".to_string()),
             email_from: "Forensic Acquisition Engine".to_string(),
@@ -316,59 +376,104 @@ async fn extract_all_taxonomy_artifacts(
         });
     }
 
-    // Comprehensive Regex Matchers
-    let re_phone = regex::Regex::new(r"(\+?[0-9]{1,4}[\s\-\.]?\(?[0-9]{2,4}\)?[\s\-\.]?[0-9]{3,4}[\s\-\.]?[0-9]{3,5})").ok();
-    let re_ip = regex::Regex::new(r"\b([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})\b").ok();
-    let re_url = regex::Regex::new(r"(https?://[^\s<>'\x22]+)").ok();
-    let re_auth_url = regex::Regex::new(r"https?://([^:\s/@]+):([^@\s/]+)@([^\s/]+)").ok();
-    let re_btc = regex::Regex::new(r"\b([13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-zA-HJ-NP-Z0-9]{39,59})\b").ok();
+    // ─────────────────────────────────────────────────────────────────────────────
+    // COMPILED HIGH-PERFORMANCE REGEX MATCHERS
+    // ─────────────────────────────────────────────────────────────────────────────
+    let re_cred_pair = regex::Regex::new(r"(?i)(?:username|user|login|email)[:=\s]+([^\s,;]{2,50})\s*(?:password|pwd|pass)[:=\s]+([^\s,;]{3,50})").ok();
+    let re_pass_standalone = regex::Regex::new(r"(?i)(?:password|passwd|pwd|passcode)[:=\s]+([^\s,;]{3,60})").ok();
+    let re_api_keys = regex::Regex::new(r"\b(AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{24,40}|ghp_[0-9a-zA-Z]{36}|AIza[0-9A-Za-z\-_]{35})\b").ok();
+    let re_bearer = regex::Regex::new(r"Bearer\s+([A-Za-z0-9\-\._~\+\/]{20,}=*)").ok();
+    let re_jwt = regex::Regex::new(r"(eyJ[A-Za-z0-9-_=]{15,}\.[A-Za-z0-9-_=]{15,}\.?[A-Za-z0-9-_.+/=]*)").ok();
+    let re_ssh_key = regex::Regex::new(r"-----BEGIN (?:RSA|DSA|EC|OPENSSH) PRIVATE KEY-----").ok();
+    let re_seed = regex::Regex::new(r"(?i)(?:seed\s*phrase|recovery\s*phrase|mnemonic)[:=\-]?\s*([a-z\s]{20,200})").ok();
+    let re_privkey = regex::Regex::new(r"(?i)(?:private\s*key|privkey)[:=\s]+([0-9a-fA-F]{64,})").ok();
+
+    let re_cc_spaced = regex::Regex::new(r"\b((?:4[0-9]{3}|5[1-5][0-9]{2}|6011|3[47][0-9]{2})[\s\-][0-9]{4}[\s\-][0-9]{4}[\s\-][0-9]{4})\b").ok();
+    let re_cc_raw = regex::Regex::new(r"\b(4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6011[0-9]{12})\b").ok();
+    let re_routing = regex::Regex::new(r"(?i)(?:routing(?:\s*number|#)?|aba)[:#=]?\s*((?:0[1-9]|[123][0-9]|6[1-9]|7[0-2]|80)\d{7})").ok();
+    let re_iban = regex::Regex::new(r"\b([A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}(?:[A-Z0-9]?){0,16})\b").ok();
+    let re_swift = regex::Regex::new(r"\b([A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?)\b").ok();
+    let re_account = regex::Regex::new(r"(?i)(?:account(?:\s*number|#)|acct)[:#=]?\s*([0-9]{8,17})").ok();
+    let re_sort_code = regex::Regex::new(r"\b(\d{2}[-\s]?\d{2}[-\s]?\d{2})\b").ok();
+    let re_cashtag = regex::Regex::new(r"(\$[a-zA-Z][a-zA-Z0-9_]{1,19})\b").ok();
+
+    let re_btc_legacy = regex::Regex::new(r"\b([13][a-km-zA-HJ-NP-Z1-9]{25,34})\b").ok();
+    let re_btc_bech32 = regex::Regex::new(r"\b(bc1[a-zA-HJ-NP-Z0-9]{39,59})\b").ok();
     let re_eth = regex::Regex::new(r"\b(0x[a-fA-F0-9]{40})\b").ok();
     let re_tron = regex::Regex::new(r"\b(T[A-Za-z1-9]{33})\b").ok();
     let re_sol = regex::Regex::new(r"\b([1-9A-HJ-NP-Za-km-z]{32,44})\b").ok();
-    let re_seed = regex::Regex::new(r"(?i)(?:seed\s*phrase|recovery\s*phrase|mnemonic(?:\s*phrase)?|secret\s*phrase|passphrase|private\s*key)\s*[:=\-]?\s*([a-z\s]{20,200})").ok();
-    let re_cred_pair = regex::Regex::new(r"(?i)(?:username|user|login|email|usr|id)\s*[:=]\s*([^\s\r\n,;]{2,50})\s*(?:and\s+|,|;|\n|\r)?\s*(?:password|passwd|pwd|pass|pin)\s*[:=]\s*([^\s\r\n,;]{3,50})").ok();
-    let re_pass_standalone = regex::Regex::new(r"(?i)(?:password|passwd|pwd|passcode|secret\s*key|api\s*key|access\s*token|pin\s*code)\s*[:=]\s*([^\s\r\n,;]{3,60})").ok();
-    let re_api_keys = regex::Regex::new(r"\b(AKIA[0-9A-Z]{16}|sk_live_[0-9a-zA-Z]{24,40}|ghp_[0-9a-zA-Z]{36}|AIza[0-9A-Za-z\-_]{35}|xox[baprs]-[0-9a-zA-Z]{10,48}|Bearer\s+[A-Za-z0-9\-\._~\+\/]{20,}=*|eyJ[A-Za-z0-9-_=]{15,}\.[A-Za-z0-9-_=]{15,}\.?[A-Za-z0-9-_.+/=]*)\b").ok();
-    let re_routing = regex::Regex::new(r"(?i)(?:routing(?:\s*number|\s*#)?|aba(?:\s*#|\s*no)?)\s*[:#=]?\s*(\b(?:0[1-9]|[123][0-9]|6[1-9]|7[0-2]|80)\d{7}\b)").ok();
-    let re_swift = regex::Regex::new(r"(?i)(?:swift(?:\s*code|\s*bic)?|bic(?:\s*code)?)\s*[:#=]?\s*(\b[A-Z]{6}[A-Z0-9]{2}(?:[A-Z0-9]{3})?\b)").ok();
-    let re_iban = regex::Regex::new(r"(?i)(?:iban)\s*[:#=]?\s*(\b[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}(?:[A-Z0-9]?){0,16}\b)").ok();
-    let re_account = regex::Regex::new(r"(?i)(?:account(?:\s*number|\s*#|s)?|acct(?:\s*#|\s*no)?|acc\s*#?)\s*[:#=]?\s*([0-9]{8,17})\b").ok();
-    let re_cc_spaced = regex::Regex::new(r"\b((?:4[0-9]{3}|5[1-5][0-9]{2}|6011|3[47][0-9]{2})[\s\-][0-9]{4}[\s\-][0-9]{4}[\s\-][0-9]{4})\b").ok();
-    let re_cc_raw = regex::Regex::new(r"\b(4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13}|6011[0-9]{12})\b").ok();
-    let re_cashtag = regex::Regex::new(r"(\$[a-zA-Z][a-zA-Z0-9_]{1,19})\b").ok();
-    let re_weapons = regex::Regex::new(r"(?i)\b(glock|beretta|ar-15|ak-47|kalashnikov|silencer|suppressor|ghost\s*gun|switch|auto\s*sear|ammunition|magazine|firearm|pistol|carbine|smg|shotgun|rifle)\b").ok();
-    let re_narcotics = regex::Regex::new(r"(?i)\b(cocaine|coke|heroin|fentanyl|methamphetamine|crystal\s*meth|mdma|ecstasy|oxycodone|percocet|xanax|alprazolam|ketamine|codeine|lean|promethazine|suboxone)\b").ok();
-    let re_threats_terror = regex::Regex::new(r"(?i)\b(bomb|explosive|detonator|c4|assassination|hitman|terrorist|jihad|IED|suicide\s*vest|pipe\s*bomb|anthrax|ricin|poison)\b").ok();
-    let re_secrets = regex::Regex::new(r"(?i)\b(strictly\s+confidential|top\s+secret|confidential\s+attorney-client|non-disclosure\s+agreement|\bnda\b|internal\s+use\s+only|classified\s+material|proprietary\s+and\s+confidential|do\s+not\s+distribute|restricted\s+leak)\b").ok();
-    
-    // Identity Documents
-    let re_ssn = regex::Regex::new(r"\b([0-9]{3}-[0-9]{2}-[0-9]{4})\b").ok();
-    let re_passport = regex::Regex::new(r"(?i)(?:passport(?:\s*#|\s*no|\s*number)?)\s*[:#=]?\s*([A-PR-WYa-pr-wy][0-9]{7,8})\b").ok();
-    let re_driver_lic = regex::Regex::new(r"(?i)(?:driver'?s?\s*license|dl\s*#?|license\s*#)\s*[:#=]?\s*([A-Z0-9\-]{6,16})\b").ok();
+    let re_ltc = regex::Regex::new(r"\b([LM3][a-km-zA-HJ-NP-Z1-9]{25,34})\b").ok();
+    let re_doge = regex::Regex::new(r"\b(D[A-Za-z1-9]{33})\b").ok();
+    let re_xmr = regex::Regex::new(r"\b(4[0-9AB][1-9A-HJ-NP-Za-km-z]{93})\b").ok();
+    let re_crypto_uri = regex::Regex::new(r"(?i)\b((?:bitcoin|ethereum|litecoin|doge|solana|monero):[a-zA-Z0-9?=_&%-]+)\b").ok();
 
-    // Corporate Intel
-    let re_ein = regex::Regex::new(r"(?i)(?:ein|tax\s*id|federal\s*id)\s*[:#=]?\s*([0-9]{2}-[0-9]{7})\b").ok();
-    let re_corp_names = regex::Regex::new(r"(?i)\b([A-Z][a-zA-Z0-9\s&,.\-]{2,40}\s+(?:Inc\.?|LLC|Ltd\.?|Corp\.?|Corporation|GmbH|Co\.?|Holdings|Capital|Group|Ventures))\b").ok();
+    let re_ssn = regex::Regex::new(r"\b(\d{3}[-\s]?\d{2}[-\s]?\d{4})\b").ok();
+    let re_passport = regex::Regex::new(r"(?i)(?:passport(?:\s*#|no|number)?)[:#=]?\s*([A-PR-WYa-pr-wy][0-9]{7,8})\b").ok();
+    let re_driver_lic = regex::Regex::new(r"(?i)(?:driver'?s?\s*license|dl|dln)[:#=]?\s*([A-Z0-9]{6,14})\b").ok();
+    let re_dob = regex::Regex::new(r"\b((?:0[1-9]|1[0-2])[/\-](?:0[1-9]|[12][0-9]|3[01])[/\-](?:19|20)\d{2})\b").ok();
+    let re_ein = regex::Regex::new(r"\b(\d{2}[-\s]?\d{7})\b").ok();
+    let re_tax_id = regex::Regex::new(r"(?i)(?:tax\s*id|tin|itin)[:#=]?\s*([0-9\-]{9,11})\b").ok();
 
-    // Locations, Travel & Addresses
-    let re_street_addr = regex::Regex::new(r"\b([0-9]{1,5}\s+[A-Z][a-zA-Z0-9\s.,]{2,30}\s+(?:Street|St\.?|Avenue|Ave\.?|Road|Rd\.?|Boulevard|Blvd\.?|Lane|Ln\.?|Drive|Dr\.?|Way|Court|Ct\.?|Parkway|Pkwy\.?|Suite|Ste\.?|Apt\.?))\b").ok();
-    let re_travel = regex::Regex::new(r"(?i)(?:flight(?:\s*#|\s*no)?|booking\s*ref|pnr|reservation\s*code|ticket\s*#)\s*[:#=]?\s*([A-Z0-9]{5,10})\b").ok();
+    let re_ipv4 = regex::Regex::new(r"\b((?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))\b").ok();
+    let re_ipv6 = regex::Regex::new(r"\b((?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4})\b").ok();
+    let re_url = regex::Regex::new(r"(https?://[^\s<>'\x22]+)").ok();
+    let re_auth_url = regex::Regex::new(r"https?://([^:\s/@]+):([^@\s/]+)@([^\s/]+)").ok();
+    let re_mac = regex::Regex::new(r"\b(([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2})\b").ok();
+
+    let re_phone_intl = regex::Regex::new(r"(\+?[0-9]{1,4}[\s\-\.]?\(?[0-9]{2,4}\)?[\s\-\.]?[0-9]{3,4}[\s\-\.]?[0-9]{3,5})").ok();
+    let re_phone_us = regex::Regex::new(r"(\(?[0-9]{3}\)?[\s\-\.]?[0-9]{3}[\s\-\.]?[0-9]{4})").ok();
+    let re_whatsapp = regex::Regex::new(r"(wa\.me/\d{8,15}|whatsapp://send\?phone=\d{8,15})").ok();
+    let re_telegram = regex::Regex::new(r"(t\.me/[a-zA-Z0-9_]{5,32}|telegram\.me/[a-zA-Z0-9_]{5,32})").ok();
+    let re_signal = regex::Regex::new(r"(signal\.me/#p/\+[0-9]{8,15})").ok();
+
     let re_gps = regex::Regex::new(r"\b(-?[0-9]{1,2}\.[0-9]{4,8}\s*,\s*-?[0-9]{1,3}\.[0-9]{4,8})\b").ok();
+    let re_zip = regex::Regex::new(r"\b(\d{5}(?:[-\s]\d{4})?)\b").ok();
+    let re_uk_postcode = regex::Regex::new(r"\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b").ok();
+    let re_flight = regex::Regex::new(r"\b([A-Z]{2}\d{3,4})\b").ok();
+    let re_hotel_conf = regex::Regex::new(r"(?i)(?:confirmation|booking|reservation)\s*(?:#|no|number)?[:=\s]*([A-Z0-9]{6,12})\b").ok();
+    let re_street_addr = regex::Regex::new(r"\b([0-9]{1,5}\s+[A-Z][a-zA-Z0-9\s.,]{2,30}\s+(?:Street|St\.?|Avenue|Ave\.?|Road|Rd\.?|Boulevard|Blvd\.?|Lane|Ln\.?|Drive|Dr\.?|Way|Court|Ct\.?|Parkway|Pkwy\.?|Suite|Ste\.?|Apt\.?))\b").ok();
+
+    let re_weapons = regex::Regex::new(r"(?i)\b(glock|beretta|ar-15|ak-47|silencer|ghost\s*gun|switch|auto\s*sear|ammunition|magazine|firearm|pistol|carbine|smg|shotgun|rifle|revolver)\b").ok();
+    let re_narcotics = regex::Regex::new(r"(?i)\b(cocaine|coke|heroin|fentanyl|methamphetamine|crystal\s*meth|mdma|ecstasy|oxycodone|percocet|xanax|alprazolam|ketamine|codeine|lean|promethazine|suboxone|marijuana|weed|cannabis|thc)\b").ok();
+    let re_explosives = regex::Regex::new(r"(?i)\b(bomb|explosive|detonator|c4|ied|suicide\s*vest|pipe\s*bomb|anthrax|ricin|poison)\b").ok();
+    let re_terrorism = regex::Regex::new(r"(?i)\b(jihad|terrorist|isi?s?|al[- ]?qaeda|boko\s*haram|extremist|radicalization)\b").ok();
+    let re_trafficking = regex::Regex::new(r"(?i)\b(human\s*trafficking|smuggling|sex\s*trade|forced\s*labor|child\s*exploitation)\b").ok();
+
+    let re_md5 = regex::Regex::new(r"\b([a-fA-F0-9]{32})\b").ok();
+    let re_sha1 = regex::Regex::new(r"\b([a-fA-F0-9]{40})\b").ok();
+    let re_sha256 = regex::Regex::new(r"\b([a-fA-F0-9]{64})\b").ok();
+    let re_cve = regex::Regex::new(r"(CVE-\d{4}-\d{4,7})").ok();
+    let re_malware_sig = regex::Regex::new(r"(?i)\b(trojan|ransomware|keylogger|rootkit|backdoor|spyware|adware|worm|botnet)\b").ok();
+    let re_c2 = regex::Regex::new(r"(?i)\b(command\s*and\s*control|c2|c&c|callback|beacon)\b").ok();
+
+    let re_confidential = regex::Regex::new(r"(?i)\b(strictly\s+confidential|top\s+secret|attorney[- ]client|privileged|work\s*product)\b").ok();
+    let re_nda = regex::Regex::new(r"(?i)\b(non[- ]disclosure\s*agreement|\bnda\b|do\s+not\s+distribute)\b").ok();
+    let re_contracts = regex::Regex::new(r"(?i)\b(agreement|contract|terms\s*and\s*conditions|sla)\b").ok();
+    let re_invoice = regex::Regex::new(r"(?i)(?:invoice(?:\s*#|no|number)?)[:=\s]*([A-Z0-9\-]{4,20})\b").ok();
+    let re_po = regex::Regex::new(r"(?i)(?:purchase\s*order|po)[:#\s]*([0-9\-]{4,15})\b").ok();
+
+    let re_phish_urgency = regex::Regex::new(r"(?i)\b(urgent|immediate|action\s*required|verify\s*your\s*account|suspended|unusual\s*activity)\b").ok();
+    let re_phish_cred = regex::Regex::new(r"(?i)\b(verify\s*your\s*identity|confirm\s*your\s*password|update\s*your\s*account)\b").ok();
+    let re_phish_finance = regex::Regex::new(r"(?i)\b(wire\s*transfer|send\s*money|gift\s*card|bitcoin\s*payment)\b").ok();
 
     // Process attachments artifacts
     for (att_id, email_id, filename, sha256, mime, size, entropy, risk_flags, subj, from_addr, date_sent) in attachments {
         let cat = classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref());
         let is_dangerous = cat == "dangerous";
+        let ent_val = entropy.unwrap_or(0.0);
+        let is_high_entropy = ent_val > 7.5;
+
         artifacts.push(ForensicTaxonomyArtifact {
             id: format!("att-{}", att_id),
             domain_id: "attachments".to_string(),
-            subcategory_id: cat.clone(),
+            subcategory_id: if is_high_entropy { "high_entropy".to_string() } else { cat.clone() },
             title: format!("Attachment: {}", filename),
             primary_value: filename.clone(),
             secondary_value: Some(format!("SHA-256: {}", sha256)),
-            details: format!("MIME: {} | Size: {} B | Entropy: {:.2}", mime, size, entropy.unwrap_or(0.0)),
-            severity: if is_dangerous { "critical".to_string() } else { "info".to_string() },
+            details: format!("MIME: {} | Size: {} B | Entropy: {:.2}{}", mime, size, ent_val, if is_high_entropy { " [HIGH ENTROPY / PACKED]" } else { "" }),
+            severity: if is_dangerous || is_high_entropy { "critical".to_string() } else { "info".to_string() },
             artifact_type: "native".to_string(),
+            confidence: Some("high".to_string()),
             email_id,
             email_subject: subj,
             email_from: from_addr,
@@ -376,23 +481,22 @@ async fn extract_all_taxonomy_artifacts(
         });
     }
 
-    for (eid, from_addr, from_disp, to_addrs, cc_addrs, _reply_to, subj_opt, body_opt, html_opt, headers_raw_opt, date_opt, _risk, is_del, is_soft_del, folder_opt, msg_id_opt, in_reply_to_opt, ref_opt) in emails {
+    for (eid, from_addr, from_disp, to_addrs, _cc_addrs, _reply_to, subj_opt, body_opt, html_opt, headers_raw_opt, date_opt, _risk, is_del, is_soft_del, folder_opt, msg_id_opt, in_reply_to_opt, ref_opt) in emails {
         let from_lower = from_addr.to_lowercase();
-        let disp_lower = from_disp.as_deref().unwrap_or("").to_lowercase();
         let subj = subj_opt.as_deref().unwrap_or("");
         let subj_lower = subj.to_lowercase();
         let body = body_opt.as_deref().unwrap_or("");
-        let body_lower = body.to_lowercase();
         let html = html_opt.as_deref().unwrap_or("");
         let headers_raw = headers_raw_opt.as_deref().unwrap_or("");
+        let headers_lower = headers_raw.to_lowercase();
         let folder = folder_opt.as_deref().unwrap_or("inbox");
-        let full_text = format!("{} {}", subj_lower, body_lower);
+        let full_text = format!("{} {}", subj, body);
+
+        // Memory-efficient deduplication set per email
+        let mut seen: HashSet<String> = HashSet::new();
 
         // 1. MESSAGES & RECOVERED
-        let is_reply = subj_lower.starts_with("re:") || in_reply_to_opt.is_some();
-        let is_fwd = subj_lower.starts_with("fwd:") || subj_lower.starts_with("fw:") || full_text.contains("forwarded message");
         let is_deleted = is_del || is_soft_del || folder == "trash" || folder == "deleted items" || folder == "soft_deleted";
-
         if is_deleted {
             artifacts.push(ForensicTaxonomyArtifact {
                 id: generate_id(),
@@ -404,6 +508,7 @@ async fn extract_all_taxonomy_artifacts(
                 details: format!("Recovered from folder: {} | MsgID: {}", folder, msg_id_opt.as_deref().unwrap_or("")),
                 severity: "high".to_string(),
                 artifact_type: "recovered".to_string(),
+                confidence: Some("high".to_string()),
                 email_id: eid.clone(),
                 email_subject: subj_opt.clone(),
                 email_from: from_addr.clone(),
@@ -421,13 +526,16 @@ async fn extract_all_taxonomy_artifacts(
             details: format!("Folder: {} | Date: {}", folder, date_opt.as_deref().unwrap_or("Unknown")),
             severity: "info".to_string(),
             artifact_type: "native".to_string(),
+            confidence: Some("high".to_string()),
             email_id: eid.clone(),
             email_subject: subj_opt.clone(),
             email_from: from_addr.clone(),
             date_sent_utc: date_opt.clone(),
         });
 
-        // 2. CONVERSATION THREADS
+        // 2. CONVERSATIONS & THREADS
+        let is_reply = subj_lower.starts_with("re:") || in_reply_to_opt.is_some();
+        let is_fwd = subj_lower.starts_with("fwd:") || subj_lower.starts_with("fw:") || full_text.to_lowercase().contains("forwarded message");
         if is_reply || is_fwd || ref_opt.is_some() {
             artifacts.push(ForensicTaxonomyArtifact {
                 id: generate_id(),
@@ -439,6 +547,7 @@ async fn extract_all_taxonomy_artifacts(
                 details: format!("In-Reply-To: {} | References: {}", in_reply_to_opt.as_deref().unwrap_or("None"), ref_opt.as_deref().unwrap_or("None")),
                 severity: "info".to_string(),
                 artifact_type: "derived".to_string(),
+                confidence: Some("high".to_string()),
                 email_id: eid.clone(),
                 email_subject: subj_opt.clone(),
                 email_from: from_addr.clone(),
@@ -457,42 +566,18 @@ async fn extract_all_taxonomy_artifacts(
             details: format!("Sender Identity | Display Name: {}", from_disp.as_deref().unwrap_or("None")),
             severity: "info".to_string(),
             artifact_type: "native".to_string(),
+            confidence: Some("high".to_string()),
             email_id: eid.clone(),
             email_subject: subj_opt.clone(),
             email_from: from_addr.clone(),
             date_sent_utc: date_opt.clone(),
         });
 
-        // 4. PHONE NUMBERS
-        if let Some(ref re) = re_phone {
-            for cap in re.captures_iter(&body) {
-                let p = cap[1].trim().to_string();
-                if p.len() >= 9 && p.len() <= 22 && !p.contains('@') {
-                    artifacts.push(ForensicTaxonomyArtifact {
-                        id: generate_id(),
-                        domain_id: "phone_numbers".to_string(),
-                        subcategory_id: "telephony".to_string(),
-                        title: "Extracted Phone Number".to_string(),
-                        primary_value: p.clone(),
-                        secondary_value: Some(from_addr.clone()),
-                        details: format!("Found in message body from {}", from_addr),
-                        severity: "medium".to_string(),
-                        artifact_type: "native".to_string(),
-                        email_id: eid.clone(),
-                        email_subject: subj_opt.clone(),
-                        email_from: from_addr.clone(),
-                        date_sent_utc: date_opt.clone(),
-                    });
-                    break;
-                }
-            }
-        }
-
-        // 5. CONTACTS & ADDRESS BOOKS (vCard / Signatures)
+        // 4. SIGNATURE CONTACT CARDS
         let sig_triggers = ["best regards", "kind regards", "sincerely", "thanks & regards", "warm regards"];
         for sig in &sig_triggers {
-            if let Some(idx) = body_lower.find(sig) {
-                let sig_block: String = body[idx..].chars().take(160).collect();
+            if let Some(idx) = full_text.to_lowercase().find(sig) {
+                let sig_block: String = full_text[idx..].chars().take(160).collect();
                 artifacts.push(ForensicTaxonomyArtifact {
                     id: generate_id(),
                     domain_id: "contacts".to_string(),
@@ -503,6 +588,7 @@ async fn extract_all_taxonomy_artifacts(
                     details: sig_block,
                     severity: "info".to_string(),
                     artifact_type: "native".to_string(),
+                    confidence: Some("medium".to_string()),
                     email_id: eid.clone(),
                     email_subject: subj_opt.clone(),
                     email_from: from_addr.clone(),
@@ -512,8 +598,8 @@ async fn extract_all_taxonomy_artifacts(
             }
         }
 
-        // 6. CALENDAR & MEETINGS (.ics)
-        if headers_raw_opt.as_deref().unwrap_or("").to_lowercase().contains("text/calendar") || full_text.contains("begin:vcalendar") || subj_lower.contains("invitation:") || subj_lower.contains("meeting request") {
+        // 5. CALENDAR & MEETINGS (.ics)
+        if headers_lower.contains("text/calendar") || full_text.to_lowercase().contains("begin:vcalendar") || subj_lower.contains("invitation:") || subj_lower.contains("meeting request") {
             artifacts.push(ForensicTaxonomyArtifact {
                 id: generate_id(),
                 domain_id: "calendar".to_string(),
@@ -524,6 +610,7 @@ async fn extract_all_taxonomy_artifacts(
                 details: "iCalendar / Outlook meeting request object".to_string(),
                 severity: "info".to_string(),
                 artifact_type: "native".to_string(),
+                confidence: Some("high".to_string()),
                 email_id: eid.clone(),
                 email_subject: subj_opt.clone(),
                 email_from: from_addr.clone(),
@@ -531,245 +618,389 @@ async fn extract_all_taxonomy_artifacts(
             });
         }
 
-        // 7. CREDENTIALS & SECRETS
+        // ─────────────────────────────────────────────────────────────────────────
+        // 1. CREDENTIALS & SECRETS
+        // ─────────────────────────────────────────────────────────────────────────
         if let Some(ref re) = re_cred_pair {
-            for cap in re.captures_iter(&body) {
+            for cap in re.captures_iter(&full_text) {
                 let user_val = cap[1].trim().to_string();
                 let pass_val = cap[2].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "credentials".to_string(),
-                    subcategory_id: "credentials_pair".to_string(),
-                    title: "Credential Pair (Username + Password)".to_string(),
-                    primary_value: format!("User: {} | Pass: {}", user_val, pass_val),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Extracted Account Login: User='{}', Pass='{}'", user_val, pass_val),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+                let key = format!("cred_pair:{}:{}", user_val, pass_val);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "credentials".to_string(),
+                        subcategory_id: "credentials_pair".to_string(),
+                        title: "Credential Pair (User + Pass)".to_string(),
+                        primary_value: format!("User: {} | Pass: {}", user_val, pass_val),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Extracted Account Login: User='{}', Pass='{}'", user_val, pass_val),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
         if let Some(ref re) = re_pass_standalone {
-            for cap in re.captures_iter(&body) {
+            for cap in re.captures_iter(&full_text) {
                 let pass_val = cap[1].trim().to_string();
                 if pass_val.len() >= 4 && !pass_val.contains(' ') {
-                    artifacts.push(ForensicTaxonomyArtifact {
-                        id: generate_id(),
-                        domain_id: "credentials".to_string(),
-                        subcategory_id: "passwords".to_string(),
-                        title: "Extracted Password / Secret".to_string(),
-                        primary_value: format!("Password: {}", pass_val),
-                        secondary_value: Some(from_addr.clone()),
-                        details: format!("Standalone password value: {}", pass_val),
-                        severity: "critical".to_string(),
-                        artifact_type: "native".to_string(),
-                        email_id: eid.clone(),
-                        email_subject: subj_opt.clone(),
-                        email_from: from_addr.clone(),
-                        date_sent_utc: date_opt.clone(),
-                    });
+                    let key = format!("pass:{}", pass_val);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "credentials".to_string(),
+                            subcategory_id: "passwords".to_string(),
+                            title: "Standalone Password".to_string(),
+                            primary_value: format!("Password: {}", pass_val),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Standalone password value: {}", pass_val),
+                            severity: "critical".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
                 }
-            }
-        }
-
-        if let Some(ref re) = re_auth_url {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "credentials".to_string(),
-                    subcategory_id: "auth_urls".to_string(),
-                    title: "URL with Embedded Credentials".to_string(),
-                    primary_value: format!("{}:{}@{}", &cap[1], &cap[2], &cap[3]),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Authenticated URI Target: host={}", &cap[3]),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
             }
         }
 
         if let Some(ref re) = re_api_keys {
-            for cap in re.captures_iter(&body) {
-                let token = cap[1].to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "credentials".to_string(),
-                    subcategory_id: "api_keys".to_string(),
-                    title: "API Key / JWT Bearer Secret".to_string(),
-                    primary_value: token.clone(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Secret token extracted from message payload: {}", &token[..token.len().min(30)]),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        // 8. 2FA & ACCOUNT RECOVERY
-        if full_text.contains("verification code") || full_text.contains("your otp is") || full_text.contains("security code is") || full_text.contains("one-time password") {
-            let mut extracted_token = "2FA / OTP Code".to_string();
-            for word in full_text.split_whitespace() {
-                let clean = word.trim_matches(|c: char| !c.is_numeric());
-                if (clean.len() == 6 || clean.len() == 4 || clean.len() == 8) && clean.chars().all(|c| c.is_numeric()) {
-                    extracted_token = format!("OTP: {}", clean);
-                    break;
-                }
-            }
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "security_otp".to_string(),
-                subcategory_id: "otp_codes".to_string(),
-                title: "Authentication Token / OTP Code".to_string(),
-                primary_value: extracted_token,
-                secondary_value: Some(from_addr.clone()),
-                details: body.chars().take(200).collect(),
-                severity: "high".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 9. FINANCIAL, BANKING & CREDIT CARDS
-        if let Some(ref re) = re_routing {
-            for cap in re.captures_iter(&body) {
-                let routing_no = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "financial".to_string(),
-                    subcategory_id: "routing_numbers".to_string(),
-                    title: "ABA Bank Routing Number".to_string(),
-                    primary_value: format!("Routing #: {}", routing_no),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("US 9-digit ABA Bank Routing Number: {}", routing_no),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        if let Some(ref re) = re_swift {
-            for cap in re.captures_iter(&body) {
-                let swift_code = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "financial".to_string(),
-                    subcategory_id: "swift_bic".to_string(),
-                    title: "SWIFT / BIC Bank Identifier".to_string(),
-                    primary_value: format!("SWIFT: {}", swift_code),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("International Bank SWIFT/BIC Code: {}", swift_code),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        if let Some(ref re) = re_iban {
-            for cap in re.captures_iter(&body) {
-                let iban = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "financial".to_string(),
-                    subcategory_id: "iban".to_string(),
-                    title: "IBAN International Account Number".to_string(),
-                    primary_value: format!("IBAN: {}", iban),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("International Bank Account Number (IBAN): {}", iban),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        if let Some(ref re) = re_account {
-            for cap in re.captures_iter(&body) {
-                let acc_no = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "financial".to_string(),
-                    subcategory_id: "account_numbers".to_string(),
-                    title: "Bank Account Number".to_string(),
-                    primary_value: format!("Account #: {}", acc_no),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Extracted Financial Account Number: {}", acc_no),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        // Credit Cards (Luhn validated)
-        if let Some(ref re) = re_cc_spaced {
-            for cap in re.captures_iter(&body) {
-                let cc_raw = cap[1].replace([' ', '-'], "");
-                if luhn_check(&cc_raw) {
-                    let card_type = if cc_raw.starts_with('4') { "Visa" } else if cc_raw.starts_with("34") || cc_raw.starts_with("37") { "Amex" } else if cc_raw.starts_with("6011") { "Discover" } else { "MasterCard" };
+            for cap in re.captures_iter(&full_text) {
+                let key_val = cap[1].to_string();
+                let key = format!("api:{}", key_val);
+                if seen.insert(key) {
+                    let provider = if key_val.starts_with("AKIA") { "AWS Access Key" } else if key_val.starts_with("sk_live_") { "Stripe Live Key" } else if key_val.starts_with("ghp_") { "GitHub Token" } else { "Google Cloud API Key" };
                     artifacts.push(ForensicTaxonomyArtifact {
                         id: generate_id(),
-                        domain_id: "financial".to_string(),
-                        subcategory_id: "credit_cards".to_string(),
-                        title: format!("Credit Card ({})", card_type),
-                        primary_value: cap[1].to_string(),
+                        domain_id: "credentials".to_string(),
+                        subcategory_id: "api_keys".to_string(),
+                        title: format!("API Key ({})", provider),
+                        primary_value: key_val.clone(),
                         secondary_value: Some(from_addr.clone()),
-                        details: format!("Luhn-Verified Credit Card Number ({})", card_type),
+                        details: format!("Extracted {} credential token", provider),
                         severity: "critical".to_string(),
                         artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
                         email_id: eid.clone(),
                         email_subject: subj_opt.clone(),
                         email_from: from_addr.clone(),
                         date_sent_utc: date_opt.clone(),
                     });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_bearer {
+            for cap in re.captures_iter(&full_text) {
+                let token = cap[1].to_string();
+                let key = format!("bearer:{}", token);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "credentials".to_string(),
+                        subcategory_id: "bearer_tokens".to_string(),
+                        title: "Bearer Authorization Token".to_string(),
+                        primary_value: format!("Bearer {}", &token[..token.len().min(40)]),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("OAuth/Bearer authorization token: {}", token),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_jwt {
+            for cap in re.captures_iter(&full_text) {
+                let jwt = cap[1].to_string();
+                let key = format!("jwt:{}", jwt);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "credentials".to_string(),
+                        subcategory_id: "jwt_tokens".to_string(),
+                        title: "JSON Web Token (JWT)".to_string(),
+                        primary_value: format!("JWT: {}", &jwt[..jwt.len().min(45)]),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("JSON Web Token (JWT) session credential: {}", jwt),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_ssh_key {
+            if re.is_match(&full_text) {
+                let key = "ssh_key_block".to_string();
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "credentials".to_string(),
+                        subcategory_id: "ssh_keys".to_string(),
+                        title: "SSH / OpenSSH Private Key Block".to_string(),
+                        primary_value: "-----BEGIN PRIVATE KEY-----".to_string(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: "Private cryptographic SSH key block exposed in message".to_string(),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_seed {
+            for cap in re.captures_iter(&full_text) {
+                let seed = cap[1].trim().to_string();
+                let key = format!("seed:{}", seed);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "seed_phrases".to_string(),
+                        title: "BIP-39 Mnemonic Seed Phrase".to_string(),
+                        primary_value: seed.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Cryptocurrency recovery seed phrase: {}", seed),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_privkey {
+            for cap in re.captures_iter(&full_text) {
+                let pkey = cap[1].trim().to_string();
+                let key = format!("privkey:{}", pkey);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "private_keys".to_string(),
+                        title: "Cryptocurrency Hex Private Key".to_string(),
+                        primary_value: pkey.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Raw hex private key: {}", pkey),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 2. FINANCIAL & BANKING (Luhn + ABA Routing Validated)
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_cc_spaced {
+            for cap in re.captures_iter(&full_text) {
+                let cc_raw = cap[1].replace([' ', '-'], "");
+                if luhn_check(&cc_raw) {
+                    let key = format!("cc:{}", cc_raw);
+                    if seen.insert(key) {
+                        let card_type = if cc_raw.starts_with('4') { "Visa" } else if cc_raw.starts_with("34") || cc_raw.starts_with("37") { "Amex" } else if cc_raw.starts_with("6011") { "Discover" } else { "MasterCard" };
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "financial".to_string(),
+                            subcategory_id: "credit_cards".to_string(),
+                            title: format!("Credit Card ({})", card_type),
+                            primary_value: cap[1].to_string(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Luhn-Verified Credit Card Number ({})", card_type),
+                            severity: "critical".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
                 }
             }
         }
 
         if let Some(ref re) = re_cc_raw {
-            for cap in re.captures_iter(&body) {
+            for cap in re.captures_iter(&full_text) {
                 let cc_raw = cap[1].to_string();
                 if luhn_check(&cc_raw) {
-                    let card_type = if cc_raw.starts_with('4') { "Visa" } else if cc_raw.starts_with("34") || cc_raw.starts_with("37") { "Amex" } else if cc_raw.starts_with("6011") { "Discover" } else { "MasterCard" };
+                    let key = format!("cc:{}", cc_raw);
+                    if seen.insert(key) {
+                        let card_type = if cc_raw.starts_with('4') { "Visa" } else if cc_raw.starts_with("34") || cc_raw.starts_with("37") { "Amex" } else if cc_raw.starts_with("6011") { "Discover" } else { "MasterCard" };
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "financial".to_string(),
+                            subcategory_id: "credit_cards".to_string(),
+                            title: format!("Credit Card ({})", card_type),
+                            primary_value: cc_raw.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Luhn-Verified Card Number: {}", cc_raw),
+                            severity: "critical".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_routing {
+            for cap in re.captures_iter(&full_text) {
+                let r_no = cap[1].trim().to_string();
+                if validate_routing_number(&r_no) {
+                    let key = format!("routing:{}", r_no);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "financial".to_string(),
+                            subcategory_id: "routing_numbers".to_string(),
+                            title: "US ABA Bank Routing Number".to_string(),
+                            primary_value: format!("Routing #: {}", r_no),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Verified US 9-digit ABA Bank Routing Number: {}", r_no),
+                            severity: "critical".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_iban {
+            for cap in re.captures_iter(&full_text) {
+                let iban = cap[1].trim().to_string();
+                let key = format!("iban:{}", iban);
+                if seen.insert(key) {
                     artifacts.push(ForensicTaxonomyArtifact {
                         id: generate_id(),
                         domain_id: "financial".to_string(),
-                        subcategory_id: "credit_cards".to_string(),
-                        title: format!("Credit Card ({})", card_type),
-                        primary_value: cc_raw.clone(),
+                        subcategory_id: "iban".to_string(),
+                        title: "IBAN Bank Account Number".to_string(),
+                        primary_value: format!("IBAN: {}", iban),
                         secondary_value: Some(from_addr.clone()),
-                        details: format!("Luhn-Verified Card Number: {}", cc_raw),
+                        details: format!("International Bank Account Number (IBAN): {}", iban),
                         severity: "critical".to_string(),
                         artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_swift {
+            for cap in re.captures_iter(&full_text) {
+                let swift = cap[1].trim().to_string();
+                let key = format!("swift:{}", swift);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "financial".to_string(),
+                        subcategory_id: "swift_bic".to_string(),
+                        title: "SWIFT / BIC Bank Code".to_string(),
+                        primary_value: format!("SWIFT: {}", swift),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("International Bank SWIFT/BIC Identifier: {}", swift),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_account {
+            for cap in re.captures_iter(&full_text) {
+                let acc = cap[1].trim().to_string();
+                let key = format!("acct:{}", acc);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "financial".to_string(),
+                        subcategory_id: "account_numbers".to_string(),
+                        title: "Bank Account Number".to_string(),
+                        primary_value: format!("Account #: {}", acc),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Extracted financial account number: {}", acc),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_sort_code {
+            for cap in re.captures_iter(&full_text) {
+                let sort = cap[1].trim().to_string();
+                let key = format!("sort:{}", sort);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "financial".to_string(),
+                        subcategory_id: "sort_code".to_string(),
+                        title: "UK / Ireland Bank Sort Code".to_string(),
+                        primary_value: format!("Sort Code: {}", sort),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Bank clearing sort code: {}", sort),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
                         email_id: eid.clone(),
                         email_subject: subj_opt.clone(),
                         email_from: from_addr.clone(),
@@ -780,482 +1011,752 @@ async fn extract_all_taxonomy_artifacts(
         }
 
         if let Some(ref re) = re_cashtag {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "financial".to_string(),
-                    subcategory_id: "neobanks".to_string(),
-                    title: "CashApp Cashtag Handle".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("CashApp Payment Tag: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let tag = cap[1].to_string();
+                let key = format!("cashtag:{}", tag);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "financial".to_string(),
+                        subcategory_id: "neobanks".to_string(),
+                        title: "CashApp Cashtag Handle".to_string(),
+                        primary_value: tag.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("CashApp Payment Cashtag: {}", tag),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
-        // 10. CRYPTO & SEED PHRASES
-        if let Some(ref re) = re_btc {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "crypto".to_string(),
-                    subcategory_id: "bitcoin".to_string(),
-                    title: "Bitcoin Wallet Address".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Bitcoin (BTC) Public Address: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+        // ─────────────────────────────────────────────────────────────────────────
+        // 3. CRYPTOCURRENCY (Validated Base58 / Bech32 / EVM)
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_btc_legacy {
+            for cap in re.captures_iter(&full_text) {
+                let btc = cap[1].to_string();
+                if validate_btc_base58(&btc) {
+                    let key = format!("btc:{}", btc);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "crypto".to_string(),
+                            subcategory_id: "bitcoin_p2pkh".to_string(),
+                            title: "Bitcoin Legacy (P2PKH) Address".to_string(),
+                            primary_value: btc.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Verified Bitcoin Base58 address: {}", btc),
+                            severity: "high".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_btc_bech32 {
+            for cap in re.captures_iter(&full_text) {
+                let btc = cap[1].to_string();
+                let key = format!("btc_bech:{}", btc);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "bitcoin_bech32".to_string(),
+                        title: "Bitcoin SegWit (Bech32) Address".to_string(),
+                        primary_value: btc.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Bitcoin SegWit Native Bech32 Address: {}", btc),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
         if let Some(ref re) = re_eth {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "crypto".to_string(),
-                    subcategory_id: "ethereum".to_string(),
-                    title: "Ethereum / ERC-20 Wallet Address".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Ethereum / EVM Address: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let eth = cap[1].to_string();
+                if eth != "0x0000000000000000000000000000000000000000" {
+                    let key = format!("eth:{}", eth);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "crypto".to_string(),
+                            subcategory_id: "ethereum".to_string(),
+                            title: "Ethereum / ERC-20 Wallet Address".to_string(),
+                            primary_value: eth.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Ethereum / EVM Address: {}", eth),
+                            severity: "high".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
             }
         }
 
         if let Some(ref re) = re_tron {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "crypto".to_string(),
-                    subcategory_id: "usdt_tron".to_string(),
-                    title: "TRON / USDT TRC-20 Wallet Address".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("TRON USDT TRC-20 Address: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let trx = cap[1].to_string();
+                let key = format!("trx:{}", trx);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "tron".to_string(),
+                        title: "TRON (TRX / USDT-TRC20) Address".to_string(),
+                        primary_value: trx.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("TRON Network Address: {}", trx),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
         if let Some(ref re) = re_sol {
-            for cap in re.captures_iter(&body) {
-                let sol_addr = cap[1].to_string();
-                if sol_addr.len() >= 32 && sol_addr.len() <= 44 && !sol_addr.contains('@') {
+            for cap in re.captures_iter(&full_text) {
+                let sol = cap[1].to_string();
+                if sol.len() >= 32 && sol.len() <= 44 && !sol.contains('@') {
+                    let key = format!("sol:{}", sol);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "crypto".to_string(),
+                            subcategory_id: "solana".to_string(),
+                            title: "Solana (SOL) Wallet Address".to_string(),
+                            primary_value: sol.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Solana Blockchain Public Address: {}", sol),
+                            severity: "high".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_ltc {
+            for cap in re.captures_iter(&full_text) {
+                let ltc = cap[1].to_string();
+                let key = format!("ltc:{}", ltc);
+                if seen.insert(key) {
                     artifacts.push(ForensicTaxonomyArtifact {
                         id: generate_id(),
                         domain_id: "crypto".to_string(),
-                        subcategory_id: "solana".to_string(),
-                        title: "Solana Wallet Address".to_string(),
-                        primary_value: sol_addr.clone(),
+                        subcategory_id: "litecoin".to_string(),
+                        title: "Litecoin (LTC) Address".to_string(),
+                        primary_value: ltc.clone(),
                         secondary_value: Some(from_addr.clone()),
-                        details: format!("Solana (SOL) Address: {}", sol_addr),
+                        details: format!("Litecoin Network Address: {}", ltc),
                         severity: "high".to_string(),
                         artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
                         email_id: eid.clone(),
                         email_subject: subj_opt.clone(),
                         email_from: from_addr.clone(),
                         date_sent_utc: date_opt.clone(),
                     });
-                    break;
                 }
             }
         }
 
-        if let Some(ref re) = re_seed {
-            for cap in re.captures_iter(&body) {
-                let seed_phrase = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "crypto".to_string(),
-                    subcategory_id: "seed_phrases".to_string(),
-                    title: "BIP-39 Crypto Seed Phrase / Recovery Mnemonic".to_string(),
-                    primary_value: seed_phrase.clone(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Extracted crypto wallet recovery phrase: {}", seed_phrase),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+        if let Some(ref re) = re_doge {
+            for cap in re.captures_iter(&full_text) {
+                let doge = cap[1].to_string();
+                let key = format!("doge:{}", doge);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "dogecoin".to_string(),
+                        title: "Dogecoin (DOGE) Address".to_string(),
+                        primary_value: doge.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Dogecoin Network Address: {}", doge),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
-        // 11. IDENTITY DOCUMENTS (SSN, Passport, Driver's License)
+        if let Some(ref re) = re_xmr {
+            for cap in re.captures_iter(&full_text) {
+                let xmr = cap[1].to_string();
+                let key = format!("xmr:{}", xmr);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "monero".to_string(),
+                        title: "Monero (XMR) Stealth Address".to_string(),
+                        primary_value: xmr.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Monero (XMR) Privacy Address: {}", xmr),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_crypto_uri {
+            for cap in re.captures_iter(&full_text) {
+                let uri = cap[1].to_string();
+                let key = format!("crypto_uri:{}", uri);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "qr_wallet_uris".to_string(),
+                        title: "Cryptocurrency Wallet URI".to_string(),
+                        primary_value: uri.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Payment URI schema: {}", uri),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 4. PERSONAL IDENTIFIABLE INFORMATION (PII) (Validated SSN / Passport / DL)
+        // ─────────────────────────────────────────────────────────────────────────
         if let Some(ref re) = re_ssn {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "identity_docs".to_string(),
-                    subcategory_id: "ssn".to_string(),
-                    title: "Social Security Number (SSN)".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Extracted US Social Security Number: {}", &cap[1]),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let ssn = cap[1].to_string();
+                if validate_ssn(&ssn) {
+                    let key = format!("ssn:{}", ssn);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "identity_docs".to_string(),
+                            subcategory_id: "ssn".to_string(),
+                            title: "US Social Security Number (SSN)".to_string(),
+                            primary_value: ssn.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Verified US Social Security Number: {}", ssn),
+                            severity: "critical".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
             }
         }
 
         if let Some(ref re) = re_passport {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "identity_docs".to_string(),
-                    subcategory_id: "passports".to_string(),
-                    title: "Passport Number Indicator".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Passport document identifier: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let pass = cap[1].to_string();
+                let key = format!("passport:{}", pass);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "identity_docs".to_string(),
+                        subcategory_id: "passport".to_string(),
+                        title: "International Passport Number".to_string(),
+                        primary_value: format!("Passport: {}", pass),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Passport document identifier: {}", pass),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
         if let Some(ref re) = re_driver_lic {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "identity_docs".to_string(),
-                    subcategory_id: "driver_license".to_string(),
-                    title: "Driver's License Identifier".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Driver's License number: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let dl = cap[1].to_string();
+                let key = format!("dl:{}", dl);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "identity_docs".to_string(),
+                        subcategory_id: "drivers_license".to_string(),
+                        title: "Driver's License (DLN)".to_string(),
+                        primary_value: format!("DL: {}", dl),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Driver's license identifier: {}", dl),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
-        // 12. CORPORATE INTELLIGENCE (EIN, Corporate Entities)
+        if let Some(ref re) = re_dob {
+            for cap in re.captures_iter(&full_text) {
+                let dob = cap[1].to_string();
+                let key = format!("dob:{}", dob);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "identity_docs".to_string(),
+                        subcategory_id: "date_of_birth".to_string(),
+                        title: "Date of Birth (DOB)".to_string(),
+                        primary_value: format!("DOB: {}", dob),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Date of Birth: {}", dob),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("medium".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
         if let Some(ref re) = re_ein {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "corporate_intel".to_string(),
-                    subcategory_id: "ein_tax_id".to_string(),
-                    title: "Federal Tax ID / EIN".to_string(),
-                    primary_value: format!("EIN: {}", &cap[1]),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Employer Identification Number (EIN): {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
+            for cap in re.captures_iter(&full_text) {
+                let ein = cap[1].to_string();
+                let key = format!("ein:{}", ein);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "identity_docs".to_string(),
+                        subcategory_id: "ein".to_string(),
+                        title: "Employer Identification Number (EIN)".to_string(),
+                        primary_value: format!("EIN: {}", ein),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("US Federal Employer Identification Number: {}", ein),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
-        if let Some(ref re) = re_corp_names {
-            for cap in re.captures_iter(&body) {
-                let corp_name = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "corporate_intel".to_string(),
-                    subcategory_id: "companies".to_string(),
-                    title: format!("Corporate Entity: {}", corp_name),
-                    primary_value: corp_name.clone(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Identified business corporation: {}", corp_name),
-                    severity: "info".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-                break;
+        if let Some(ref re) = re_tax_id {
+            for cap in re.captures_iter(&full_text) {
+                let tax = cap[1].to_string();
+                let key = format!("tax_id:{}", tax);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "identity_docs".to_string(),
+                        subcategory_id: "tax_id".to_string(),
+                        title: "Taxpayer Identification Number (TIN/ITIN)".to_string(),
+                        primary_value: format!("Tax ID: {}", tax),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Tax identification number: {}", tax),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
             }
         }
 
-        // 13. LOCATIONS, TRAVEL & ADDRESSES
-        if let Some(ref re) = re_street_addr {
-            for cap in re.captures_iter(&body) {
-                let addr = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "locations".to_string(),
-                    subcategory_id: "physical_addresses".to_string(),
-                    title: "Physical Street Address".to_string(),
-                    primary_value: addr.clone(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Street address identified in message: {}", addr),
-                    severity: "medium".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-                break;
-            }
-        }
-
-        if let Some(ref re) = re_travel {
-            for cap in re.captures_iter(&body) {
-                let pnr = cap[1].trim().to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "locations".to_string(),
-                    subcategory_id: "travel_bookings".to_string(),
-                    title: "Flight / Travel Booking PNR".to_string(),
-                    primary_value: format!("PNR: {}", pnr),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Travel airline reservation or booking code: {}", pnr),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        if let Some(ref re) = re_gps {
-            for cap in re.captures_iter(&body) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "locations".to_string(),
-                    subcategory_id: "gps_coordinates".to_string(),
-                    title: "GPS Geographic Coordinates".to_string(),
-                    primary_value: cap[1].to_string(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Latitude / Longitude coordinates: {}", &cap[1]),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        // 14. FRAUD & BEC WIRE DEMANDS
-        if full_text.contains("wire transfer immediately") || full_text.contains("urgent payment") || full_text.contains("send gift card") || full_text.contains("compromised account") || full_text.contains("direct deposit form") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "fraud_bec".to_string(),
-                subcategory_id: "wire_fraud".to_string(),
-                title: "BEC Wire Fraud / Urgent Extortion".to_string(),
-                primary_value: "Urgent Wire Payment Demand".to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: body.chars().take(240).collect(),
-                severity: "critical".to_string(),
-                artifact_type: "derived".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 15. SPOOFING & IMPERSONATION
-        if let Some(ref disp) = from_disp {
-            if (disp.to_lowercase().contains("ceo") || disp.to_lowercase().contains("director") || disp.to_lowercase().contains("executive") || disp.to_lowercase().contains("president")) && (from_lower.contains("gmail.com") || from_lower.contains("yahoo.com") || from_lower.contains("hotmail.com")) {
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "spoofing".to_string(),
-                    subcategory_id: "display_name_spoof".to_string(),
-                    title: "Executive Display Name Impersonation".to_string(),
-                    primary_value: format!("{} <{}>", disp, from_addr),
-                    secondary_value: Some(from_addr.clone()),
-                    details: "VIP Executive display name paired with freemail address (Classic BEC tactic)".to_string(),
-                    severity: "critical".to_string(),
-                    artifact_type: "derived".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-            }
-        }
-
-        // 16. PHISHING & SOCIAL ENGINEERING
-        if full_text.contains("verify your account") || full_text.contains("password expires") || full_text.contains("suspended account") || full_text.contains("click here to unlock") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "phishing".to_string(),
-                subcategory_id: "credential_harvesting".to_string(),
-                title: "Phishing Social Engineering Lure".to_string(),
-                primary_value: "Urgent Account Verification Hook".to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: body.chars().take(200).collect(),
-                severity: "critical".to_string(),
-                artifact_type: "derived".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 17. MALWARE & THREATS (Office Macros / Dangerous Scripts)
-        if full_text.contains(".docm") || full_text.contains(".xlsm") || full_text.contains("enable macro") || full_text.contains("powershell -enc") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "malware_threats".to_string(),
-                subcategory_id: "macro_payloads".to_string(),
-                title: "VBA Macro Payload / PowerShell Threat".to_string(),
-                primary_value: "VBA Macro Execution Indicator".to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: "Email references macro-enabled document or encoded PowerShell payload".to_string(),
-                severity: "critical".to_string(),
-                artifact_type: "derived".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 18. CONTRABAND: WEAPONS, NARCOTICS & THREATS
-        if let Some(ref re) = re_weapons {
-            for cap in re.captures_iter(&body) {
-                let weapon = cap[1].to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "contraband".to_string(),
-                    subcategory_id: "weapons_firearms".to_string(),
-                    title: format!("Firearms / Weapons Indicator: {}", weapon),
-                    primary_value: weapon.to_uppercase(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Firearm or weapon keyword matched in context: {}", body.chars().take(160).collect::<String>()),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-                break;
-            }
-        }
-
-        if let Some(ref re) = re_narcotics {
-            for cap in re.captures_iter(&body) {
-                let drug = cap[1].to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "contraband".to_string(),
-                    subcategory_id: "narcotics_drugs".to_string(),
-                    title: format!("Narcotics / Controlled Substance: {}", drug),
-                    primary_value: drug.to_uppercase(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Illicit drug or controlled pharmaceutical mention: {}", drug),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-                break;
-            }
-        }
-
-        if let Some(ref re) = re_threats_terror {
-            for cap in re.captures_iter(&body) {
-                let threat = cap[1].to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "contraband".to_string(),
-                    subcategory_id: "terrorism_threats".to_string(),
-                    title: format!("Violent Crime / Explosives Threat: {}", threat),
-                    primary_value: threat.to_uppercase(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Violent extremism or explosives keyword: {}", threat),
-                    severity: "critical".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-                break;
-            }
-        }
-
-        // 19. CLASSIFIED, NDA & CORPORATE SECRETS
-        if let Some(ref re) = re_secrets {
-            for cap in re.captures_iter(&body) {
-                let secret_tag = cap[1].to_string();
-                artifacts.push(ForensicTaxonomyArtifact {
-                    id: generate_id(),
-                    domain_id: "secrets".to_string(),
-                    subcategory_id: "classified_leaks".to_string(),
-                    title: format!("Confidential / Secret Indicator: {}", secret_tag),
-                    primary_value: secret_tag.to_uppercase(),
-                    secondary_value: Some(from_addr.clone()),
-                    details: format!("Sensitive disclosure header or confidentiality marking: {}", secret_tag),
-                    severity: "high".to_string(),
-                    artifact_type: "native".to_string(),
-                    email_id: eid.clone(),
-                    email_subject: subj_opt.clone(),
-                    email_from: from_addr.clone(),
-                    date_sent_utc: date_opt.clone(),
-                });
-                break;
-            }
-        }
-
-        // 20. NETWORK & INFRASTRUCTURE
-        if let Some(ref re) = re_ip {
-            for cap in re.captures_iter(headers_raw) {
+        // ─────────────────────────────────────────────────────────────────────────
+        // 5. NETWORK & INFRASTRUCTURE
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_ipv4 {
+            for cap in re.captures_iter(&format!("{} {}", headers_raw, body)) {
                 let ip = cap[1].to_string();
                 if !ip.starts_with("127.") && !ip.starts_with("0.") && !ip.starts_with("255.") && !ip.starts_with("10.") && !ip.starts_with("192.168.") {
+                    let key = format!("ip:{}", ip);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "network".to_string(),
+                            subcategory_id: "ipv4".to_string(),
+                            title: "Relay / Originating IPv4 Address".to_string(),
+                            primary_value: ip.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("Public IPv4 Address: {}", ip),
+                            severity: "medium".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_ipv6 {
+            for cap in re.captures_iter(&format!("{} {}", headers_raw, body)) {
+                let ip6 = cap[1].to_string();
+                let key = format!("ipv6:{}", ip6);
+                if seen.insert(key) {
                     artifacts.push(ForensicTaxonomyArtifact {
                         id: generate_id(),
                         domain_id: "network".to_string(),
-                        subcategory_id: "ip_addresses".to_string(),
-                        title: "Relay / Originating IP Address".to_string(),
-                        primary_value: ip.clone(),
+                        subcategory_id: "ipv6".to_string(),
+                        title: "IPv6 Network Address".to_string(),
+                        primary_value: ip6.clone(),
                         secondary_value: Some(from_addr.clone()),
-                        details: format!("Extracted from headers of email '{}'", subj),
+                        details: format!("IPv6 Address: {}", ip6),
                         severity: "medium".to_string(),
                         artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_mac {
+            for cap in re.captures_iter(&full_text) {
+                let mac = cap[1].to_string();
+                let key = format!("mac:{}", mac);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "network".to_string(),
+                        subcategory_id: "mac_address".to_string(),
+                        title: "Hardware MAC Address".to_string(),
+                        primary_value: mac.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Physical Ethernet / Wi-Fi MAC: {}", mac),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_auth_url {
+            for cap in re.captures_iter(&full_text) {
+                let key = format!("auth_url:{}:{}@{}", &cap[1], &cap[2], &cap[3]);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "network".to_string(),
+                        subcategory_id: "auth_in_url".to_string(),
+                        title: "URL with Embedded Credentials".to_string(),
+                        primary_value: format!("{}:{}@{}", &cap[1], &cap[2], &cap[3]),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Embedded authentication host: {}", &cap[3]),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_url {
+            let mut url_count = 0;
+            for cap in re.captures_iter(&body) {
+                let u = cap[1].to_string();
+                let key = format!("url:{}", u);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "network".to_string(),
+                        subcategory_id: "urls".to_string(),
+                        title: "Web Link / Hyperlink".to_string(),
+                        primary_value: u.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Target URL: {}", u),
+                        severity: if u.contains("login") || u.contains("verify") || u.contains("secure") { "high".to_string() } else { "info".to_string() },
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    url_count += 1;
+                    if url_count >= 5 { break; }
+                }
+            }
+        }
+
+        // Tracking Pixels
+        if html.contains("width=\"1\" height=\"1\"") || html.contains("width='1' height='1'") || html.contains("display:none") {
+            let key = "tracking_pixel".to_string();
+            if seen.insert(key) {
+                artifacts.push(ForensicTaxonomyArtifact {
+                    id: generate_id(),
+                    domain_id: "network".to_string(),
+                    subcategory_id: "tracking_pixels".to_string(),
+                    title: "Tracking Pixel / Hidden Web Beacon".to_string(),
+                    primary_value: "1x1 Web Beacon".to_string(),
+                    secondary_value: Some(from_addr.clone()),
+                    details: "Hidden 1x1 tracking beacon embedded in HTML".to_string(),
+                    severity: "medium".to_string(),
+                    artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
+                    email_id: eid.clone(),
+                    email_subject: subj_opt.clone(),
+                    email_from: from_addr.clone(),
+                    date_sent_utc: date_opt.clone(),
+                });
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 6. COMMUNICATION & MESSENGERS (Validated Phone)
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_phone_intl {
+            for cap in re.captures_iter(&full_text) {
+                let p = cap[1].trim().to_string();
+                if validate_phone(&p) {
+                    let key = format!("phone:{}", p);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "messaging_apps".to_string(),
+                            subcategory_id: "phone_numbers".to_string(),
+                            title: "International Phone Number".to_string(),
+                            primary_value: p.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("International telephone number: {}", p),
+                            severity: "medium".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_phone_us {
+            for cap in re.captures_iter(&full_text) {
+                let p = cap[1].trim().to_string();
+                if validate_phone(&p) {
+                    let key = format!("us_phone:{}", p);
+                    if seen.insert(key) {
+                        artifacts.push(ForensicTaxonomyArtifact {
+                            id: generate_id(),
+                            domain_id: "messaging_apps".to_string(),
+                            subcategory_id: "us_phone".to_string(),
+                            title: "US Domestic Phone Number".to_string(),
+                            primary_value: p.clone(),
+                            secondary_value: Some(from_addr.clone()),
+                            details: format!("US phone number: {}", p),
+                            severity: "medium".to_string(),
+                            artifact_type: "native".to_string(),
+                            confidence: Some("high".to_string()),
+                            email_id: eid.clone(),
+                            email_subject: subj_opt.clone(),
+                            email_from: from_addr.clone(),
+                            date_sent_utc: date_opt.clone(),
+                        });
+                        break;
+                    }
+                }
+            }
+        }
+
+        if let Some(ref re) = re_whatsapp {
+            for cap in re.captures_iter(&full_text) {
+                let wa = cap[1].to_string();
+                let key = format!("whatsapp:{}", wa);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "messaging_apps".to_string(),
+                        subcategory_id: "whatsapp".to_string(),
+                        title: "WhatsApp Direct Link / Hook".to_string(),
+                        primary_value: wa.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("WhatsApp messaging link: {}", wa),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_telegram {
+            for cap in re.captures_iter(&full_text) {
+                let tg = cap[1].to_string();
+                let key = format!("telegram:{}", tg);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "messaging_apps".to_string(),
+                        subcategory_id: "telegram".to_string(),
+                        title: "Telegram Channel / User Link".to_string(),
+                        primary_value: tg.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Telegram messaging link: {}", tg),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_signal {
+            for cap in re.captures_iter(&full_text) {
+                let sig = cap[1].to_string();
+                let key = format!("signal:{}", sig);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "messaging_apps".to_string(),
+                        subcategory_id: "signal".to_string(),
+                        title: "Signal Messenger Link".to_string(),
+                        primary_value: sig.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Signal profile link: {}", sig),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 7. LOCATIONS & TRAVEL
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_gps {
+            for cap in re.captures_iter(&full_text) {
+                let gps = cap[1].to_string();
+                let key = format!("gps:{}", gps);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "locations".to_string(),
+                        subcategory_id: "gps_coordinates".to_string(),
+                        title: "GPS Geographic Coordinates".to_string(),
+                        primary_value: gps.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Latitude / Longitude coordinates: {}", gps),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_zip {
+            for cap in re.captures_iter(&body) {
+                let zip = cap[1].to_string();
+                let key = format!("zip:{}", zip);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "locations".to_string(),
+                        subcategory_id: "us_zip".to_string(),
+                        title: "US Postal ZIP Code".to_string(),
+                        primary_value: format!("ZIP: {}", zip),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("US postal ZIP code: {}", zip),
+                        severity: "info".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("medium".to_string()),
                         email_id: eid.clone(),
                         email_subject: subj_opt.clone(),
                         email_from: from_addr.clone(),
@@ -1266,91 +1767,728 @@ async fn extract_all_taxonomy_artifacts(
             }
         }
 
-        // 21. AUTHENTICATION PROOFS
-        let headers_lower = headers_raw.to_lowercase();
+        if let Some(ref re) = re_uk_postcode {
+            for cap in re.captures_iter(&body) {
+                let post = cap[1].to_string();
+                let key = format!("uk_post:{}", post);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "locations".to_string(),
+                        subcategory_id: "uk_postcode".to_string(),
+                        title: "UK Postal Code".to_string(),
+                        primary_value: format!("Postcode: {}", post),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("UK postal code: {}", post),
+                        severity: "info".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_flight {
+            for cap in re.captures_iter(&full_text) {
+                let flight = cap[1].to_string();
+                let key = format!("flight:{}", flight);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "locations".to_string(),
+                        subcategory_id: "flight_number".to_string(),
+                        title: "Airline Flight Number".to_string(),
+                        primary_value: format!("Flight: {}", flight),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Airline flight indicator: {}", flight),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("medium".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_hotel_conf {
+            for cap in re.captures_iter(&full_text) {
+                let conf = cap[1].to_string();
+                let key = format!("hotel_conf:{}", conf);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "locations".to_string(),
+                        subcategory_id: "hotel_booking".to_string(),
+                        title: "Travel Booking Confirmation".to_string(),
+                        primary_value: format!("Booking #: {}", conf),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Travel lodging confirmation code: {}", conf),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_street_addr {
+            for cap in re.captures_iter(&body) {
+                let addr = cap[1].trim().to_string();
+                let key = format!("addr:{}", addr);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "locations".to_string(),
+                        subcategory_id: "street_address".to_string(),
+                        title: "Physical Street Address".to_string(),
+                        primary_value: addr.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Street address: {}", addr),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 8. THREATS & CONTRABAND
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_weapons {
+            for cap in re.captures_iter(&full_text) {
+                let wpn = cap[1].to_string();
+                let key = format!("wpn:{}", wpn.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "contraband".to_string(),
+                        subcategory_id: "weapons".to_string(),
+                        title: format!("Firearms & Weapons ({})", wpn.to_uppercase()),
+                        primary_value: wpn.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Firearm or weapons keyword: {}", wpn),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_narcotics {
+            for cap in re.captures_iter(&full_text) {
+                let drug = cap[1].to_string();
+                let key = format!("drug:{}", drug.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "contraband".to_string(),
+                        subcategory_id: "narcotics".to_string(),
+                        title: format!("Controlled Substances ({})", drug.to_uppercase()),
+                        primary_value: drug.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Illicit drug or controlled pharmaceutical mention: {}", drug),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_explosives {
+            for cap in re.captures_iter(&full_text) {
+                let exp = cap[1].to_string();
+                let key = format!("exp:{}", exp.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "contraband".to_string(),
+                        subcategory_id: "explosives".to_string(),
+                        title: format!("Explosives & IED Threat ({})", exp.to_uppercase()),
+                        primary_value: exp.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Explosive material or detonator indicator: {}", exp),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_terrorism {
+            for cap in re.captures_iter(&full_text) {
+                let trr = cap[1].to_string();
+                let key = format!("trr:{}", trr.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "contraband".to_string(),
+                        subcategory_id: "terrorism".to_string(),
+                        title: format!("Violent Extremism ({})", trr.to_uppercase()),
+                        primary_value: trr.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Violent extremism or terrorist organization keyword: {}", trr),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_trafficking {
+            for cap in re.captures_iter(&full_text) {
+                let trf = cap[1].to_string();
+                let key = format!("trf:{}", trf.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "contraband".to_string(),
+                        subcategory_id: "human_trafficking".to_string(),
+                        title: format!("Human Trafficking ({})", trf.to_uppercase()),
+                        primary_value: trf.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Human trafficking or forced exploitation keyword: {}", trf),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 9. MALWARE & CYBER THREATS
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_md5 {
+            for cap in re.captures_iter(&full_text) {
+                let md5 = cap[1].to_string();
+                let key = format!("md5:{}", md5);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "malware_threats".to_string(),
+                        subcategory_id: "md5_hash".to_string(),
+                        title: "Extracted MD5 File Hash".to_string(),
+                        primary_value: md5.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("MD5 32-character hexadecimal IOC hash: {}", md5),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_sha1 {
+            for cap in re.captures_iter(&full_text) {
+                let sha1 = cap[1].to_string();
+                let key = format!("sha1:{}", sha1);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "malware_threats".to_string(),
+                        subcategory_id: "sha1_hash".to_string(),
+                        title: "Extracted SHA-1 File Hash".to_string(),
+                        primary_value: sha1.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("SHA-1 40-character hexadecimal IOC hash: {}", sha1),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_sha256 {
+            for cap in re.captures_iter(&full_text) {
+                let sha256_val = cap[1].to_string();
+                let key = format!("sha256:{}", sha256_val);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "malware_threats".to_string(),
+                        subcategory_id: "sha256_hash".to_string(),
+                        title: "Extracted SHA-256 File Hash".to_string(),
+                        primary_value: sha256_val.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("SHA-256 64-character hexadecimal IOC hash: {}", sha256_val),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_cve {
+            for cap in re.captures_iter(&full_text) {
+                let cve = cap[1].to_string();
+                let key = format!("cve:{}", cve);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "malware_threats".to_string(),
+                        subcategory_id: "cve_vulnerability".to_string(),
+                        title: format!("Common Vulnerability ({})", cve),
+                        primary_value: cve.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Vulnerability identifier: {}", cve),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_malware_sig {
+            for cap in re.captures_iter(&full_text) {
+                let sig = cap[1].to_string();
+                let key = format!("malsig:{}", sig.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "malware_threats".to_string(),
+                        subcategory_id: "malware_signatures".to_string(),
+                        title: format!("Malware Category ({})", sig.to_uppercase()),
+                        primary_value: sig.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Malware classification trigger: {}", sig),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_c2 {
+            for cap in re.captures_iter(&full_text) {
+                let c2 = cap[1].to_string();
+                let key = format!("c2:{}", c2.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "malware_threats".to_string(),
+                        subcategory_id: "c2_indicators".to_string(),
+                        title: "Command & Control (C2) Indicator".to_string(),
+                        primary_value: c2.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Command & Control callback terminology: {}", c2),
+                        severity: "critical".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 10. CORPORATE & LEGAL
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_confidential {
+            for cap in re.captures_iter(&full_text) {
+                let conf = cap[1].to_string();
+                let key = format!("confidential:{}", conf.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "secrets".to_string(),
+                        subcategory_id: "privileged_confidential".to_string(),
+                        title: format!("Legal Privilege / Confidential ({})", conf.to_uppercase()),
+                        primary_value: conf.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Confidentiality or legal privilege notice: {}", conf),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_nda {
+            for cap in re.captures_iter(&full_text) {
+                let nda_val = cap[1].to_string();
+                let key = format!("nda:{}", nda_val.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "secrets".to_string(),
+                        subcategory_id: "nda_agreements".to_string(),
+                        title: "Non-Disclosure Agreement (NDA)".to_string(),
+                        primary_value: nda_val.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("NDA or distribution restriction clause: {}", nda_val),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_contracts {
+            for cap in re.captures_iter(&full_text) {
+                let contract = cap[1].to_string();
+                let key = format!("contract:{}", contract.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "secrets".to_string(),
+                        subcategory_id: "contracts_sla".to_string(),
+                        title: format!("Legal Contract / Terms ({})", contract.to_uppercase()),
+                        primary_value: contract.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Legal contract or SLA agreement reference: {}", contract),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_invoice {
+            for cap in re.captures_iter(&full_text) {
+                let inv = cap[1].to_string();
+                let key = format!("invoice:{}", inv);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "secrets".to_string(),
+                        subcategory_id: "invoices".to_string(),
+                        title: "Commercial Invoice Number".to_string(),
+                        primary_value: format!("Invoice #: {}", inv),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Commercial invoice identifier: {}", inv),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_po {
+            for cap in re.captures_iter(&full_text) {
+                let po_val = cap[1].to_string();
+                let key = format!("po:{}", po_val);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "secrets".to_string(),
+                        subcategory_id: "purchase_orders".to_string(),
+                        title: "Purchase Order (PO)".to_string(),
+                        primary_value: format!("PO #: {}", po_val),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Corporate purchase order number: {}", po_val),
+                        severity: "medium".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 11. PHISHING & SOCIAL ENGINEERING
+        // ─────────────────────────────────────────────────────────────────────────
+        if let Some(ref re) = re_phish_urgency {
+            for cap in re.captures_iter(&full_text) {
+                let urg = cap[1].to_string();
+                let key = format!("phish_urg:{}", urg.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "phishing".to_string(),
+                        subcategory_id: "urgency_pressure".to_string(),
+                        title: format!("Urgency Pressure Tactic ({})", urg.to_uppercase()),
+                        primary_value: urg.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Psychological pressure keyword: {}", urg),
+                        severity: "high".to_string(),
+                        artifact_type: "derived".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_phish_cred {
+            for cap in re.captures_iter(&full_text) {
+                let cr = cap[1].to_string();
+                let key = format!("phish_cred:{}", cr.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "phishing".to_string(),
+                        subcategory_id: "credential_requests".to_string(),
+                        title: "Credential Harvesting Lure".to_string(),
+                        primary_value: cr.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Request for login credentials / password update: {}", cr),
+                        severity: "critical".to_string(),
+                        artifact_type: "derived".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        if let Some(ref re) = re_phish_finance {
+            for cap in re.captures_iter(&full_text) {
+                let fin = cap[1].to_string();
+                let key = format!("phish_fin:{}", fin.to_lowercase());
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "phishing".to_string(),
+                        subcategory_id: "financial_demands".to_string(),
+                        title: "BEC / Financial Payment Demand".to_string(),
+                        primary_value: fin.to_uppercase(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Fraudulent wire transfer or gift card demand: {}", fin),
+                        severity: "critical".to_string(),
+                        artifact_type: "derived".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                    break;
+                }
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 12. AUTHENTICATION & HEADERS
+        // ─────────────────────────────────────────────────────────────────────────
         if headers_lower.contains("spf=pass") || headers_lower.contains("spf=fail") || headers_lower.contains("received-spf") {
             let res = if headers_lower.contains("spf=pass") { "PASS" } else if headers_lower.contains("spf=fail") { "FAIL" } else { "NEUTRAL" };
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "authentication".to_string(),
-                subcategory_id: "spf".to_string(),
-                title: format!("SPF Authentication Result: {}", res),
-                primary_value: format!("SPF: {}", res),
-                secondary_value: Some(from_addr.clone()),
-                details: format!("Sender Domain: {}", from_lower.split('@').nth(1).unwrap_or("")),
-                severity: if res == "FAIL" { "critical".to_string() } else { "info".to_string() },
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        if headers_lower.contains("dkim=pass") || headers_lower.contains("dkim=fail") || headers_lower.contains("dkim-signature") {
-            let res = if headers_lower.contains("dkim=pass") { "PASS" } else if headers_lower.contains("dkim=fail") { "FAIL" } else { "PRESENT" };
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "authentication".to_string(),
-                subcategory_id: "dkim".to_string(),
-                title: format!("DKIM Signature Verification: {}", res),
-                primary_value: format!("DKIM: {}", res),
-                secondary_value: Some(from_addr.clone()),
-                details: "Cryptographic signature header".to_string(),
-                severity: if res == "FAIL" { "critical".to_string() } else { "info".to_string() },
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 22. WEB & HYPERLINKS
-        if let Some(ref re) = re_url {
-            let mut url_count = 0;
-            for cap in re.captures_iter(&body) {
-                let u = cap[1].to_string();
+            let key = format!("spf:{}", res);
+            if seen.insert(key) {
                 artifacts.push(ForensicTaxonomyArtifact {
                     id: generate_id(),
-                    domain_id: "web".to_string(),
-                    subcategory_id: "urls".to_string(),
-                    title: "Hyperlink / URL Indicator".to_string(),
-                    primary_value: u.clone(),
+                    domain_id: "authentication".to_string(),
+                    subcategory_id: "spf".to_string(),
+                    title: format!("SPF Authentication: {}", res),
+                    primary_value: format!("SPF: {}", res),
                     secondary_value: Some(from_addr.clone()),
-                    details: format!("Target URL extracted from message body: {}", u),
-                    severity: if u.contains("login") || u.contains("verify") || u.contains("secure") { "high".to_string() } else { "info".to_string() },
+                    details: format!("Sender Domain: {}", from_lower.split('@').nth(1).unwrap_or("")),
+                    severity: if res == "FAIL" { "critical".to_string() } else { "info".to_string() },
                     artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
                     email_id: eid.clone(),
                     email_subject: subj_opt.clone(),
                     email_from: from_addr.clone(),
                     date_sent_utc: date_opt.clone(),
                 });
-                url_count += 1;
-                if url_count >= 5 { break; }
             }
         }
 
-        // Tracking Pixels (1x1 images)
-        if html.contains("width=\"1\" height=\"1\"") || html.contains("width='1' height='1'") || html.contains("display:none") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "web".to_string(),
-                subcategory_id: "tracking_pixels".to_string(),
-                title: "Tracking Pixel / Hidden Web Beacon".to_string(),
-                primary_value: "1x1 Tracking Pixel / Beacon".to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: "Email contains hidden tracking image to log recipient open event & IP address".to_string(),
-                severity: "medium".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
+        if headers_lower.contains("dkim=pass") || headers_lower.contains("dkim=fail") || headers_lower.contains("dkim-signature") {
+            let res = if headers_lower.contains("dkim=pass") { "PASS" } else if headers_lower.contains("dkim=fail") { "FAIL" } else { "PRESENT" };
+            let key = format!("dkim:{}", res);
+            if seen.insert(key) {
+                artifacts.push(ForensicTaxonomyArtifact {
+                    id: generate_id(),
+                    domain_id: "authentication".to_string(),
+                    subcategory_id: "dkim".to_string(),
+                    title: format!("DKIM Cryptographic Signature: {}", res),
+                    primary_value: format!("DKIM: {}", res),
+                    secondary_value: Some(from_addr.clone()),
+                    details: "Cryptographic signature header validation".to_string(),
+                    severity: if res == "FAIL" { "critical".to_string() } else { "info".to_string() },
+                    artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
+                    email_id: eid.clone(),
+                    email_subject: subj_opt.clone(),
+                    email_from: from_addr.clone(),
+                    date_sent_utc: date_opt.clone(),
+                });
+            }
         }
 
-        // 23. CLIENT & MAILER SOFTWARE
+        if headers_lower.contains("dmarc=pass") || headers_lower.contains("dmarc=fail") {
+            let res = if headers_lower.contains("dmarc=pass") { "PASS" } else { "FAIL" };
+            let key = format!("dmarc:{}", res);
+            if seen.insert(key) {
+                artifacts.push(ForensicTaxonomyArtifact {
+                    id: generate_id(),
+                    domain_id: "authentication".to_string(),
+                    subcategory_id: "dmarc".to_string(),
+                    title: format!("DMARC Alignment Policy: {}", res),
+                    primary_value: format!("DMARC: {}", res),
+                    secondary_value: Some(from_addr.clone()),
+                    details: format!("DMARC policy alignment result: {}", res),
+                    severity: if res == "FAIL" { "critical".to_string() } else { "info".to_string() },
+                    artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
+                    email_id: eid.clone(),
+                    email_subject: subj_opt.clone(),
+                    email_from: from_addr.clone(),
+                    date_sent_utc: date_opt.clone(),
+                });
+            }
+        }
+
+        if headers_lower.contains("arc-seal") {
+            let key = "arc_seal".to_string();
+            if seen.insert(key) {
+                artifacts.push(ForensicTaxonomyArtifact {
+                    id: generate_id(),
+                    domain_id: "authentication".to_string(),
+                    subcategory_id: "arc_seal".to_string(),
+                    title: "Authenticated Received Chain (ARC) Seal".to_string(),
+                    primary_value: "ARC-Seal Validated".to_string(),
+                    secondary_value: Some(from_addr.clone()),
+                    details: "Authenticated Received Chain (ARC) forwarding authentication seal".to_string(),
+                    severity: "info".to_string(),
+                    artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
+                    email_id: eid.clone(),
+                    email_subject: subj_opt.clone(),
+                    email_from: from_addr.clone(),
+                    date_sent_utc: date_opt.clone(),
+                });
+            }
+        }
+
+        if let Some(ref mid) = msg_id_opt {
+            let key = format!("msgid:{}", mid);
+            if seen.insert(key) {
+                artifacts.push(ForensicTaxonomyArtifact {
+                    id: generate_id(),
+                    domain_id: "authentication".to_string(),
+                    subcategory_id: "message_id".to_string(),
+                    title: "RFC 5322 Message-ID".to_string(),
+                    primary_value: mid.clone(),
+                    secondary_value: Some(from_addr.clone()),
+                    details: format!("Unique message transport identifier: {}", mid),
+                    severity: "info".to_string(),
+                    artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
+                    email_id: eid.clone(),
+                    email_subject: subj_opt.clone(),
+                    email_from: from_addr.clone(),
+                    date_sent_utc: date_opt.clone(),
+                });
+            }
+        }
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 13. CLIENT & DEVICE FINGERPRINTS
+        // ─────────────────────────────────────────────────────────────────────────
         let mut client_found: Option<&str> = None;
         if headers_lower.contains("microsoft outlook") || headers_lower.contains("x-mailer: microsoft") {
             client_found = Some("Microsoft Outlook");
@@ -1369,200 +2507,86 @@ async fn extract_all_taxonomy_artifacts(
         }
 
         if let Some(client_name) = client_found {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "client".to_string(),
-                subcategory_id: "clients".to_string(),
-                title: format!("Email Client / Mailer: {}", client_name),
-                primary_value: client_name.to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: format!("Identified from X-Mailer / User-Agent headers on email '{}'", subj),
-                severity: "info".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 24. MESSAGING APPS
-        if from_lower.contains("voice.google.com") || from_lower.contains("voice-noreply@google.com") || full_text.contains("google voice") {
-            let mut phone = "Google Voice Relay".to_string();
-            if let Some(idx) = subj.find("from (") {
-                phone = subj[idx + 5..].trim().to_string();
-            }
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "messaging_apps".to_string(),
-                subcategory_id: "google_voice".to_string(),
-                title: "Google Voice SMS / Call Transcript".to_string(),
-                primary_value: phone,
-                secondary_value: Some(from_addr.clone()),
-                details: body.chars().take(200).collect(),
-                severity: "high".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        if from_lower.contains("textnow") || full_text.contains("textnow") || from_lower.contains("pinger") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "messaging_apps".to_string(),
-                subcategory_id: "burner_voip".to_string(),
-                title: "TextNow / Burner Virtual SMS Activity".to_string(),
-                primary_value: "Burner VoIP SMS".to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: body.chars().take(200).collect(),
-                severity: "high".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        if from_lower.contains("whatsapp") || full_text.contains("whatsapp web") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "messaging_apps".to_string(),
-                subcategory_id: "whatsapp".to_string(),
-                title: "WhatsApp Messenger Notification / Web Session".to_string(),
-                primary_value: "WhatsApp Notification".to_string(),
-                secondary_value: Some(from_addr.clone()),
-                details: body.chars().take(200).collect(),
-                severity: "medium".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 25. REMOTE ACCESS TOOLS
-        let rat_tools = [("anydesk", "AnyDesk"), ("teamviewer", "TeamViewer"), ("rustdesk", "RustDesk")];
-        for (rkey, rlabel) in &rat_tools {
-            if from_lower.contains(rkey) || full_text.contains(rkey) {
+            let key = format!("client:{}", client_name);
+            if seen.insert(key) {
                 artifacts.push(ForensicTaxonomyArtifact {
                     id: generate_id(),
-                    domain_id: "remote_access".to_string(),
-                    subcategory_id: "remote_sessions".to_string(),
-                    title: format!("Remote Access Session ({})", rlabel),
-                    primary_value: rlabel.to_string(),
+                    domain_id: "client".to_string(),
+                    subcategory_id: "clients".to_string(),
+                    title: format!("Email Client / Mailer: {}", client_name),
+                    primary_value: client_name.to_string(),
                     secondary_value: Some(from_addr.clone()),
-                    details: body.chars().take(200).collect(),
-                    severity: "critical".to_string(),
+                    details: format!("Identified from X-Mailer / User-Agent headers on email '{}'", subj),
+                    severity: "info".to_string(),
                     artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
                     email_id: eid.clone(),
                     email_subject: subj_opt.clone(),
                     email_from: from_addr.clone(),
                     date_sent_utc: date_opt.clone(),
                 });
-                break;
             }
         }
 
-        // 26. DATING & ROMANCE
-        let dating_apps = ["tinder", "match.com", "bumble", "zoosk", "pof.com", "christianmingle", "okcupid"];
-        for d in &dating_apps {
-            if from_lower.contains(d) || full_text.contains(d) {
+        // ─────────────────────────────────────────────────────────────────────────
+        // 14. BEHAVIORAL & CONTENT / ANOMALIES
+        // ─────────────────────────────────────────────────────────────────────────
+        if headers_lower.contains("disposition-notification-to") {
+            let key = "read_receipt".to_string();
+            if seen.insert(key) {
                 artifacts.push(ForensicTaxonomyArtifact {
                     id: generate_id(),
-                    domain_id: "dating_romance".to_string(),
-                    subcategory_id: "dating_profiles".to_string(),
-                    title: format!("Dating Profile Activity ({})", d),
-                    primary_value: format!("Dating App: {}", d),
+                    domain_id: "anomalies".to_string(),
+                    subcategory_id: "read_receipts".to_string(),
+                    title: "Read Receipt / Disposition Notification Request".to_string(),
+                    primary_value: "Disposition-Notification-To".to_string(),
                     secondary_value: Some(from_addr.clone()),
-                    details: body.chars().take(200).collect(),
-                    severity: "high".to_string(),
+                    details: "Sender explicitly requested read receipt tracking notification".to_string(),
+                    severity: "medium".to_string(),
                     artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
                     email_id: eid.clone(),
                     email_subject: subj_opt.clone(),
                     email_from: from_addr.clone(),
                     date_sent_utc: date_opt.clone(),
                 });
-                break;
             }
         }
 
-        // 27. GIFT CARDS
-        let gift_cards = ["apple gift card", "itunes gift card", "steam card", "amazon gift card", "google play card", "razer gold"];
-        for gc in &gift_cards {
-            if full_text.contains(gc) {
+        if headers_lower.contains("x-priority: 1") || headers_lower.contains("importance: high") {
+            let key = "high_priority".to_string();
+            if seen.insert(key) {
                 artifacts.push(ForensicTaxonomyArtifact {
                     id: generate_id(),
-                    domain_id: "gift_cards".to_string(),
-                    subcategory_id: "gift_card_codes".to_string(),
-                    title: format!("Gift Card / Voucher Code ({})", gc),
-                    primary_value: format!("Gift Card: {}", gc),
+                    domain_id: "anomalies".to_string(),
+                    subcategory_id: "high_priority".to_string(),
+                    title: "High Priority / Urgency Flag".to_string(),
+                    primary_value: "Importance: High (Priority 1)".to_string(),
                     secondary_value: Some(from_addr.clone()),
-                    details: body.chars().take(200).collect(),
-                    severity: "critical".to_string(),
+                    details: "Message flagged with urgent delivery / priority 1 header".to_string(),
+                    severity: "medium".to_string(),
                     artifact_type: "native".to_string(),
+                    confidence: Some("high".to_string()),
                     email_id: eid.clone(),
                     email_subject: subj_opt.clone(),
                     email_from: from_addr.clone(),
                     date_sent_utc: date_opt.clone(),
                 });
-                break;
             }
         }
 
-        // 28. HEADERS & METADATA
-        if headers_lower.contains("x-originating-ip") || headers_lower.contains("x-mailer") {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "headers_meta".to_string(),
-                subcategory_id: "x_headers".to_string(),
-                title: "Forensic Transport X-Header".to_string(),
-                primary_value: format!("Email: {}", if subj.is_empty() { "(No Subject)" } else { subj }),
-                secondary_value: Some(from_addr.clone()),
-                details: headers_raw.lines().filter(|l| l.to_lowercase().starts_with("x-")).take(5).collect::<Vec<_>>().join("\n"),
-                severity: "info".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 29. TIMELINE EVENTS
-        if let Some(ref d) = date_opt {
-            artifacts.push(ForensicTaxonomyArtifact {
-                id: generate_id(),
-                domain_id: "timeline_events".to_string(),
-                subcategory_id: "message_timestamp".to_string(),
-                title: "Email Dispatch / Receipt Timestamp".to_string(),
-                primary_value: d.clone(),
-                secondary_value: Some(from_addr.clone()),
-                details: format!("Message event logged at UTC timestamp: {}", d),
-                severity: "info".to_string(),
-                artifact_type: "native".to_string(),
-                email_id: eid.clone(),
-                email_subject: subj_opt.clone(),
-                email_from: from_addr.clone(),
-                date_sent_utc: date_opt.clone(),
-            });
-        }
-
-        // 30. COMMUNICATION GRAPH
+        // 15. COMMUNICATION GRAPH
         artifacts.push(ForensicTaxonomyArtifact {
             id: generate_id(),
             domain_id: "graph_network".to_string(),
             subcategory_id: "counterparty_edge".to_string(),
-            title: format!("Communication Edge: {} ➔ {}", from_addr, to_addrs),
+            title: format!("Communication Path: {} ➔ {}", from_addr, to_addrs),
             primary_value: format!("{} ➔ {}", from_addr, to_addrs),
             secondary_value: Some(from_addr.clone()),
-            details: format!("Direct communication path between {} and recipients: {}", from_addr, to_addrs),
+            details: format!("Communication transmission between {} and {}", from_addr, to_addrs),
             severity: "info".to_string(),
             artifact_type: "derived".to_string(),
+            confidence: Some("high".to_string()),
             email_id: eid.clone(),
             email_subject: subj_opt.clone(),
             email_from: from_addr.clone(),
