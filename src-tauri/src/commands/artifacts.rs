@@ -119,6 +119,116 @@ pub fn validate_phone(p: &str) -> bool {
     true
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// APPS, SERVICES, SOCIAL MEDIA & CRYPTO PLATFORMS KNOWLEDGE BASE
+// ─────────────────────────────────────────────────────────────────────────────
+struct AppSignature {
+    name: &'static str,
+    subcategory: &'static str,
+    keywords: &'static [&'static str],
+    category_title: &'static str,
+}
+
+static APP_SIGNATURES: &[AppSignature] = &[
+    // 🪙 Crypto Exchanges & Wallets
+    AppSignature { name: "Binance", subcategory: "crypto_exchanges", keywords: &["binance.com", "binance exchange", "binance verification"], category_title: "Crypto Exchange (Binance)" },
+    AppSignature { name: "Coinbase", subcategory: "crypto_exchanges", keywords: &["coinbase.com", "coinbase pro", "coinbase commerce"], category_title: "Crypto Platform (Coinbase)" },
+    AppSignature { name: "Kraken", subcategory: "crypto_exchanges", keywords: &["kraken.com", "kraken exchange"], category_title: "Crypto Exchange (Kraken)" },
+    AppSignature { name: "KuCoin", subcategory: "crypto_exchanges", keywords: &["kucoin.com", "kucoin exchange"], category_title: "Crypto Exchange (KuCoin)" },
+    AppSignature { name: "MetaMask", subcategory: "crypto_exchanges", keywords: &["metamask.io", "metamask wallet", "metamask extension"], category_title: "Crypto Wallet (MetaMask)" },
+    AppSignature { name: "Trust Wallet", subcategory: "crypto_exchanges", keywords: &["trustwallet.com", "trust wallet"], category_title: "Crypto Wallet (Trust Wallet)" },
+    AppSignature { name: "Ledger", subcategory: "crypto_exchanges", keywords: &["ledger.com", "ledger live", "ledger hardware"], category_title: "Hardware Wallet (Ledger)" },
+    AppSignature { name: "Trezor", subcategory: "crypto_exchanges", keywords: &["trezor.io", "trezor wallet", "trezor suite"], category_title: "Hardware Wallet (Trezor)" },
+    AppSignature { name: "Bybit", subcategory: "crypto_exchanges", keywords: &["bybit.com", "bybit exchange"], category_title: "Crypto Exchange (Bybit)" },
+    AppSignature { name: "OKX", subcategory: "crypto_exchanges", keywords: &["okx.com", "okex.com"], category_title: "Crypto Exchange (OKX)" },
+    AppSignature { name: "Bitfinex", subcategory: "crypto_exchanges", keywords: &["bitfinex.com"], category_title: "Crypto Exchange (Bitfinex)" },
+    AppSignature { name: "Uniswap", subcategory: "crypto_exchanges", keywords: &["uniswap.org", "uniswap protocol"], category_title: "DeFi DEX (Uniswap)" },
+    AppSignature { name: "Phantom", subcategory: "crypto_exchanges", keywords: &["phantom.app", "phantom wallet"], category_title: "Solana Wallet (Phantom)" },
+    AppSignature { name: "Exodus", subcategory: "crypto_exchanges", keywords: &["exodus.com", "exodus wallet"], category_title: "Crypto Wallet (Exodus)" },
+    AppSignature { name: "Paxful", subcategory: "crypto_exchanges", keywords: &["paxful.com", "paxful p2p"], category_title: "P2P Crypto (Paxful)" },
+    AppSignature { name: "Gemini", subcategory: "crypto_exchanges", keywords: &["gemini.com", "gemini exchange"], category_title: "Crypto Exchange (Gemini)" },
+
+    // 💬 Encrypted & Anonymous Messengers
+    AppSignature { name: "Telegram", subcategory: "encrypted_chat", keywords: &["telegram.org", "t.me", "telegram messenger"], category_title: "Encrypted Messenger (Telegram)" },
+    AppSignature { name: "Signal", subcategory: "encrypted_chat", keywords: &["signal.org", "signal.me", "signal messenger"], category_title: "Private Messenger (Signal)" },
+    AppSignature { name: "WhatsApp", subcategory: "encrypted_chat", keywords: &["whatsapp.com", "wa.me", "whatsapp business"], category_title: "Messaging App (WhatsApp)" },
+    AppSignature { name: "Discord", subcategory: "encrypted_chat", keywords: &["discord.com", "discord.gg", "discordapp.com"], category_title: "Chat Platform (Discord)" },
+    AppSignature { name: "Session", subcategory: "encrypted_chat", keywords: &["getsession.org", "session messenger", "session app"], category_title: "Anonymous Chat (Session)" },
+    AppSignature { name: "Threema", subcategory: "encrypted_chat", keywords: &["threema.ch", "threema id"], category_title: "Secure Messenger (Threema)" },
+    AppSignature { name: "Wickr", subcategory: "encrypted_chat", keywords: &["wickr.com", "wickr me", "wickr pro"], category_title: "Ephemeral Chat (Wickr)" },
+    AppSignature { name: "Element/Matrix", subcategory: "encrypted_chat", keywords: &["element.io", "matrix.org"], category_title: "Matrix Protocol (Element)" },
+    AppSignature { name: "Viber", subcategory: "encrypted_chat", keywords: &["viber.com"], category_title: "Messaging App (Viber)" },
+    AppSignature { name: "WeChat", subcategory: "encrypted_chat", keywords: &["wechat.com", "weixin.qq.com"], category_title: "Messaging App (WeChat)" },
+
+    // 🌐 Social Media & Community
+    AppSignature { name: "Twitter/X", subcategory: "social_media", keywords: &["twitter.com", "x.com", "api.twitter.com"], category_title: "Social Network (Twitter/X)" },
+    AppSignature { name: "Instagram", subcategory: "social_media", keywords: &["instagram.com", "instagr.am"], category_title: "Social Network (Instagram)" },
+    AppSignature { name: "Facebook", subcategory: "social_media", keywords: &["facebook.com", "fb.com", "facebookmail.com"], category_title: "Social Network (Facebook)" },
+    AppSignature { name: "TikTok", subcategory: "social_media", keywords: &["tiktok.com", "byteoversea.com"], category_title: "Video Social (TikTok)" },
+    AppSignature { name: "LinkedIn", subcategory: "social_media", keywords: &["linkedin.com"], category_title: "Professional Network (LinkedIn)" },
+    AppSignature { name: "Reddit", subcategory: "social_media", keywords: &["reddit.com", "redditmail.com"], category_title: "Community Platform (Reddit)" },
+    AppSignature { name: "Snapchat", subcategory: "social_media", keywords: &["snapchat.com", "sc-corp.com"], category_title: "Social App (Snapchat)" },
+    AppSignature { name: "Pinterest", subcategory: "social_media", keywords: &["pinterest.com"], category_title: "Social Platform (Pinterest)" },
+    AppSignature { name: "YouTube", subcategory: "social_media", keywords: &["youtube.com", "youtu.be"], category_title: "Video Platform (YouTube)" },
+    AppSignature { name: "Twitch", subcategory: "social_media", keywords: &["twitch.tv"], category_title: "Streaming Platform (Twitch)" },
+
+    // ❤️ Dating & Romance Apps
+    AppSignature { name: "Tinder", subcategory: "dating_apps", keywords: &["gotinder.com", "tinder.com"], category_title: "Dating App (Tinder)" },
+    AppSignature { name: "Bumble", subcategory: "dating_apps", keywords: &["bumble.com"], category_title: "Dating App (Bumble)" },
+    AppSignature { name: "Hinge", subcategory: "dating_apps", keywords: &["hinge.co"], category_title: "Dating App (Hinge)" },
+    AppSignature { name: "Badoo", subcategory: "dating_apps", keywords: &["badoo.com"], category_title: "Dating App (Badoo)" },
+    AppSignature { name: "Grindr", subcategory: "dating_apps", keywords: &["grindr.com"], category_title: "Dating App (Grindr)" },
+    AppSignature { name: "Ashley Madison", subcategory: "dating_apps", keywords: &["ashleymadison.com"], category_title: "Discreet Dating (Ashley Madison)" },
+    AppSignature { name: "OnlyFans", subcategory: "dating_apps", keywords: &["onlyfans.com"], category_title: "Subscription Platform (OnlyFans)" },
+    AppSignature { name: "Fansly", subcategory: "dating_apps", keywords: &["fansly.com"], category_title: "Subscription Platform (Fansly)" },
+
+    // 🏦 Fintech, Neobanks & Payment Apps
+    AppSignature { name: "PayPal", subcategory: "fintech_neobanks", keywords: &["paypal.com", "paypal-service", "service@paypal"], category_title: "Payment Service (PayPal)" },
+    AppSignature { name: "Stripe", subcategory: "fintech_neobanks", keywords: &["stripe.com"], category_title: "Payment Gateway (Stripe)" },
+    AppSignature { name: "Venmo", subcategory: "fintech_neobanks", keywords: &["venmo.com"], category_title: "P2P Payments (Venmo)" },
+    AppSignature { name: "Cash App", subcategory: "fintech_neobanks", keywords: &["cash.app", "square.com"], category_title: "P2P Payments (Cash App)" },
+    AppSignature { name: "Revolut", subcategory: "fintech_neobanks", keywords: &["revolut.com"], category_title: "Digital Bank (Revolut)" },
+    AppSignature { name: "Wise", subcategory: "fintech_neobanks", keywords: &["wise.com", "transferwise.com"], category_title: "Cross-Border Payments (Wise)" },
+    AppSignature { name: "Payoneer", subcategory: "fintech_neobanks", keywords: &["payoneer.com"], category_title: "Payment Platform (Payoneer)" },
+    AppSignature { name: "Zelle", subcategory: "fintech_neobanks", keywords: &["zellepay.com", "zelle payment"], category_title: "Bank Network (Zelle)" },
+    AppSignature { name: "Robinhood", subcategory: "fintech_neobanks", keywords: &["robinhood.com"], category_title: "Trading App (Robinhood)" },
+    AppSignature { name: "eToro", subcategory: "fintech_neobanks", keywords: &["etoro.com"], category_title: "Trading Platform (eToro)" },
+    AppSignature { name: "Webull", subcategory: "fintech_neobanks", keywords: &["webull.com"], category_title: "Trading App (Webull)" },
+
+    // 🛡️ Privacy, VPNs & Anonymity Tools
+    AppSignature { name: "ProtonMail", subcategory: "vpns_anonymity", keywords: &["proton.me", "protonmail.com", "protonvpn"], category_title: "Encrypted Mail (Proton)" },
+    AppSignature { name: "Tutanota / Tuta", subcategory: "vpns_anonymity", keywords: &["tuta.com", "tutanota.com"], category_title: "Encrypted Mail (Tuta)" },
+    AppSignature { name: "SimpleLogin", subcategory: "vpns_anonymity", keywords: &["simplelogin.io", "simplelogin.co"], category_title: "Email Alias (SimpleLogin)" },
+    AppSignature { name: "DuckDuckGo", subcategory: "vpns_anonymity", keywords: &["duck.com", "duckduckgo.com"], category_title: "Private Relay (DuckDuckGo)" },
+    AppSignature { name: "NordVPN", subcategory: "vpns_anonymity", keywords: &["nordvpn.com", "nordaccount.com"], category_title: "VPN Service (NordVPN)" },
+    AppSignature { name: "ExpressVPN", subcategory: "vpns_anonymity", keywords: &["expressvpn.com"], category_title: "VPN Service (ExpressVPN)" },
+    AppSignature { name: "Mullvad", subcategory: "vpns_anonymity", keywords: &["mullvad.net"], category_title: "Anonymous VPN (Mullvad)" },
+    AppSignature { name: "Surfshark", subcategory: "vpns_anonymity", keywords: &["surfshark.com"], category_title: "VPN Service (Surfshark)" },
+
+    // 🖥️ Remote Access & Control
+    AppSignature { name: "AnyDesk", subcategory: "remote_access", keywords: &["anydesk.com", "anydesk-id"], category_title: "Remote Desktop (AnyDesk)" },
+    AppSignature { name: "TeamViewer", subcategory: "remote_access", keywords: &["teamviewer.com", "teamviewer session"], category_title: "Remote Desktop (TeamViewer)" },
+    AppSignature { name: "RustDesk", subcategory: "remote_access", keywords: &["rustdesk.com"], category_title: "Remote Desktop (RustDesk)" },
+    AppSignature { name: "Splashtop", subcategory: "remote_access", keywords: &["splashtop.com"], category_title: "Remote Desktop (Splashtop)" },
+    AppSignature { name: "LogMeIn", subcategory: "remote_access", keywords: &["logmein.com", "gotomypc.com"], category_title: "Remote Desktop (LogMeIn)" },
+
+    // ☁️ Cloud Storage & Collaboration
+    AppSignature { name: "Google Drive", subcategory: "cloud_storage", keywords: &["drive.google.com", "docs.google.com"], category_title: "Cloud Storage (Google Drive)" },
+    AppSignature { name: "Dropbox", subcategory: "cloud_storage", keywords: &["dropbox.com", "dropboxmail.com"], category_title: "Cloud Storage (Dropbox)" },
+    AppSignature { name: "iCloud", subcategory: "cloud_storage", keywords: &["icloud.com", "apple.com/icloud"], category_title: "Cloud Storage (Apple iCloud)" },
+    AppSignature { name: "OneDrive", subcategory: "cloud_storage", keywords: &["onedrive.live.com", "sharepoint.com"], category_title: "Cloud Storage (OneDrive)" },
+    AppSignature { name: "Mega.nz", subcategory: "cloud_storage", keywords: &["mega.nz", "mega.io", "mega.co.nz"], category_title: "Encrypted Cloud (Mega)" },
+    AppSignature { name: "Slack", subcategory: "cloud_storage", keywords: &["slack.com", "slackmail.com"], category_title: "Workspace (Slack)" },
+    AppSignature { name: "Notion", subcategory: "cloud_storage", keywords: &["notion.so", "mail.notion.so"], category_title: "Workspace (Notion)" },
+    AppSignature { name: "Zoom", subcategory: "cloud_storage", keywords: &["zoom.us", "zoom meeting"], category_title: "Video Meetings (Zoom)" },
+    AppSignature { name: "GitHub", subcategory: "cloud_storage", keywords: &["github.com", "notifications@github.com"], category_title: "Code Repository (GitHub)" },
+
+    // 🛒 E-Commerce & Marketplaces
+    AppSignature { name: "Amazon", subcategory: "ecommerce_marketplaces", keywords: &["amazon.com", "auto-confirm@amazon.com", "shipment-tracking@amazon"], category_title: "Marketplace (Amazon)" },
+    AppSignature { name: "eBay", subcategory: "ecommerce_marketplaces", keywords: &["ebay.com", "ebay@ebay.com"], category_title: "Marketplace (eBay)" },
+    AppSignature { name: "AliExpress", subcategory: "ecommerce_marketplaces", keywords: &["aliexpress.com", "alibaba.com"], category_title: "Marketplace (AliExpress)" },
+];
+
 /// Case Artifacts Summary by Taxonomy Domains (Hides 0-count domains by default)
 #[tauri::command]
 pub async fn case_artifacts_summary(
@@ -136,16 +246,16 @@ pub async fn case_artifacts_summary(
 
     let domain_defs = [
         ("credentials", "Credentials & Secrets", "🔑"),
-        ("financial", "Financial & Banking", "🏦"),
         ("crypto", "Cryptocurrency & Seeds", "🪙"),
+        ("app_services", "Apps, Web Services & Social", "📱"),
+        ("financial", "Financial & Banking", "🏦"),
         ("identity_docs", "PII & Identity Documents", "🪪"),
         ("locations", "Locations, Travel & Addresses", "📍"),
         ("contraband", "Threats & Contraband", "🛑"),
-        ("malware_threats", "Malware & Cyber Threats", "🦠"),
+        ("malware_threats", "Malware & Cyber IOCs", "🦠"),
         ("secrets", "Corporate & Legal Privileged", "📄"),
         ("phishing", "Phishing & Social Engineering", "🎣"),
         ("network", "Suspicious Network & URL Hooks", "🌐"),
-        ("messaging_apps", "Messaging App Relays", "💬"),
         ("attachments", "Carved & Suspicious Files", "📎"),
         ("deleted_recovered", "Deleted & Carved Messages", "🗑️"),
         ("authentication", "Failed Authentication & Spoofing", "🔐"),
@@ -391,12 +501,14 @@ async fn extract_all_taxonomy_artifacts(
     let re_eth = regex::Regex::new(r"\b(0x[a-fA-F0-9]{40})\b").ok();
     let re_tron = regex::Regex::new(r"\b(T[A-Za-z1-9]{33})\b").ok();
     let re_sol = regex::Regex::new(r"\b([1-9A-HJ-NP-Za-km-z]{32,44})\b").ok();
+    let re_ltc = regex::Regex::new(r"\b([LM3][a-km-zA-HJ-NP-Z1-9]{25,34})\b").ok();
+    let re_doge = regex::Regex::new(r"\b(D[A-Za-z1-9]{33})\b").ok();
+    let re_xmr = regex::Regex::new(r"\b(4[0-9AB][1-9A-HJ-NP-Za-km-z]{93})\b").ok();
     let re_crypto_uri = regex::Regex::new(r"(?i)\b((?:bitcoin|ethereum|litecoin|doge|solana|monero):[a-zA-Z0-9?=_&%-]+)\b").ok();
 
     // 4. PII & Identity (Strict Context)
     let re_ssn = regex::Regex::new(r"\b(\d{3}-\d{2}-\d{4})\b").ok();
     let re_passport = regex::Regex::new(r"(?i)(?:passport(?:\s*#|\s*no|\s*number)?)\s*[:#=]?\s*([A-PR-WYa-pr-wy][0-9]{7,8})\b").ok();
-    // Driver's license: MUST be preceded by "driver license" and contain numbers (prevent DL = distribution list)
     let re_driver_lic = regex::Regex::new(r"(?i)(?:driver'?s?\s*license|driving\s*licence)\s*(?:#|no|number)?[:=\s]*([A-Z0-9]{6,14})\b").ok();
     let re_ein = regex::Regex::new(r"(?i)(?:ein|federal\s*tax\s*id)\s*[:#=]?\s*(\d{2}-\d{7})\b").ok();
 
@@ -430,7 +542,6 @@ async fn extract_all_taxonomy_artifacts(
         let ent_val = entropy.unwrap_or(0.0);
         let is_high_entropy = ent_val > 7.5;
 
-        // Only include dangerous, high entropy, or suspicious files in Artifacts
         if is_dangerous || is_high_entropy || cat == "archives" {
             artifacts.push(ForensicTaxonomyArtifact {
                 id: format!("att-{}", att_id),
@@ -451,7 +562,8 @@ async fn extract_all_taxonomy_artifacts(
         }
     }
 
-    for (eid, from_addr, _from_disp, _to_addrs, _cc_addrs, _reply_to, subj_opt, body_opt, html_opt, headers_raw_opt, date_opt, _risk, is_del, is_soft_del, folder_opt, msg_id_opt, _in_reply_to_opt, _ref_opt) in emails {
+    for (eid, from_addr, _from_disp, to_addrs, _cc_addrs, _reply_to, subj_opt, body_opt, html_opt, headers_raw_opt, date_opt, _risk, is_del, is_soft_del, folder_opt, msg_id_opt, _in_reply_to_opt, _ref_opt) in emails {
+        let from_lower = from_addr.to_lowercase();
         let subj = subj_opt.as_deref().unwrap_or("");
         let subj_lower = subj.to_lowercase();
         let body = body_opt.as_deref().unwrap_or("");
@@ -460,8 +572,43 @@ async fn extract_all_taxonomy_artifacts(
         let headers_lower = headers_raw.to_lowercase();
         let folder = folder_opt.as_deref().unwrap_or("inbox");
         let full_text = format!("{} {}", subj, body);
+        let full_text_lower = full_text.to_lowercase();
 
         let mut seen: HashSet<String> = HashSet::new();
+
+        // ─────────────────────────────────────────────────────────────────────────
+        // 0. APPS, WEB SERVICES, SOCIAL MEDIA & CRYPTO PLATFORMS DETECTION
+        // ─────────────────────────────────────────────────────────────────────────
+        for sig in APP_SIGNATURES {
+            let matched = sig.keywords.iter().any(|&kw| {
+                from_lower.contains(kw) 
+                || headers_lower.contains(kw) 
+                || subj_lower.contains(kw)
+                || full_text_lower.contains(kw)
+            });
+
+            if matched {
+                let key = format!("app:{}", sig.name);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "app_services".to_string(),
+                        subcategory_id: sig.subcategory.to_string(),
+                        title: sig.category_title.to_string(),
+                        primary_value: sig.name.to_string(),
+                        secondary_value: Some(format!("User/Recipient: {}", to_addrs)),
+                        details: format!("Detected active service usage or notifications from '{}'. Subject: '{}'", sig.name, subj),
+                        severity: "medium".to_string(),
+                        artifact_type: "derived".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
 
         // 1. DELETED & CARVED MESSAGES (Only if actually deleted/recovered)
         let is_deleted = is_del || is_soft_del || folder == "trash" || folder == "deleted items" || folder == "soft_deleted";
@@ -485,7 +632,7 @@ async fn extract_all_taxonomy_artifacts(
         }
 
         // 2. CALENDAR & MEETINGS (.ics)
-        if headers_lower.contains("text/calendar") || full_text.to_lowercase().contains("begin:vcalendar") || subj_lower.contains("invitation:") {
+        if headers_lower.contains("text/calendar") || full_text_lower.contains("begin:vcalendar") || subj_lower.contains("invitation:") {
             artifacts.push(ForensicTaxonomyArtifact {
                 id: generate_id(),
                 domain_id: "calendar".to_string(),
@@ -901,7 +1048,7 @@ async fn extract_all_taxonomy_artifacts(
         }
 
         // ─────────────────────────────────────────────────────────────────────────
-        // 3. CRYPTOCURRENCY (Validated Base58 / Bech32 / EVM)
+        // 3. CRYPTOCURRENCY (Validated Base58 / Bech32 / EVM / SOL / LTC / DOGE / XMR)
         // ─────────────────────────────────────────────────────────────────────────
         if let Some(ref re) = re_btc_legacy {
             for cap in re.captures_iter(&full_text) {
@@ -1034,6 +1181,81 @@ async fn extract_all_taxonomy_artifacts(
             }
         }
 
+        if let Some(ref re) = re_ltc {
+            for cap in re.captures_iter(&full_text) {
+                let ltc = cap[1].to_string();
+                let key = format!("ltc:{}", ltc);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "litecoin".to_string(),
+                        title: "Litecoin (LTC) Address".to_string(),
+                        primary_value: ltc.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Litecoin Network Address: {}", ltc),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_doge {
+            for cap in re.captures_iter(&full_text) {
+                let doge = cap[1].to_string();
+                let key = format!("doge:{}", doge);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "dogecoin".to_string(),
+                        title: "Dogecoin (DOGE) Address".to_string(),
+                        primary_value: doge.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Dogecoin Network Address: {}", doge),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
+        if let Some(ref re) = re_xmr {
+            for cap in re.captures_iter(&full_text) {
+                let xmr = cap[1].to_string();
+                let key = format!("xmr:{}", xmr);
+                if seen.insert(key) {
+                    artifacts.push(ForensicTaxonomyArtifact {
+                        id: generate_id(),
+                        domain_id: "crypto".to_string(),
+                        subcategory_id: "monero".to_string(),
+                        title: "Monero (XMR) Privacy Address".to_string(),
+                        primary_value: xmr.clone(),
+                        secondary_value: Some(from_addr.clone()),
+                        details: format!("Monero (XMR) Stealth Address: {}", xmr),
+                        severity: "high".to_string(),
+                        artifact_type: "native".to_string(),
+                        confidence: Some("high".to_string()),
+                        email_id: eid.clone(),
+                        email_subject: subj_opt.clone(),
+                        email_from: from_addr.clone(),
+                        date_sent_utc: date_opt.clone(),
+                    });
+                }
+            }
+        }
+
         if let Some(ref re) = re_crypto_uri {
             for cap in re.captures_iter(&full_text) {
                 let uri = cap[1].to_string();
@@ -1043,7 +1265,7 @@ async fn extract_all_taxonomy_artifacts(
                         id: generate_id(),
                         domain_id: "crypto".to_string(),
                         subcategory_id: "qr_wallet_uris".to_string(),
-                        title: "Cryptocurrency Wallet URI".to_string(),
+                        title: "Cryptocurrency Wallet Payment URI".to_string(),
                         primary_value: uri.clone(),
                         secondary_value: Some(from_addr.clone()),
                         details: format!("Payment URI schema: {}", uri),
@@ -1117,7 +1339,6 @@ async fn extract_all_taxonomy_artifacts(
         if let Some(ref re) = re_driver_lic {
             for cap in re.captures_iter(&full_text) {
                 let dl = cap[1].trim().to_string();
-                // Must contain digits to avoid corporate words like ACTIVE, kinning, etc.
                 if dl.chars().any(|c| c.is_ascii_digit()) && dl.len() >= 6 {
                     let key = format!("dl:{}", dl);
                     if seen.insert(key) {
