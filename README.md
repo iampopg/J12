@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="logo.png" alt="J12 Email Forensic Suite" width="380" />
+<img src="https://raw.githubusercontent.com/iampopg/J12/main/j12-logo-v3.png" alt="J12 Forensic Suite Logo" width="380" />
 
 # <span style="color:#22c55e;">J</span><span style="color:#ffffff;">1</span><span style="color:#22c55e;">2</span> Email Forensic Suite
 ### **Advanced Desktop Email Investigation, Artifact Carving & eDiscovery Intelligence Platform**
