@@ -92,6 +92,7 @@ export function EntityDiveView({ caseId }: Props) {
   const [emailsLoading, setEmailsLoading] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState<EntityEmail | null>(null);
   const [settingTarget, setSettingTarget] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
     loadEntities();
@@ -102,13 +103,10 @@ export function EntityDiveView({ caseId }: Props) {
     try {
       let data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
       if (data.length === 0) {
-        await invoke<number>("extract_entities", { caseId });
+        await invoke<number>("extract_entities", { input: { case_id: caseId } });
         data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
       }
       setEntities(data);
-      if (data.length > 0) {
-        loadEntityDive(data[0].email_address);
-      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -209,9 +207,10 @@ export function EntityDiveView({ caseId }: Props) {
           target_name: selectedEntity.display_name,
         },
       });
-      alert(`🎯 ${selectedEntity.display_name || selectedEntity.email} has been set as the primary target for this case!`);
+      setNotification(`🎯 ${selectedEntity.display_name || selectedEntity.email} set as primary target!`);
+      setTimeout(() => setNotification(null), 3500);
     } catch (e: any) {
-      alert(`Failed to set target: ${e}`);
+      console.error("Failed to set target:", e);
     } finally {
       setSettingTarget(false);
     }
@@ -220,7 +219,7 @@ export function EntityDiveView({ caseId }: Props) {
   const handleReExtract = async () => {
     setLoading(true);
     try {
-      await invoke<number>("extract_entities", { caseId });
+      await invoke<number>("extract_entities", { input: { case_id: caseId } });
       await loadEntities();
     } catch (e) {
       console.error(e);
@@ -518,6 +517,21 @@ export function EntityDiveView({ caseId }: Props) {
             </div>
           ) : selectedEntity ? (
             <>
+              {notification && (
+                <div
+                  className="card mb-3"
+                  style={{
+                    background: "rgba(34,197,94,0.15)",
+                    border: "1px solid #22c55e",
+                    color: "#4ade80",
+                    padding: "10px 16px",
+                    fontWeight: 600,
+                    fontSize: 13,
+                  }}
+                >
+                  {notification}
+                </div>
+              )}
               {/* Profile Card */}
               <div
                 className="card mb-0"

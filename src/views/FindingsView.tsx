@@ -102,13 +102,13 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
   const runAnalysis = async () => {
     setAnalyzing(true);
     try {
-      const count = await invoke<number>("run_analysis", { caseId });
-      alert(`Analysis complete: ${count} findings generated`);
+      const count = await invoke<number>("run_analysis", { input: { case_id: caseId } });
       loadFindings();
     } catch (e: any) {
-      alert(`Analysis failed: ${e}`);
+      console.error("Analysis failed:", e);
+    } finally {
+      setAnalyzing(false);
     }
-    setAnalyzing(false);
   };
 
   const updateStatus = async (id: string, newStatus: string) => {
@@ -116,7 +116,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
       await invoke("update_finding_status", { findingId: id, newStatus, reviewedBy: authorName });
       loadFindings();
     } catch (e: any) {
-      alert(`Update failed: ${e}`);
+      console.error("Update failed:", e);
     }
   };
 
@@ -133,7 +133,7 @@ export function FindingsView({ caseId, onGoToEvidence }: Props) {
       setNoteText("");
       loadFindings();
     } catch (e: any) {
-      alert(`Note failed: ${e}`);
+      console.error("Note failed:", e);
     } finally {
       setSavingNote(false);
     }

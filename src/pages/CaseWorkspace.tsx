@@ -306,13 +306,10 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
                 <button className={`sb-item ${view === "search" ? "active" : ""}`} onClick={() => hasDone && setView("search")} style={{ opacity: hasDone ? 1 : 0.4 }}>
                   <span className="sb-icon">🔍</span> Search
                 </button>
-                 <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">◷</span> Timeline
-                 </button>
-                 <button className={`sb-item ${view === "graph" ? "active" : ""}`} onClick={() => hasDone && setView("graph")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">◎</span> Graph
-                 </button>
-              </div>
+                  <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">◷</span> Timeline
+                  </button>
+               </div>
             )}
           </div>
 
@@ -348,15 +345,12 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
           <div className="sb-folder">
             <div className="sb-folder-header">
               <span className="sb-folder-arrow">▼</span>
-              <span className="sb-label" style={{ margin: 0 }}>Integrity & Verification</span>
+              <span className="sb-label" style={{ margin: 0 }}>Integrity &amp; Verification</span>
             </div>
             {!sidebarCollapsed && (
               <div className="sb-folder-content">
                 <button className={`sb-item ${view === "integrity" ? "active" : ""}`} onClick={() => setView("integrity")}>
                   <span className="sb-icon">🔒</span> Verify Evidence
-                </button>
-                <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
-                  <span className="sb-icon">📋</span> Chain of Custody
                 </button>
               </div>
             )}

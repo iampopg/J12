@@ -360,8 +360,8 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
     }
     
     // Auto-run entity extraction and analysis after parsing
-    let _ = extract_entities(state.clone(), case_id.clone()).await;
-    let _ = run_analysis(state.clone(), case_id.clone()).await;
+    let _ = extract_entities(state.clone(), serde_json::json!({ "case_id": case_id })).await;
+    let _ = run_analysis(state.clone(), serde_json::json!({ "case_id": case_id })).await;
     
     Ok(count)
 }
@@ -462,7 +462,13 @@ pub async fn email_headers(state: State<'_, AppState>, email_id: String) -> Resu
 
 /// Run analysis on all emails in a case and generate findings
 #[tauri::command]
-pub async fn run_analysis(state: State<'_, AppState>, case_id: String) -> Result<u32, String> {
+pub async fn run_analysis(state: State<'_, AppState>, input: serde_json::Value) -> Result<u32, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     // Clear existing findings for this case to avoid duplicates
     {
         let db = state.db.lock().await;
@@ -545,7 +551,13 @@ pub async fn run_analysis(state: State<'_, AppState>, case_id: String) -> Result
 
 /// Get attachments for an email
 #[tauri::command]
-pub async fn email_attachments(state: State<'_, AppState>, email_id: String) -> Result<Vec<Attachment>, String> {
+pub async fn email_attachments(state: State<'_, AppState>, input: serde_json::Value) -> Result<Vec<Attachment>, String> {
+    let email_id = input["email_id"].as_str()
+        .or_else(|| input["emailId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let db = state.db.lock().await;
     let mut stmt = db.conn.prepare("SELECT id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags FROM attachments WHERE email_id=?1").map_err(|e| e.to_string())?;
     let attachments = stmt.query_map([&email_id], |row| {
@@ -566,7 +578,13 @@ pub async fn email_attachments(state: State<'_, AppState>, email_id: String) -> 
 
 /// Auto-detect potential targets from email data
 #[tauri::command]
-pub async fn auto_detect_targets(state: State<'_, AppState>, case_id: String) -> Result<serde_json::Value, String> {
+pub async fn auto_detect_targets(state: State<'_, AppState>, input: serde_json::Value) -> Result<serde_json::Value, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let db = state.db.lock().await;
 
     // Check if entities table has records. If not, auto extract!
@@ -579,7 +597,7 @@ pub async fn auto_detect_targets(state: State<'_, AppState>, case_id: String) ->
     drop(db);
 
     if entity_count == 0 {
-        let _ = extract_entities(state.clone(), case_id.clone()).await;
+        let _ = extract_entities(state.clone(), serde_json::json!({ "case_id": case_id.clone() })).await;
     }
 
     let db = state.db.lock().await;
@@ -619,7 +637,15 @@ pub async fn auto_detect_targets(state: State<'_, AppState>, case_id: String) ->
 }
 
 #[tauri::command]
-pub async fn target_profile(state: State<'_, AppState>, case_id: String, target_email: Option<String>) -> Result<serde_json::Value, String> {
+pub async fn target_profile(state: State<'_, AppState>, input: serde_json::Value) -> Result<serde_json::Value, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let target_email = input["target_email"].as_str()
+        .or_else(|| input["targetEmail"].as_str())
+        .map(|s| s.to_string());
+
     let db = state.db.lock().await;
 
     // Get case info
@@ -1018,7 +1044,13 @@ fn normalize_human_key(name: &str) -> Option<String> {
 
 /// Extract and store entities from emails with smart alias unification
 #[tauri::command]
-pub async fn extract_entities(state: State<'_, AppState>, case_id: String) -> Result<u32, String> {
+pub async fn extract_entities(state: State<'_, AppState>, input: serde_json::Value) -> Result<u32, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let db = state.db.lock().await;
 
     let mut stmt = db.conn.prepare("SELECT from_addr, from_display, to_addrs, cc_addrs, date_sent_utc FROM emails WHERE case_id=?1").map_err(|e| e.to_string())?;
