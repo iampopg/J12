@@ -336,6 +336,7 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                   <div style={{ width: "100%", height: 140, marginBottom: 10, position: "relative" }}>
                     <AttachmentThumbnail 
                       attachmentId={att.id} 
+                      storedPath={att.stored_path}
                       filename={att.filename} 
                       category={att.category}
                       onZoom={(src) => setZoomImage({ src, filename: att.filename })}
@@ -401,11 +402,7 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                         onClick={() => setSelectedAtt(att)}
                       >
                         <td className="td" style={{ fontSize: 18, textAlign: "center", width: 50 }}>
-                          {att.category === "images" ? (
-                            <MiniThumbnail attachmentId={att.id} filename={att.filename} />
-                          ) : (
-                            getFileIcon(att.category, att.filename)
-                          )}
+                          {getFileIcon(att.category, att.filename)}
                         </td>
                         <td className="td">
                           <div style={{ fontWeight: 600, color: isDangerous ? "var(--danger)" : "var(--text-0)" }}>
@@ -497,6 +494,7 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
               <div style={{ marginBottom: 16, borderRadius: "var(--r-md)", overflow: "hidden", border: "1px solid var(--border)", background: "#000" }}>
                 <InspectorPhotoViewer 
                   attachmentId={selectedAtt.id} 
+                  storedPath={selectedAtt.stored_path}
                   filename={selectedAtt.filename} 
                   onZoom={(src) => setZoomImage({ src, filename: selectedAtt.filename })}
                 />
@@ -592,11 +590,13 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
 
 function AttachmentThumbnail({ 
   attachmentId, 
+  storedPath,
   filename, 
   category, 
   onZoom 
 }: { 
   attachmentId: string; 
+  storedPath?: string | null;
   filename: string; 
   category: string; 
   onZoom?: (src: string) => void;
@@ -606,14 +606,19 @@ function AttachmentThumbnail({
 
   useEffect(() => {
     if (category === "images") {
-      invoke<string | null>("get_attachment_preview", { input: { attachment_id: attachmentId } })
+      invoke<string | null>("get_attachment_preview", { 
+        input: { 
+          attachment_id: attachmentId,
+          stored_path: storedPath 
+        } 
+      })
         .then((data) => {
           if (data) setSrc(data);
         })
         .catch(console.error)
         .finally(() => setLoading(false));
     }
-  }, [attachmentId, category]);
+  }, [attachmentId, storedPath, category]);
 
   if (loading) {
     return (
@@ -652,36 +657,14 @@ function AttachmentThumbnail({
   );
 }
 
-function MiniThumbnail({ attachmentId, filename }: { attachmentId: string; filename: string }) {
-  const [src, setSrc] = useState<string | null>(null);
-
-  useEffect(() => {
-    invoke<string | null>("get_attachment_preview", { input: { attachment_id: attachmentId } })
-      .then((data) => {
-        if (data) setSrc(data);
-      })
-      .catch(console.error);
-  }, [attachmentId]);
-
-  if (src) {
-    return (
-      <img 
-        src={src} 
-        alt={filename} 
-        style={{ width: 32, height: 32, objectFit: "cover", borderRadius: 4, border: "1px solid var(--border)", verticalAlign: "middle" }} 
-      />
-    );
-  }
-
-  return <span>🖼️</span>;
-}
-
 function InspectorPhotoViewer({ 
   attachmentId, 
+  storedPath,
   filename, 
   onZoom 
 }: { 
   attachmentId: string; 
+  storedPath?: string | null;
   filename: string; 
   onZoom?: (src: string) => void;
 }) {
@@ -689,13 +672,18 @@ function InspectorPhotoViewer({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    invoke<string | null>("get_attachment_preview", { input: { attachment_id: attachmentId } })
+    invoke<string | null>("get_attachment_preview", { 
+      input: { 
+        attachment_id: attachmentId,
+        stored_path: storedPath 
+      } 
+    })
       .then((data) => {
         if (data) setSrc(data);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, [attachmentId]);
+  }, [attachmentId, storedPath]);
 
   if (loading) {
     return <div style={{ height: 160, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-3)", fontSize: 12 }}>Loading preview...</div>;

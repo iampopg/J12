@@ -89,6 +89,7 @@ pub async fn dashboard(state: State<'_, AppState>, input: EmptyInput) -> Result<
     let sent_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='sent'", [cid], |r| r.get(0)).unwrap_or(0);
     let drafts_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='drafts'", [cid], |r| r.get(0)).unwrap_or(0);
     let spam_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='spam'", [cid], |r| r.get(0)).unwrap_or(0);
+    let other_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category NOT IN ('inbox', 'sent', 'drafts', 'spam', 'trash', 'soft_deleted')", [cid], |r| r.get(0)).unwrap_or(0);
 
     Ok(DashboardData {
         evidence_count: ta as u32,
@@ -104,7 +105,7 @@ pub async fn dashboard(state: State<'_, AppState>, input: EmptyInput) -> Result<
         soft_deleted_count: de as u32,
         drafts_count: drafts_c as u32,
         spam_count: spam_c as u32,
-        other_count: 0,
+        other_count: other_c as u32,
         high_risk_emails: he as u32,
     })
 }
@@ -552,14 +553,22 @@ pub async fn timeline_data(state: State<'_, AppState>, input: EmptyInput) -> Res
 }
 
 #[tauri::command]
-pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result<Value, String> {
+pub async fn graph_data(state: State<'_, AppState>, input: Value) -> Result<Value, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
     let db = state.db.lock().await;
 
     let mut stmt = db.conn.prepare(
         "SELECT from_addr, to_addrs, risk_score FROM emails WHERE case_id = ?1 AND from_addr != ''"
     ).map_err(|e| e.to_string())?;
 
-    let rows = stmt.query_map([&input.case_id], |row| {
+    let rows = stmt.query_map([&case_id], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -569,10 +578,13 @@ pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result
 
     let mut node_set: HashSet<String> = HashSet::new();
     let mut node_risks: HashMap<String, u8> = HashMap::new();
+    let mut node_sent: HashMap<String, u32> = HashMap::new();
+    let mut node_recv: HashMap<String, u32> = HashMap::new();
     let mut edge_map: HashMap<(String, String), u32> = HashMap::new();
 
     for (from, to_json, risk) in rows {
         node_set.insert(from.clone());
+        *node_sent.entry(from.clone()).or_insert(0) += 1;
         let current_risk = node_risks.entry(from.clone()).or_insert(0);
         if risk > *current_risk {
             *current_risk = risk;
@@ -582,6 +594,7 @@ pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result
         for r in recipients {
             if !r.is_empty() {
                 node_set.insert(r.clone());
+                *node_recv.entry(r.clone()).or_insert(0) += 1;
                 let r_risk = node_risks.entry(r.clone()).or_insert(0);
                 if risk > *r_risk {
                     *r_risk = risk;
@@ -600,10 +613,17 @@ pub async fn graph_data(state: State<'_, AppState>, input: EmptyInput) -> Result
 
     let nodes: Vec<Value> = node_set.into_iter().map(|email| {
         let risk = node_risks.get(&email).cloned().unwrap_or(0);
+        let s = node_sent.get(&email).cloned().unwrap_or(0);
+        let r = node_recv.get(&email).cloned().unwrap_or(0);
         serde_json::json!({
             "id": email,
             "label": email,
-            "risk_score": risk
+            "name": email,
+            "risk_score": risk,
+            "sent": s,
+            "received": r,
+            "total": s + r,
+            "is_target": false
         })
     }).collect();
 

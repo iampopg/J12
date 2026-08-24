@@ -300,6 +300,25 @@ impl Database {
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_forensic_artifacts_case ON forensic_artifacts(case_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_forensic_artifacts_dom ON forensic_artifacts(case_id, domain_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_forensic_artifacts_sub ON forensic_artifacts(case_id, subcategory_id)", []).ok();
+        
+        // Migration: create forensic_artifacts table if missing (for existing databases)
+        self.conn.execute("CREATE TABLE IF NOT EXISTS forensic_artifacts (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL,
+            domain_id TEXT NOT NULL,
+            subcategory_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            primary_value TEXT NOT NULL,
+            secondary_value TEXT,
+            details TEXT,
+            severity TEXT NOT NULL,
+            artifact_type TEXT NOT NULL,
+            confidence TEXT,
+            email_id TEXT NOT NULL,
+            email_subject TEXT,
+            email_from TEXT NOT NULL,
+            date_sent_utc TEXT
+        )", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_case_id ON emails(case_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_from_addr ON emails(from_addr)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_date_sent ON emails(date_sent_utc)", []).ok();
@@ -321,7 +340,8 @@ impl Database {
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_communication_edges_case_id ON communication_edges(case_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_attachments_email_id ON attachments(email_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_case_id ON audit_log(case_id)", []).ok();
-        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_cache_case_id ON artifacts_cache(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_artifacts_cache_domain ON artifacts_cache(case_id, domain_id)", []).ok();
         self.conn.execute("CREATE TABLE IF NOT EXISTS chain_of_custody (
             id TEXT PRIMARY KEY,
             case_id TEXT NOT NULL,

@@ -33,6 +33,7 @@ interface Email {
   headers_raw: string | null;
   folder_name: string | null;
   folder_category: string;
+  is_deleted?: boolean;
   recovery_status: string;
   deleted_recovered: boolean;
   risk_score: number;
@@ -163,9 +164,16 @@ export function EmailListView({
     if (filter === "inbox") {
       return uniqueEmails.filter((e) => e.folder_category === "inbox");
     }
-    if (filter === "soft_deleted") {
+    if (filter === "soft_deleted" || filter === "trash" || filter === "deleted") {
       return uniqueEmails.filter(
-        (e) => e.folder_category === "soft_deleted" || e.recovery_status === "soft_deleted"
+        (e) =>
+          e.folder_category === "soft_deleted" ||
+          e.folder_category === "trash" ||
+          e.folder_category === "deleted" ||
+          e.is_deleted ||
+          e.deleted_recovered ||
+          e.recovery_status === "soft_deleted" ||
+          e.recovery_status === "recoverable"
       );
     }
     if (filter === "hard_deleted") {
@@ -174,7 +182,9 @@ export function EmailListView({
       );
     }
     if (filter === "recoverable") {
-      return uniqueEmails.filter((e) => e.recovery_status === "recoverable");
+      return uniqueEmails.filter(
+        (e) => e.recovery_status === "recoverable" || e.deleted_recovered
+      );
     }
     if (filter === "drafts") {
       return uniqueEmails.filter((e) => e.folder_category === "drafts");
@@ -183,7 +193,12 @@ export function EmailListView({
       return uniqueEmails.filter((e) => e.folder_category === "spam");
     }
     if (filter === "other") {
-      return uniqueEmails.filter((e) => e.folder_category === "other");
+      return uniqueEmails.filter(
+        (e) =>
+          e.folder_category === "other" ||
+          (!["inbox", "sent", "drafts", "spam", "trash", "soft_deleted"].includes(e.folder_category) &&
+            !e.is_deleted)
+      );
     }
     return uniqueEmails;
   }, [uniqueEmails, filter]);

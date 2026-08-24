@@ -65,6 +65,8 @@ pub fn classify_attachment_category(filename: &str, mime: &str, _entropy: Option
 pub async fn email_attachments(state: State<'_, AppState>, input: Value) -> Result<Vec<Attachment>, String> {
     let email_id = input["email_id"].as_str()
         .or_else(|| input["emailId"].as_str())
+        .or_else(|| input["input"]["email_id"].as_str())
+        .or_else(|| input["input"]["emailId"].as_str())
         .or_else(|| input.as_str())
         .unwrap_or("")
         .to_string();
@@ -98,12 +100,20 @@ pub async fn email_attachments(state: State<'_, AppState>, input: Value) -> Resu
 pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> Result<Vec<CaseAttachmentItem>, String> {
     let case_id = input["case_id"].as_str()
         .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
         .or_else(|| input.as_str())
         .unwrap_or("")
         .to_string();
 
-    let category = input["category"].as_str().unwrap_or("all");
-    let search = input["search"].as_str().unwrap_or("").to_lowercase();
+    let category = input["category"].as_str()
+        .or_else(|| input["input"]["category"].as_str())
+        .unwrap_or("all");
+
+    let search = input["search"].as_str()
+        .or_else(|| input["input"]["search"].as_str())
+        .unwrap_or("")
+        .to_lowercase();
 
     let db = state.db.lock().await;
     let mut stmt = db.conn.prepare(
@@ -167,12 +177,15 @@ pub async fn export_attachment(
 ) -> Result<String, String> {
     let attachment_id = input["attachment_id"].as_str()
         .or_else(|| input["attachmentId"].as_str())
+        .or_else(|| input["input"]["attachment_id"].as_str())
+        .or_else(|| input["input"]["attachmentId"].as_str())
         .or_else(|| input.as_str())
         .unwrap_or("");
 
     let dest_dir = input["destination_dir"].as_str()
         .or_else(|| input["dest"].as_str())
         .or_else(|| input["destination"].as_str())
+        .or_else(|| input["input"]["destination_dir"].as_str())
         .unwrap_or("");
 
     let db = state.db.lock().await;
@@ -213,35 +226,51 @@ pub async fn get_attachment_preview(
     let attachment_id = input["attachment_id"].as_str()
         .or_else(|| input["attachmentId"].as_str())
         .or_else(|| input["id"].as_str())
+        .or_else(|| input["input"]["attachment_id"].as_str())
+        .or_else(|| input["input"]["attachmentId"].as_str())
+        .or_else(|| input["input"]["id"].as_str())
         .or_else(|| input.as_str())
         .unwrap_or("");
 
-    let db = state.db.lock().await;
+    let direct_path = input["stored_path"].as_str()
+        .or_else(|| input["storedPath"].as_str())
+        .or_else(|| input["input"]["stored_path"].as_str())
+        .or_else(|| input["input"]["storedPath"].as_str())
+        .unwrap_or("");
 
-    let stored_path: Option<String> = db.conn.query_row(
-        "SELECT stored_path FROM attachments WHERE id=?1",
-        [attachment_id],
-        |r| r.get(0),
-    ).map_err(|e| e.to_string())?;
+    let stored_path: Option<String> = if !direct_path.is_empty() {
+        Some(direct_path.to_string())
+    } else if !attachment_id.is_empty() {
+        let db = state.db.lock().await;
+        db.conn.query_row(
+            "SELECT stored_path FROM attachments WHERE id=?1",
+            [attachment_id],
+            |r| r.get(0),
+        ).ok()
+    } else {
+        None
+    };
 
     if let Some(path_str) = stored_path {
-        let path = std::path::Path::new(&path_str);
-        if path.exists() {
-            if let Ok(data) = std::fs::read(path) {
-                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                let mime = match ext.as_str() {
-                    "jpg" | "jpeg" => "image/jpeg",
-                    "png" => "image/png",
-                    "gif" => "image/gif",
-                    "webp" => "image/webp",
-                    "svg" => "image/svg+xml",
-                    "bmp" => "image/bmp",
-                    "ico" => "image/x-icon",
-                    _ => "application/octet-stream",
-                };
-                use base64::Engine;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
-                return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+        if !path_str.is_empty() {
+            let path = std::path::Path::new(&path_str);
+            if path.exists() {
+                if let Ok(data) = std::fs::read(path) {
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                    let mime = match ext.as_str() {
+                        "jpg" | "jpeg" => "image/jpeg",
+                        "png" => "image/png",
+                        "gif" => "image/gif",
+                        "webp" => "image/webp",
+                        "svg" => "image/svg+xml",
+                        "bmp" => "image/bmp",
+                        "ico" => "image/x-icon",
+                        _ => "application/octet-stream",
+                    };
+                    use base64::Engine;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                    return Ok(Some(format!("data:{};base64,{}", mime, b64)));
+                }
             }
         }
     }
