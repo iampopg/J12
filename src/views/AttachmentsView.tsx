@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { EmailDetailModal, EmailModalData } from "../components/EmailDetailModal";
 
 export interface CaseAttachmentItem {
   id: string;
@@ -23,7 +24,7 @@ interface Props {
   onSelectEmail?: (emailId: string) => void;
 }
 
-export function AttachmentsView({ caseId, onSelectEmail }: Props) {
+export function AttachmentsView({ caseId }: Props) {
   const [attachments, setAttachments] = useState<CaseAttachmentItem[]>([]);
   const [category, setCategory] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
@@ -31,6 +32,7 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
   const [viewMode, setViewMode] = useState<"table" | "grid">("table");
   const [selectedAtt, setSelectedAtt] = useState<CaseAttachmentItem | null>(null);
   const [zoomImage, setZoomImage] = useState<{ src: string; filename: string } | null>(null);
+  const [previewEmail, setPreviewEmail] = useState<EmailModalData | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -41,6 +43,21 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
   useEffect(() => {
     loadData();
   }, [caseId, category]);
+
+  const openEmailModal = async (emailId: string) => {
+    if (!emailId) return;
+    try {
+      const em = await invoke<EmailModalData | null>("email_get", { input: { id: emailId } });
+      if (em) {
+        setPreviewEmail(em);
+      } else {
+        showToast("⚠️ Could not load email content");
+      }
+    } catch (e) {
+      console.error("Failed to fetch email:", e);
+      showToast("❌ Error loading email");
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -386,16 +403,14 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                     >
                       📥 Export
                     </button>
-                    {onSelectEmail && (
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ padding: "2px 6px", fontSize: 10 }}
-                        onClick={(e) => { e.stopPropagation(); onSelectEmail(att.email_id); }}
-                        title="Jump to parent email"
-                      >
-                        ✉️ Email
-                      </button>
-                    )}
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ padding: "2px 6px", fontSize: 10 }}
+                      onClick={(e) => { e.stopPropagation(); openEmailModal(att.email_id); }}
+                      title="Open parent email in popup"
+                    >
+                      ✉️ Email
+                    </button>
                   </div>
                 </div>
               ))}
@@ -488,16 +503,14 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                             >
                               📥 Export
                             </button>
-                            {onSelectEmail && (
-                              <button 
-                                className="btn btn-ghost btn-sm" 
-                                style={{ padding: "3px 8px", fontSize: 11 }}
-                                onClick={(e) => { e.stopPropagation(); onSelectEmail(att.email_id); }}
-                                title="Jump to parent email"
-                              >
-                                ✉️ Email
-                              </button>
-                            )}
+                            <button 
+                              className="btn btn-ghost btn-sm" 
+                              style={{ padding: "3px 8px", fontSize: 11 }}
+                              onClick={(e) => { e.stopPropagation(); openEmailModal(att.email_id); }}
+                              title="Open parent email in popup"
+                            >
+                              ✉️ Email
+                            </button>
                           </div>
                         </td>
                       </tr>
@@ -619,19 +632,26 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
               >
                 📥 Export
               </button>
-              {onSelectEmail && (
-                <button 
-                  className="btn btn-ghost btn-sm" 
-                  style={{ padding: "4px 8px" }}
-                  onClick={() => onSelectEmail(selectedAtt.email_id)}
-                >
-                  ✉️ Email
-                </button>
-              )}
+              <button 
+                className="btn btn-ghost btn-sm" 
+                style={{ padding: "4px 8px" }}
+                onClick={() => openEmailModal(selectedAtt.email_id)}
+                title="Open parent email in modal popup"
+              >
+                ✉️ Open Email
+              </button>
             </div>
           </div>
         )}
       </div>
+
+      {previewEmail && (
+        <EmailDetailModal
+          email={previewEmail}
+          onClose={() => setPreviewEmail(null)}
+          titleSuffix="Return to Attachments"
+        />
+      )}
     </div>
   );
 }

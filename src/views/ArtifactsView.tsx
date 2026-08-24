@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
+import { EmailDetailModal } from "../components/EmailDetailModal";
+import { useScanState } from "../utils/scanState";
 
 export interface TaxonomySubcategorySummary {
   subcategory_id: string;
@@ -72,9 +74,7 @@ export function ArtifactsView({ caseId }: Props) {
   const [showEmptyDomains, setShowEmptyDomains] = useState<boolean>(false);
   const [dedupUnique, setDedupUnique] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
-  const [scanning, setScanning] = useState<boolean>(false);
-  const [scanProgress, setScanProgress] = useState<number>(0);
-  const [scanStage, setScanStage] = useState<string>("");
+  const [scanState, setScanState] = useScanState();
   const [selectedArtifact, setSelectedArtifact] = useState<ForensicTaxonomyArtifact | null>(null);
   const [previewEmail, setPreviewEmail] = useState<EmailMessage | null>(null);
   const [_loadingEmail, setLoadingEmail] = useState<boolean>(false);
@@ -146,27 +146,28 @@ export function ArtifactsView({ caseId }: Props) {
   }, [artifacts, dedupUnique]);
 
   const handleRescan = async () => {
-    setScanning(true);
-    setScanProgress(15);
-    setScanStage("Reading emails and headers from database...");
+    setScanState({
+      scanning: true,
+      progress: 15,
+      stage: "Reading emails and headers from database...",
+    });
     
     const progressInterval = setInterval(() => {
-      setScanProgress(prev => {
-        if (prev < 40) return prev + 10;
-        if (prev < 75) return prev + 5;
-        if (prev < 90) return prev + 2;
-        return prev;
+      setScanState({
+        progress: Math.min(scanState.progress + 8, 92),
       });
-    }, 250);
+    }, 300);
 
     try {
-      setTimeout(() => setScanStage("Classifying financial, banking, crypto, credentials, and app accounts..."), 400);
-      setTimeout(() => setScanStage("Extracting attachment signatures and forensic IOCs..."), 1000);
+      setTimeout(() => setScanState({ stage: "Classifying financial, banking, crypto, credentials, and app accounts..." }), 400);
+      setTimeout(() => setScanState({ stage: "Extracting attachment signatures and forensic IOCs..." }), 1000);
       
       const count = await invoke<number>("rescan_case_artifacts", { input: { case_id: caseId } });
       clearInterval(progressInterval);
-      setScanProgress(100);
-      setScanStage(`Completed! Indexed ${count} forensic artifacts.`);
+      setScanState({
+        progress: 100,
+        stage: `Completed! Indexed ${count} forensic artifacts.`,
+      });
       showToast(`✓ Scanned and indexed ${count} artifacts`);
       await Promise.all([loadTaxonomy(), loadArtifacts()]);
     } catch (e: any) {
@@ -175,9 +176,11 @@ export function ArtifactsView({ caseId }: Props) {
       showToast(`❌ Error scanning artifacts: ${e}`);
     } finally {
       setTimeout(() => {
-        setScanning(false);
-        setScanProgress(0);
-        setScanStage("");
+        setScanState({
+          scanning: false,
+          progress: 0,
+          stage: "",
+        });
       }, 1200);
     }
   };
@@ -310,30 +313,30 @@ export function ArtifactsView({ caseId }: Props) {
           <button 
             className="btn btn-primary btn-sm" 
             onClick={handleRescan} 
-            disabled={scanning}
+            disabled={scanState.scanning}
             style={{ fontWeight: 600 }}
             title="Scan case emails and extract forensic taxonomy artifacts"
           >
-            {scanning ? "⚡ Scanning..." : "⚡ Scan / Rescan Artifacts"}
+            {scanState.scanning ? "⚡ Scanning..." : "⚡ Scan / Rescan Artifacts"}
           </button>
         </div>
       </div>
 
       {/* Scanning Progress Bar with Percentage and Stage Text */}
-      {scanning && (
+      {scanState.scanning && (
         <div className="card mb-4" style={{ padding: "14px 18px", background: "var(--bg-2)", border: "1px solid var(--accent)", boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
           <div className="row between mb-2">
             <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}>
-              ⚡ {scanStage || "Scanning and classifying forensic artifacts..."}
+              ⚡ {scanState.stage || "Scanning and classifying forensic artifacts..."}
             </span>
             <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)" }}>
-              {scanProgress}%
+              {scanState.progress}%
             </span>
           </div>
           <div style={{ width: "100%", height: 8, background: "var(--bg-0)", borderRadius: 4, overflow: "hidden" }}>
             <div
               style={{
-                width: `${scanProgress}%`,
+                width: `${scanState.progress}%`,
                 height: "100%",
                 background: "linear-gradient(90deg, #3b82f6, #06b6d4, #10b981)",
                 transition: "width 0.25s ease-in-out",
@@ -743,121 +746,16 @@ export function ArtifactsView({ caseId }: Props) {
                 ) : null}
               </div>
             )}
-          </div>
-        </div>
-      </div>
-
-      {/* In-Modal Email Inspector Dialog */}
-      {previewEmail && (
-        <div 
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 10000,
-            background: "rgba(0, 0, 0, 0.8)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 24,
-          }}
-          onClick={() => setPreviewEmail(null)}
-        >
-          <div 
-            className="card"
-            style={{
-              width: "100%",
-              maxWidth: 880,
-              maxHeight: "90vh",
-              overflowY: "auto",
-              padding: 24,
-              background: "#0f172a",
-              border: "1px solid #334155",
-              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.7)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="row between mb-3" style={{ borderBottom: "1px solid #1e293b", paddingBottom: 12 }}>
-              <div className="row gap-2" style={{ alignItems: "center" }}>
-                <span style={{ fontSize: 18 }}>✉️</span>
-                <div>
-                  <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "#f8fafc" }}>
-                    {previewEmail.subject || "(No Subject)"}
-                  </h3>
-                  <span className="muted" style={{ fontSize: 11 }}>Message ID: {previewEmail.message_id || previewEmail.id}</span>
-                </div>
-              </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setPreviewEmail(null)}>
-                ✕ Close &amp; Return to Artifacts
-              </button>
-            </div>
-
-            {/* Email Metadata Header Table */}
-            <div style={{ background: "#1e293b", padding: 14, borderRadius: "var(--r-sm)", marginBottom: 16, fontSize: 12.5 }}>
-              <div className="row mb-1">
-                <span className="muted" style={{ width: 80, fontWeight: 600 }}>From:</span>
-                <span style={{ color: "#38bdf8", fontWeight: 600 }}>{previewEmail.from_display ? `${previewEmail.from_display} <${previewEmail.from_addr}>` : previewEmail.from_addr}</span>
-              </div>
-              <div className="row mb-1">
-                <span className="muted" style={{ width: 80, fontWeight: 600 }}>To:</span>
-                <span style={{ color: "#e2e8f0" }}>{previewEmail.to_addrs}</span>
-              </div>
-              {previewEmail.cc_addrs && (
-                <div className="row mb-1">
-                  <span className="muted" style={{ width: 80, fontWeight: 600 }}>Cc:</span>
-                  <span style={{ color: "#94a3b8" }}>{previewEmail.cc_addrs}</span>
-                </div>
-              )}
-              <div className="row mb-1">
-                <span className="muted" style={{ width: 80, fontWeight: 600 }}>Date UTC:</span>
-                <span style={{ color: "#94a3b8", fontFamily: "var(--mono)" }}>{previewEmail.date_sent_utc || previewEmail.date_sent || "Unknown"}</span>
-              </div>
-              <div className="row">
-                <span className="muted" style={{ width: 80, fontWeight: 600 }}>Folder:</span>
-                <span className="badge badge-gray">{previewEmail.folder_name || previewEmail.folder_category || "inbox"}</span>
-              </div>
-            </div>
-
-            {/* Email Body View */}
-            <div style={{ marginBottom: 16 }}>
-              <div className="label">EMAIL MESSAGE CONTENT</div>
-              <RichEmailBodyViewer
-                bodyText={previewEmail.body_text}
-                bodyHtml={previewEmail.body_html}
-                emailId={previewEmail.id}
-                defaultMode="rendered"
+            {previewEmail && (
+              <EmailDetailModal
+                email={previewEmail}
+                onClose={() => setPreviewEmail(null)}
+                titleSuffix="Return to Artifacts"
               />
-            </div>
-
-            {/* Raw Headers Toggle Section */}
-            {previewEmail.headers_raw && (
-              <details style={{ marginTop: 12 }}>
-                <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 600, color: "#94a3b8" }}>
-                  🧬 View Raw Transport Headers ({previewEmail.headers_raw.length} bytes)
-                </summary>
-                <pre 
-                  style={{ 
-                    marginTop: 8, 
-                    padding: 12, 
-                    background: "#020617", 
-                    border: "1px solid #1e293b", 
-                    borderRadius: "var(--r-sm)", 
-                    fontSize: 11, 
-                    color: "#64748b", 
-                    maxHeight: 200, 
-                    overflowY: "auto",
-                    whiteSpace: "pre-wrap"
-                  }}
-                >
-                  {previewEmail.headers_raw}
-                </pre>
-              </details>
             )}
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

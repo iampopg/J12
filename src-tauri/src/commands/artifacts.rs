@@ -371,10 +371,10 @@ pub async fn case_artifacts_summary(
         ("messaging_apps", "Encrypted & Instant Messengers", "💬"),
         ("dating_apps", "Dating & Romance Platforms", "❤️"),
         ("fintech_banking", "Fintech & Digital Banking", "🏦"),
-        ("ecommerce_shopping", "E-Commerce & Marketplaces", "🛍️"),
-        ("ai_cloud_dev", "AI, Cloud & Developer Tools", "🤖"),
-        ("vpns_privacy", "VPNs, Privacy & Anonymous Mail", "🛡️"),
-        ("remote_collab", "Remote Desktop & Collaboration", "🖥️"),
+        ("ecommerce", "E-Commerce & Marketplaces", "🛍️"),
+        ("cloud_dev", "AI, Cloud & Developer Tools", "🤖"),
+        ("vpn_privacy", "VPNs, Privacy & Anonymous Mail", "🛡️"),
+        ("remote_access", "Remote Desktop & Collaboration", "🖥️"),
         ("gaming_gambling", "Gaming, Esports & Gambling", "🎮"),
 
         // Forensic Extractions
@@ -398,16 +398,26 @@ pub async fn case_artifacts_summary(
     ];
 
     let mut result = Vec::new();
+    let mut handled_domains = std::collections::HashSet::new();
 
     for (dom_id, dom_name, dom_icon) in &domain_defs {
-        let domain_artifacts: Vec<&ForensicTaxonomyArtifact> = all_artifacts.iter().filter(|a| a.domain_id == *dom_id).collect();
+        handled_domains.insert(dom_id.to_string());
+        let domain_artifacts: Vec<&ForensicTaxonomyArtifact> = all_artifacts.iter().filter(|a| {
+            a.domain_id == *dom_id || match *dom_id {
+                "ecommerce" => a.domain_id == "ecommerce_shopping",
+                "cloud_dev" => a.domain_id == "ai_cloud_dev",
+                "vpn_privacy" => a.domain_id == "vpns_privacy",
+                "remote_access" => a.domain_id == "remote_collab",
+                _ => false,
+            }
+        }).collect();
         let total_count = domain_artifacts.len();
 
-        if total_count == 0 && !show_all {
+        if !show_all && total_count == 0 {
             continue;
         }
 
-        let mut sub_map: BTreeMap<String, usize> = BTreeMap::new();
+        let mut sub_map: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         for a in &domain_artifacts {
             *sub_map.entry(a.subcategory_id.clone()).or_insert(0) += 1;
         }
@@ -427,6 +437,27 @@ pub async fn case_artifacts_summary(
             icon: dom_icon.to_string(),
             total_count,
             subcategories,
+        });
+    }
+
+    let mut dynamic_map: std::collections::BTreeMap<String, Vec<&ForensicTaxonomyArtifact>> = std::collections::BTreeMap::new();
+    for a in &all_artifacts {
+        if !handled_domains.contains(&a.domain_id) {
+            dynamic_map.entry(a.domain_id.clone()).or_default().push(a);
+        }
+    }
+    for (dom_id, items) in dynamic_map {
+        let total_count = items.len();
+        if !show_all && total_count == 0 {
+            continue;
+        }
+        let dom_name = dom_id.replace('_', " ").to_uppercase();
+        result.push(TaxonomyDomainSummary {
+            domain_id: dom_id.clone(),
+            name: dom_name,
+            icon: "📁".to_string(),
+            total_count,
+            subcategories: vec![],
         });
     }
 
