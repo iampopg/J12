@@ -121,6 +121,8 @@ pub struct DashboardData {
     pub top_correspondents: Vec<TopCorrespondent>,
     pub sent_count: u32,
     pub inbox_count: u32,
+    #[serde(default)]
+    pub important_count: u32,
     pub soft_deleted_count: u32,
     pub drafts_count: u32,
     pub spam_count: u32,

@@ -15,10 +15,10 @@ import { J12Logo } from "../components/J12Logo";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; working_dir?: string | null; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
-interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
+interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; important_count?: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
 
-type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity" | "artifacts" | "attachments";
-type FolderFilter = "all" | "inbox" | "sent" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other";
+type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "important" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity" | "artifacts" | "attachments";
+type FolderFilter = "all" | "inbox" | "important" | "sent" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other";
 
 function cleanDisplayName(name: string | null): string {
   if (!name) return "";
@@ -162,6 +162,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
     return {
       sent: dashboard?.sent_count || 0,
       inbox: dashboard?.inbox_count || 0,
+      important: dashboard?.important_count || 0,
       soft_deleted: dashboard?.soft_deleted_count || 0,
       drafts: dashboard?.drafts_count || 0,
       spam: dashboard?.spam_count || 0,
@@ -325,27 +326,31 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
                    <span className="sb-icon">📬</span> All Emails
                    <span className="sb-count">{emailCounts.total || 0}</span>
                  </button>
-                 <button className={`sb-item ${folderFilter === "inbox" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                 <button className={`sb-item ${folderFilter === "inbox" && (view === "inbox" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                    <span className="sb-icon">📥</span> Inbox
                    <span className="sb-count">{emailCounts.inbox || 0}</span>
                  </button>
-                 <button className={`sb-item ${folderFilter === "sent" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("sent"); setView("sent"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                 <button className={`sb-item ${folderFilter === "important" && (view === "important" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("important"); setView("important"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                   <span className="sb-icon">⭐</span> Important
+                   <span className="sb-count">{emailCounts.important || 0}</span>
+                 </button>
+                 <button className={`sb-item ${folderFilter === "sent" && (view === "sent" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("sent"); setView("sent"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                    <span className="sb-icon">📤</span> Sent
                    <span className="sb-count">{emailCounts.sent || 0}</span>
                  </button>
-                 <button className={`sb-item ${folderFilter === "drafts" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("drafts"); setView("drafts"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                 <button className={`sb-item ${folderFilter === "drafts" && (view === "drafts" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("drafts"); setView("drafts"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                    <span className="sb-icon">📝</span> Drafts
                    <span className="sb-count">{emailCounts.drafts || 0}</span>
                  </button>
-                 <button className={`sb-item ${folderFilter === "soft_deleted" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("soft_deleted"); setView("soft_deleted"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                 <button className={`sb-item ${folderFilter === "soft_deleted" && (view === "soft_deleted" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("soft_deleted"); setView("soft_deleted"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                    <span className="sb-icon">🗑️</span> Deleted (Recycle Bin)
                    <span className="sb-count">{emailCounts.soft_deleted || 0}</span>
                  </button>
-                 <button className={`sb-item ${folderFilter === "spam" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("spam"); setView("spam"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                 <button className={`sb-item ${folderFilter === "spam" && (view === "spam" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("spam"); setView("spam"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                    <span className="sb-icon">⚠</span> Spam / Junk
                    <span className="sb-count">{emailCounts.spam || 0}</span>
                  </button>
-                 <button className={`sb-item ${folderFilter === "other" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("other"); setView("other"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                 <button className={`sb-item ${folderFilter === "other" && (view === "other" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("other"); setView("other"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
                    <span className="sb-icon">📁</span> Other Folders
                    <span className="sb-count">{emailCounts.other || 0}</span>
                  </button>
@@ -422,9 +427,10 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
             />
           )}
           {view === "evidence" && <EvidenceView evidence={evidence} caseId={caseId} onRefresh={loadAll} />}
-           {view === "emails" && <EmailListView caseId={caseId} filter="all" onViewEntity={(email) => setView("entities")} />}
+           {view === "emails" && <EmailListView caseId={caseId} filter={folderFilter} onViewEntity={(email) => setView("entities")} />}
            {view === "sent" && <EmailListView caseId={caseId} filter="sent" onViewEntity={(email) => setView("entities")} />}
            {view === "inbox" && <EmailListView caseId={caseId} filter="inbox" onViewEntity={(email) => setView("entities")} />}
+           {view === "important" && <EmailListView caseId={caseId} filter="important" onViewEntity={(email) => setView("entities")} />}
            {view === "drafts" && <EmailListView caseId={caseId} filter="drafts" onViewEntity={(email) => setView("entities")} />}
            {view === "soft_deleted" && <EmailListView caseId={caseId} filter="soft_deleted" onViewEntity={(email) => setView("entities")} />}
            {view === "hard_deleted" && <EmailListView caseId={caseId} filter="hard_deleted" onViewEntity={(email) => setView("entities")} />}

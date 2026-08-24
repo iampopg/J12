@@ -86,10 +86,15 @@ pub async fn dashboard(state: State<'_, AppState>, input: EmptyInput) -> Result<
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
 
     let inbox_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='inbox'", [cid], |r| r.get(0)).unwrap_or(0);
+    let important_c: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM emails WHERE case_id=?1 AND (folder_category='important' OR folder_name LIKE '%important%' OR flags LIKE '%important%')",
+        [cid],
+        |r| r.get(0)
+    ).unwrap_or(0);
     let sent_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='sent'", [cid], |r| r.get(0)).unwrap_or(0);
     let drafts_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='drafts'", [cid], |r| r.get(0)).unwrap_or(0);
     let spam_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category='spam'", [cid], |r| r.get(0)).unwrap_or(0);
-    let other_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category NOT IN ('inbox', 'sent', 'drafts', 'spam', 'trash', 'soft_deleted')", [cid], |r| r.get(0)).unwrap_or(0);
+    let other_c: i64 = db.conn.query_row("SELECT COUNT(*) FROM emails WHERE case_id=?1 AND folder_category NOT IN ('inbox', 'important', 'sent', 'drafts', 'spam', 'trash', 'soft_deleted')", [cid], |r| r.get(0)).unwrap_or(0);
 
     Ok(DashboardData {
         evidence_count: ta as u32,
@@ -102,6 +107,7 @@ pub async fn dashboard(state: State<'_, AppState>, input: EmptyInput) -> Result<
         top_correspondents,
         sent_count: sent_c as u32,
         inbox_count: inbox_c as u32,
+        important_count: important_c as u32,
         soft_deleted_count: de as u32,
         drafts_count: drafts_c as u32,
         spam_count: spam_c as u32,

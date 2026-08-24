@@ -80,6 +80,10 @@ pub fn categorize_imap_folder(folder_name: &str) -> String {
         "trash".to_string()
     } else if lower.contains("spam") || lower.contains("junk") {
         "spam".to_string()
+    } else if lower.contains("important") {
+        "important".to_string()
+    } else if lower.contains("starred") || lower.contains("flagged") {
+        "starred".to_string()
     } else if lower.contains("archive") || lower.contains("all mail") {
         "archive".to_string()
     } else if lower.contains("inbox") {

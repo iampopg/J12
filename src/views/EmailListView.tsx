@@ -34,6 +34,7 @@ interface Email {
   headers_raw: string | null;
   folder_name: string | null;
   folder_category: string;
+  flags?: string | null;
   is_deleted?: boolean;
   recovery_status: string;
   deleted_recovered: boolean;
@@ -165,6 +166,14 @@ export function EmailListView({
     if (filter === "inbox") {
       return uniqueEmails.filter((e) => e.folder_category === "inbox");
     }
+    if (filter === "important") {
+      return uniqueEmails.filter(
+        (e) =>
+          e.folder_category === "important" ||
+          (e.folder_name && e.folder_name.toLowerCase().includes("important")) ||
+          (e.flags && e.flags.toLowerCase().includes("important"))
+      );
+    }
     if (filter === "soft_deleted" || filter === "trash" || filter === "deleted") {
       return uniqueEmails.filter(
         (e) =>
@@ -197,7 +206,7 @@ export function EmailListView({
       return uniqueEmails.filter(
         (e) =>
           e.folder_category === "other" ||
-          (!["inbox", "sent", "drafts", "spam", "trash", "soft_deleted"].includes(e.folder_category) &&
+          (!["inbox", "important", "sent", "drafts", "spam", "trash", "soft_deleted"].includes(e.folder_category) &&
             !e.is_deleted)
       );
     }

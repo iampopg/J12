@@ -306,10 +306,14 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
             let lower = path.to_lowercase();
             let (category, recovery) = if lower.contains("sent") {
                 ("sent", "normal")
-            } else if lower.contains("deleted") {
+            } else if lower.contains("deleted") || lower.contains("trash") || lower.contains("bin") {
                 ("soft_deleted", "soft_deleted")
             } else if lower.contains("draft") {
                 ("drafts", "normal")
+            } else if lower.contains("important") {
+                ("important", "normal")
+            } else if lower.contains("starred") || lower.contains("flagged") {
+                ("starred", "normal")
             } else if lower.contains("inbox") {
                 ("inbox", "normal")
             } else if lower.contains("junk") || lower.contains("spam") {
