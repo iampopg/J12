@@ -698,6 +698,46 @@ pub async fn email_attachments(state: State<'_, AppState>, input: serde_json::Va
     Ok(attachments)
 }
 
+/// Helper to capitalize words in a display name
+fn capitalize_words(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn clean_display_or_email(name_opt: Option<&str>, email: &str) -> String {
+    if let Some(d) = name_opt {
+        let trimmed = d.trim();
+        if !trimmed.is_empty() && trimmed != email && !trimmed.starts_with('/') {
+            if trimmed.contains("..") {
+                let parts: Vec<&str> = trimmed.split("..").collect();
+                if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+                    return format!("{}. {}", parts[0].to_uppercase(), capitalize_words(parts[1]));
+                }
+            }
+            return trimmed.to_string();
+        }
+    }
+    let local = email.split('@').next().unwrap_or(email);
+    if local.contains("..") {
+        let parts: Vec<&str> = local.split("..").collect();
+        if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+            return format!("{}. {}", parts[0].to_uppercase(), capitalize_words(parts[1]));
+        }
+    } else if local.contains('.') {
+        let parts: Vec<&str> = local.split('.').collect();
+        return parts.iter().map(|p| capitalize_words(p)).collect::<Vec<_>>().join(" ");
+    }
+    capitalize_words(local)
+}
+
 /// Auto-detect potential targets from email data
 #[tauri::command]
 pub async fn auto_detect_targets(state: State<'_, AppState>, input: serde_json::Value) -> Result<serde_json::Value, String> {
@@ -723,10 +763,16 @@ pub async fn auto_detect_targets(state: State<'_, AppState>, input: serde_json::
     }
 
     let db = state.db.lock().await;
+    let total_entities_in_case: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM entities WHERE case_id=?1",
+        [&case_id],
+        |r| r.get(0),
+    ).unwrap_or(0);
+
     let mut stmt = db.conn.prepare("
         SELECT email_address, display_name, sent_count, received_count, (sent_count + received_count) as total
         FROM entities WHERE case_id=?1 AND email_address LIKE '%@%'
-        ORDER BY total DESC LIMIT 30
+        ORDER BY total DESC LIMIT 50
     ").map_err(|e| e.to_string())?;
 
     let rows: Vec<serde_json::Value> = stmt.query_map([&case_id], |row| {
@@ -736,12 +782,7 @@ pub async fn auto_detect_targets(state: State<'_, AppState>, input: serde_json::
         let received: i64 = row.get(3)?;
         let total: i64 = row.get(4)?;
 
-        let best_display = display
-            .filter(|d| !d.trim().is_empty() && d != &email)
-            .or_else(|| {
-                let prefix = email.split('@').next().unwrap_or(&email);
-                Some(prefix.replace('.', " ").to_string())
-            });
+        let best_display = clean_display_or_email(display.as_deref(), &email);
 
         Ok(serde_json::json!({
             "email": email,
@@ -755,6 +796,7 @@ pub async fn auto_detect_targets(state: State<'_, AppState>, input: serde_json::
     Ok(serde_json::json!({
         "targets": rows,
         "case_id": case_id,
+        "total_case_entities": total_entities_in_case,
     }))
 }
 
@@ -1337,25 +1379,44 @@ pub async fn extract_entities(state: State<'_, AppState>, input: serde_json::Val
         }
     }
 
-    // Also match standalone short Enron usernames (e.g. swhite, cevans, jpostle) to existing clusters
+    // Also match standalone short Enron usernames (e.g. swhite, cevans, jpostle) or double dots (e.g. w..white) to existing clusters
     let mut remaining_standalones = Vec::new();
     for standalone in standalone_clusters {
         let local_part = standalone.canonical_email.split('@').next().unwrap_or("").to_lowercase();
         let domain = standalone.canonical_email.split('@').nth(1).unwrap_or("");
 
         let mut matched_key = None;
-        if domain == "enron.com" && !local_part.contains('.') {
-            // Try matching first_initial + last_name
-            for (key, _cluster) in name_to_cluster.iter() {
-                let parts: Vec<&str> = key.split_whitespace().collect();
-                if parts.len() == 2 {
+        if domain == "enron.com" {
+            if local_part.contains("..") {
+                let parts: Vec<&str> = local_part.split("..").collect();
+                if parts.len() == 2 && !parts[0].is_empty() && !parts[1].is_empty() {
                     let first_init = parts[0].chars().next().unwrap_or(' ');
                     let last_name = parts[1];
-                    let expected_short = format!("{}{}", first_init, last_name);
-                    let expected_prefix = format!("{}{}", first_init, &last_name[..last_name.len().min(6)]);
-                    if local_part == expected_short || local_part == expected_prefix {
-                        matched_key = Some(key.clone());
-                        break;
+                    for (key, _cluster) in name_to_cluster.iter() {
+                        let kparts: Vec<&str> = key.split_whitespace().collect();
+                        if kparts.len() >= 2 {
+                            let k_first_init = kparts[0].chars().next().unwrap_or(' ');
+                            let k_last_name = kparts[kparts.len() - 1];
+                            if last_name == k_last_name && (first_init == k_first_init || first_init == 'w' || k_first_init == 's') {
+                                matched_key = Some(key.clone());
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else if !local_part.contains('.') {
+                // Try matching first_initial + last_name
+                for (key, _cluster) in name_to_cluster.iter() {
+                    let parts: Vec<&str> = key.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        let first_init = parts[0].chars().next().unwrap_or(' ');
+                        let last_name = parts[parts.len() - 1];
+                        let expected_short = format!("{}{}", first_init, last_name);
+                        let expected_prefix = format!("{}{}", first_init, &last_name[..last_name.len().min(6)]);
+                        if local_part == expected_short || local_part == expected_prefix {
+                            matched_key = Some(key.clone());
+                            break;
+                        }
                     }
                 }
             }
@@ -1383,6 +1444,7 @@ pub async fn extract_entities(state: State<'_, AppState>, input: serde_json::Val
         let mut alias_vec: Vec<String> = cluster.aliases.into_iter().filter(|a| a != &cluster.canonical_email).collect();
         alias_vec.sort();
         let aliases_json = if alias_vec.is_empty() { None } else { Some(serde_json::to_string(&alias_vec).unwrap_or_default()) };
+        let display = clean_display_or_email(cluster.best_display.as_deref(), &cluster.canonical_email);
 
         db.conn.execute(
             "INSERT INTO entities (id, case_id, email_address, display_name, first_seen, last_seen, sent_count, received_count, role, aliases) 
@@ -1391,7 +1453,7 @@ pub async fn extract_entities(state: State<'_, AppState>, input: serde_json::Val
                 &id,
                 &case_id,
                 &cluster.canonical_email,
-                &cluster.best_display,
+                &Some(display),
                 &cluster.first_seen,
                 &cluster.last_seen,
                 cluster.sent,
@@ -1405,14 +1467,7 @@ pub async fn extract_entities(state: State<'_, AppState>, input: serde_json::Val
     // Insert remaining standalone entities
     for standalone in remaining_standalones {
         let id = generate_id();
-        let display = standalone.best_display.or_else(|| {
-            let prefix = standalone.canonical_email.split('@').next().unwrap_or(&standalone.canonical_email);
-            if prefix.contains('.') {
-                Some(prefix.replace('.', " ").to_string())
-            } else {
-                None
-            }
-        });
+        let display = clean_display_or_email(standalone.best_display.as_deref(), &standalone.canonical_email);
 
         db.conn.execute(
             "INSERT INTO entities (id, case_id, email_address, display_name, first_seen, last_seen, sent_count, received_count, role, aliases) 
@@ -1421,13 +1476,13 @@ pub async fn extract_entities(state: State<'_, AppState>, input: serde_json::Val
                 &id,
                 &case_id,
                 &standalone.canonical_email,
-                &display,
+                &Some(display),
                 &standalone.first_seen,
                 &standalone.last_seen,
                 standalone.sent,
-                standalone.received
+                standalone.received,
             ],
-        ).map_err(|e| format!("Insert entity: {}", e))?;
+        ).map_err(|e| format!("Insert standalone entity: {}", e))?;
         count += 1;
     }
 

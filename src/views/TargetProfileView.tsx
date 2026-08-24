@@ -39,12 +39,19 @@ interface Props {
   caseData: any;
 }
 
-export function TargetProfileView({ caseId, caseData }: Props) {
+export function TargetProfileView({ caseId }: Props) {
   const [profile, setProfile] = useState<TargetProfile | null>(null);
   const [detected, setDetected] = useState<DetectedTarget[]>([]);
+  const [totalEntities, setTotalEntities] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
   const [showAll, setShowAll] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   useEffect(() => { loadData(); }, [caseId]);
 
@@ -59,6 +66,8 @@ export function TargetProfileView({ caseId, caseData }: Props) {
       const det = await invoke<any>("auto_detect_targets", { input: { case_id: caseId } });
       const targets: DetectedTarget[] = det.targets || [];
       setDetected(targets);
+      setTotalEntities(det.total_case_entities || targets.length);
+
       if (targets.length > 0 && !selectedEmail) {
         const top = targets[0];
         setSelectedEmail(top.email);
@@ -66,24 +75,32 @@ export function TargetProfileView({ caseId, caseData }: Props) {
       } else if (selectedEmail) {
         loadProfile(selectedEmail);
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error(e); 
+    }
     setLoading(false);
   };
 
   const reExtract = async () => {
     setLoading(true);
     try {
-      await invoke<number>("extract_entities", { input: { case_id: caseId } });
+      const count = await invoke<number>("extract_entities", { input: { case_id: caseId } });
+      showToast(`⚡ Re-extracted and resolved ${count} entities across case`);
       await loadData();
-    } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   const loadProfile = async (email: string) => {
     try {
       const prof = await invoke<TargetProfile>("target_profile", { input: { case_id: caseId, target_email: email } });
       setProfile(prof);
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error(e); 
+    }
   };
 
   if (loading) return <div className="empty">Loading target profile...</div>;
@@ -97,35 +114,83 @@ export function TargetProfileView({ caseId, caseData }: Props) {
     );
   }
 
+  // Helper to format clean display name
+  const formatName = (d: string | null, email: string) => {
+    if (d && d.trim() && d !== email && !d.startsWith('/')) {
+      if (d.includes("..")) {
+        const p = d.split("..");
+        if (p.length === 2) return `${p[0].toUpperCase()}. ${p[1].charAt(0).toUpperCase() + p[1].slice(1)}`;
+      }
+      return d;
+    }
+    const local = email.split('@')[0] || email;
+    if (local.includes("..")) {
+      const p = local.split("..");
+      if (p.length === 2) return `${p[0].toUpperCase()}. ${p[1].charAt(0).toUpperCase() + p[1].slice(1)}`;
+    } else if (local.includes('.')) {
+      return local.split('.').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    }
+    return local.charAt(0).toUpperCase() + local.slice(1);
+  };
+
   // Get the selected target's data
   const selected = detected.find(t => t.email === selectedEmail) || detected[0];
+  const targetDisplayName = formatName(selected.display_name, selected.email);
   const riskColor = (profile?.risk_score || 0) >= 50 ? "var(--danger)" : (profile?.risk_score || 0) >= 25 ? "var(--warning)" : "var(--success)";
   const riskLabel = (profile?.risk_score || 0) >= 50 ? "HIGH RISK" : (profile?.risk_score || 0) >= 25 ? "MEDIUM RISK" : "LOW RISK";
 
   return (
     <div>
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div 
+          className="card"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            zIndex: 9999,
+            background: "#1e293b",
+            border: "1px solid #22c55e",
+            color: "#4ade80",
+            padding: "12px 20px",
+            fontWeight: 600,
+            fontSize: 13,
+            boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+          }}
+        >
+          <span>✓</span>
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       <div className="row between mb-4">
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile</h2>
-          <p className="muted">Main investigation subject — {selected.display_name || selected.email}</p>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Target Profile &amp; Subject Dossier</h2>
+          <p className="muted">Main investigation subject — <strong>{targetDisplayName}</strong> ({selected.email})</p>
         </div>
         <div className="row gap-2">
-          <button className="btn btn-ghost btn-sm" onClick={reExtract} title="Re-scan and clean all entities and aliases">⚡ Re-Extract & Clean</button>
+          <button className="btn btn-ghost btn-sm" onClick={reExtract} title="Re-scan and clean all entities and aliases">⚡ Re-Extract &amp; Unify</button>
           <button className="btn btn-ghost btn-sm" onClick={loadData}>↻ Refresh</button>
         </div>
       </div>
 
       {/* Main Identity Card */}
-      <div className="card mb-4" style={{ borderLeft: "4px solid var(--accent)" }}>
+      <div className="card mb-4" style={{ borderLeft: "4px solid var(--accent)", boxShadow: "0 4px 20px rgba(0,0,0,0.15)" }}>
         <div className="row between" style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
             <div style={{ width: 72, height: 72, borderRadius: "50%", background: "linear-gradient(135deg, #3b82f6, #6366f1)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, color: "#fff", fontWeight: 700 }}>
-              {(selected.display_name || selected.email).charAt(0).toUpperCase()}
+              {targetDisplayName.charAt(0).toUpperCase()}
             </div>
             <div>
-              <h3 style={{ fontSize: 22, fontWeight: 700 }}>{selected.display_name || selected.email}</h3>
-              <p style={{ fontSize: 14, color: "var(--accent)", fontFamily: "var(--mono)" }}>{selected.email}</p>
-              <p style={{ fontSize: 12, color: "var(--text-3)" }}>Appears in {selected.total_emails} emails</p>
+              <h3 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>{targetDisplayName}</h3>
+              <p style={{ fontSize: 14, color: "var(--accent)", fontFamily: "var(--mono)", marginTop: 4, marginBottom: 2 }}>{selected.email}</p>
+              <p style={{ fontSize: 12, color: "var(--text-3)", margin: 0 }}>
+                Involved in <strong>{selected.total_emails.toLocaleString()}</strong> case emails ({selected.sent.toLocaleString()} sent, {selected.received.toLocaleString()} received)
+              </p>
             </div>
           </div>
           <div style={{ textAlign: "right" }}>
@@ -136,31 +201,68 @@ export function TargetProfileView({ caseId, caseData }: Props) {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats KPI Grid */}
       <div className="kpi-grid mb-4">
-        <div className="kpi"><div className="kpi-val" style={{ color: "var(--accent)" }}>{selected.sent}</div><div className="kpi-label">Sent</div></div>
-        <div className="kpi"><div className="kpi-val" style={{ color: "var(--success)" }}>{selected.received}</div><div className="kpi-label">Received</div></div>
-        <div className="kpi"><div className="kpi-val">{selected.total_emails}</div><div className="kpi-label">Total Involved</div></div>
-        <div className="kpi"><div className="kpi-val" style={{ fontSize: 16 }}>{detected.length}</div><div className="kpi-label">People in Case</div></div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: "var(--accent)" }}>{selected.sent.toLocaleString()}</div>
+          <div className="kpi-label">Emails Sent</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: "var(--success)" }}>{selected.received.toLocaleString()}</div>
+          <div className="kpi-label">Emails Received</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val">{selected.total_emails.toLocaleString()}</div>
+          <div className="kpi-label">Total Involvement</div>
+        </div>
+        <div className="kpi">
+          <div className="kpi-val" style={{ color: "#38bdf8" }}>{totalEntities.toLocaleString()}</div>
+          <div className="kpi-label">Total Entities in Case</div>
+        </div>
       </div>
 
-      {/* Other detected targets */}
+      {/* Other Detected Targets / High-Activity Persons */}
       {detected.length > 1 && (
         <div className="card mb-4">
           <div className="row between mb-4">
-            <h4 style={{ fontSize: 13, fontWeight: 600 }}>Other People in Case ({detected.length - 1})</h4>
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowAll(!showAll)}>{showAll ? "Hide" : "Show All"}</button>
-          </div>
-          {showAll && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
-              {detected.filter(t => t.email !== selected.email).map((t, i) => (
-                <div key={i} className="row between" style={{ padding: "8px 12px", background: "var(--bg-3)", borderRadius: "var(--r-sm)", cursor: "pointer" }} onClick={() => { setSelectedEmail(t.email); loadProfile(t.email); }}>
-                  <span style={{ fontSize: 12, fontFamily: "var(--mono)" }}>{t.display_name || t.email}</span>
-                  <span className="badge badge-gray">{t.total_emails}</span>
-                </div>
-              ))}
+            <div>
+              <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--text-0)" }}>
+                Top Candidate Persons of Interest ({detected.length - 1} Candidates)
+              </h4>
+              <p className="muted text-sm" style={{ margin: 0 }}>
+                Click any subject below to switch and inspect their complete correspondent dossier:
+              </p>
             </div>
-          )}
+            <button className="btn btn-ghost btn-sm" onClick={() => setShowAll(!showAll)}>
+              {showAll ? "▲ Collapse" : `▼ View All (${detected.length - 1})`}
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+            {(showAll ? detected.filter(t => t.email !== selected.email) : detected.filter(t => t.email !== selected.email).slice(0, 6)).map((t, i) => {
+              const name = formatName(t.display_name, t.email);
+              return (
+                <div 
+                  key={i} 
+                  className="row between" 
+                  style={{ 
+                    padding: "8px 12px", 
+                    background: "var(--bg-3)", 
+                    borderRadius: "var(--r-sm)", 
+                    cursor: "pointer",
+                    border: "1px solid var(--border)",
+                    transition: "all 0.15s ease"
+                  }} 
+                  onClick={() => { setSelectedEmail(t.email); loadProfile(t.email); }}
+                >
+                  <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingRight: 8 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-0)" }}>{name}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-3)", fontFamily: "var(--mono)" }}>{t.email}</div>
+                  </div>
+                  <span className="badge badge-gray" style={{ fontSize: 11 }}>{t.total_emails}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -168,22 +270,29 @@ export function TargetProfileView({ caseId, caseData }: Props) {
       {profile && (
         <div className="grid-2">
           <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Top Correspondents</h3>
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "var(--text-0)" }}>
+              👥 Top Direct Correspondents Network
+            </h3>
             {profile.top_correspondents?.length > 0 ? profile.top_correspondents.map(([email, count], i) => (
-              <div key={i} className="row between" style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ fontSize: 12, fontFamily: "var(--mono)" }}>{email}</span>
-                <span className="badge badge-blue">{count}</span>
+              <div key={i} className="row between" style={{ padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 12, fontFamily: "var(--mono)", color: "var(--text-1)" }}>{email}</span>
+                <span className="badge badge-blue">{count} msgs</span>
               </div>
-            )) : <div className="muted text-sm">No data</div>}
+            )) : <div className="muted text-sm">No direct correspondent data available.</div>}
           </div>
+
           <div className="card">
-            <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Frequent Subjects</h3>
+            <h3 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "var(--text-0)" }}>
+              ✉️ Frequent Investigation Subjects &amp; Topics
+            </h3>
             {profile.top_subjects?.length > 0 ? profile.top_subjects.map(([subject, count], i) => (
-              <div key={i} className="row between" style={{ padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-                <span style={{ fontSize: 12 }}>{subject}</span>
+              <div key={i} className="row between" style={{ padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontSize: 12, color: "var(--text-1)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "80%" }}>
+                  {subject}
+                </span>
                 <span className="badge badge-gray">{count}</span>
               </div>
-            )) : <div className="muted text-sm">No data</div>}
+            )) : <div className="muted text-sm">No frequent subject topics recorded.</div>}
           </div>
         </div>
       )}

