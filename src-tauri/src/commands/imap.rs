@@ -187,13 +187,13 @@ pub async fn imap_fetch_emails(
                         return Ok(());
                     }
 
-                    let _ = db.conn.execute(
+                    if let Err(e) = db.conn.execute(
                         "INSERT OR REPLACE INTO emails (
                             id, evidence_id, case_id, message_id, in_reply_to, msg_references,
                             from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, reply_to,
                             subject, date_sent, date_sent_utc, headers_raw, body_text, body_html,
                             folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags, created_at
-                        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0,'[]',?23)",
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 0, 0, '[]', ?22)",
                         rusqlite::params![
                             email_id,
                             evidence_id,
@@ -218,7 +218,9 @@ pub async fn imap_fetch_emails(
                             if is_del { 1 } else { 0 },
                             item_now,
                         ],
-                    );
+                    ) {
+                        eprintln!("Failed to insert email: {}", e);
+                    }
 
                     // Save attachments with full forensic metadata & disk extraction
                     for att in &parsed.attachments {
