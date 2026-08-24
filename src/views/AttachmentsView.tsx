@@ -66,6 +66,26 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
     showToast("✓ Copied SHA-256 hash to clipboard");
   };
 
+  const handleOpenSystem = async (attId: string, filename: string) => {
+    try {
+      await invoke("open_attachment_in_system", { input: { attachment_id: attId } });
+      showToast(`✓ Opened ${filename}`);
+    } catch (e: any) {
+      console.error(e);
+      showToast(`❌ Could not open file: ${e}`);
+    }
+  };
+
+  const handleRevealFinder = async (attId: string) => {
+    try {
+      await invoke("reveal_in_finder", { input: { attachment_id: attId } });
+      showToast("✓ Revealed in Finder");
+    } catch (e: any) {
+      console.error(e);
+      showToast(`❌ Could not reveal: ${e}`);
+    }
+  };
+
   const exportSingleAttachment = async (att: CaseAttachmentItem) => {
     try {
       const savedPath = await invoke<string>("export_attachment", {
@@ -349,11 +369,20 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                     <span>{formatSize(att.size_bytes)}</span>
                     <span className="badge" style={{ fontSize: 9 }}>{att.category}</span>
                   </div>
-                  <div className="row gap-1 mt-2" style={{ justifyContent: "flex-end" }}>
+                  <div className="row gap-1 mt-2" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
+                    <button
+                      className="btn btn-primary btn-sm"
+                      style={{ padding: "2px 6px", fontSize: 10 }}
+                      onClick={(e) => { e.stopPropagation(); handleOpenSystem(att.id, att.filename); }}
+                      title="Open file in default system application (Preview / Acrobat / Office)"
+                    >
+                      👁️ Open
+                    </button>
                     <button
                       className="btn btn-ghost btn-sm"
                       style={{ padding: "2px 6px", fontSize: 10 }}
                       onClick={(e) => { e.stopPropagation(); exportSingleAttachment(att); }}
+                      title="Export to Downloads"
                     >
                       📥 Export
                     </button>
@@ -362,6 +391,7 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                         className="btn btn-ghost btn-sm"
                         style={{ padding: "2px 6px", fontSize: 10 }}
                         onClick={(e) => { e.stopPropagation(); onSelectEmail(att.email_id); }}
+                        title="Jump to parent email"
                       >
                         ✉️ Email
                       </button>
@@ -380,63 +410,55 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                     <th className="th">Filename &amp; Type</th>
                     <th className="th">Size</th>
                     <th className="th">SHA-256 Hash</th>
-                    <th className="th">Entropy &amp; Risk</th>
-                    <th className="th">Source Email</th>
+                    <th className="th">Parent Email</th>
                     <th className="th" style={{ textAlign: "right" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {attachments.map((att) => {
                     const isDangerous = att.category === "dangerous";
-                    const entropyVal = att.entropy || 0;
                     const isSelected = selectedAtt?.id === att.id;
 
                     return (
                       <tr 
                         key={att.id} 
-                        className="tr tr-click"
+                        className={`tr ${isSelected ? "selected" : ""}`}
                         style={{ 
-                          background: isSelected ? "var(--bg-3)" : isDangerous ? "rgba(239, 68, 68, 0.05)" : undefined,
-                          borderBottom: "1px solid var(--border)"
+                          cursor: "pointer", 
+                          background: isDangerous ? "rgba(239, 68, 68, 0.05)" : isSelected ? "var(--bg-3)" : undefined 
                         }}
                         onClick={() => setSelectedAtt(att)}
                       >
-                        <td className="td" style={{ fontSize: 18, textAlign: "center", width: 50 }}>
+                        <td className="td" style={{ textAlign: "center", fontSize: 20 }}>
                           {getFileIcon(att.category, att.filename)}
                         </td>
                         <td className="td">
-                          <div style={{ fontWeight: 600, color: isDangerous ? "var(--danger)" : "var(--text-0)" }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, color: isDangerous ? "var(--danger)" : "var(--text-0)" }}>
                             {att.filename}
                           </div>
                           <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
                             {att.mime_type}
                           </div>
                         </td>
-                        <td className="td" style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
+                        <td className="td" style={{ fontSize: 12, fontFamily: "var(--mono)" }}>
                           {formatSize(att.size_bytes)}
                         </td>
                         <td className="td">
-                          <div 
-                            style={{ fontFamily: "var(--mono)", fontSize: 11, color: "var(--accent)", cursor: "pointer" }}
-                            onClick={(e) => { e.stopPropagation(); copyToClipboard(att.sha256); }}
-                            title="Click to copy SHA-256 hash"
-                          >
-                            {att.sha256.slice(0, 16)}...
-                          </div>
-                        </td>
-                        <td className="td">
-                          <div className="row gap-2" style={{ alignItems: "center" }}>
-                            {entropyVal > 0 && (
-                              <span 
-                                className="badge" 
-                                style={{ 
-                                  background: entropyVal > 7.4 ? "rgba(239,68,68,0.15)" : entropyVal > 6.5 ? "rgba(249,115,22,0.15)" : "rgba(34,197,94,0.15)",
-                                  color: entropyVal > 7.4 ? "var(--danger)" : entropyVal > 6.5 ? "var(--warning)" : "var(--success)"
-                                }}
-                              >
-                                H: {entropyVal.toFixed(2)}
-                              </span>
-                            )}
+                          <div className="row gap-1" style={{ alignItems: "center" }}>
+                            <span 
+                              style={{ 
+                                fontFamily: "var(--mono)", 
+                                fontSize: 11, 
+                                color: "#38bdf8",
+                                maxWidth: 120,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap"
+                              }}
+                              title={att.sha256}
+                            >
+                              {att.sha256 ? `${att.sha256.slice(0, 10)}…` : "—"}
+                            </span>
                             {isDangerous && <span className="badge badge-red">RISK</span>}
                           </div>
                         </td>
@@ -450,6 +472,14 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
                         </td>
                         <td className="td" style={{ textAlign: "right" }}>
                           <div className="row gap-1" style={{ justifyContent: "flex-end" }}>
+                            <button 
+                              className="btn btn-primary btn-sm" 
+                              style={{ padding: "3px 8px", fontSize: 11 }}
+                              onClick={(e) => { e.stopPropagation(); handleOpenSystem(att.id, att.filename); }}
+                              title="Open file in default system viewer"
+                            >
+                              👁️ Open
+                            </button>
                             <button 
                               className="btn btn-ghost btn-sm" 
                               style={{ padding: "3px 8px", fontSize: 11 }}
@@ -564,20 +594,38 @@ export function AttachmentsView({ caseId, onSelectEmail }: Props) {
               </div>
             </div>
 
-            <div className="row gap-2">
+            <div className="row gap-2" style={{ flexWrap: "wrap" }}>
               <button 
                 className="btn btn-primary btn-sm" 
-                style={{ flex: 1 }}
-                onClick={() => exportSingleAttachment(selectedAtt)}
+                style={{ flex: 1, minWidth: 100 }}
+                onClick={() => handleOpenSystem(selectedAtt.id, selectedAtt.filename)}
+                title="Open file with system viewer"
               >
-                📥 Export to Downloads
+                👁️ Open File
+              </button>
+              <button 
+                className="btn btn-ghost btn-sm" 
+                style={{ padding: "4px 8px" }}
+                onClick={() => handleRevealFinder(selectedAtt.id)}
+                title="Reveal file in Finder / Explorer"
+              >
+                📂 Finder
+              </button>
+              <button 
+                className="btn btn-ghost btn-sm" 
+                style={{ padding: "4px 8px" }}
+                onClick={() => exportSingleAttachment(selectedAtt)}
+                title="Export to Downloads"
+              >
+                📥 Export
               </button>
               {onSelectEmail && (
                 <button 
                   className="btn btn-ghost btn-sm" 
+                  style={{ padding: "4px 8px" }}
                   onClick={() => onSelectEmail(selectedAtt.email_id)}
                 >
-                  ✉️ Open Email
+                  ✉️ Email
                 </button>
               )}
             </div>

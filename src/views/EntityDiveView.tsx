@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
 
 function cleanDisplayName(name: string | null): string {
   if (!name) return "";

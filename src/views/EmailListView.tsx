@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
 
 // Helper to clean display names
 function cleanDisplayName(name: string | null): string {
@@ -1038,26 +1039,15 @@ function EmailDetail({
                 <span className="badge badge-red">DELETED / RECOVERED</span>
               </div>
             )}
-            {email.body_text && (
-              <div>
-                <span className="muted">Body Text</span>
-                <pre
-                  style={{
-                    background: "var(--bg-0)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    padding: 16,
-                    fontSize: 13,
-                    marginTop: 8,
-                    maxHeight: 300,
-                    overflow: "auto",
-                    whiteSpace: "pre-wrap",
-                  }}
-                >
-                  {email.body_text.slice(0, 5000)}
-                </pre>
-              </div>
-            )}
+            <div className="mb-4">
+              <span className="muted" style={{ fontWeight: 600 }}>Message Content</span>
+              <RichEmailBodyViewer
+                bodyText={email.body_text}
+                bodyHtml={email.body_html}
+                emailId={email.id}
+                defaultMode="rendered"
+              />
+            </div>
           </div>
         )}
 

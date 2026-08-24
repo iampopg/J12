@@ -91,6 +91,8 @@ fn main() {
             commands::case_attachments_list,
             commands::export_attachment,
             commands::get_attachment_preview,
+            commands::open_attachment_in_system,
+            commands::reveal_in_finder,
             commands::case_artifacts_summary,
             commands::case_artifacts_list,
             commands::rescan_case_artifacts,

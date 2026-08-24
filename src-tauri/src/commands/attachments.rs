@@ -276,3 +276,83 @@ pub async fn get_attachment_preview(
     }
     Ok(None)
 }
+
+#[tauri::command]
+pub async fn open_attachment_in_system(
+    state: State<'_, AppState>,
+    input: Value,
+) -> Result<String, String> {
+    let attachment_id = input["attachment_id"].as_str()
+        .or_else(|| input["attachmentId"].as_str())
+        .or_else(|| input["id"].as_str())
+        .or_else(|| input["input"]["attachment_id"].as_str())
+        .or_else(|| input["input"]["attachmentId"].as_str())
+        .or_else(|| input["input"]["id"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("");
+
+    let db = state.db.lock().await;
+    let (filename, stored_path): (String, Option<String>) = db.conn.query_row(
+        "SELECT filename, stored_path FROM attachments WHERE id=?1",
+        [attachment_id],
+        |r| Ok((r.get::<_, Option<String>>(0)?.unwrap_or_else(|| "attachment".to_string()), r.get(1)?)),
+    ).map_err(|e| format!("Attachment not found: {}", e))?;
+
+    if let Some(path_str) = stored_path {
+        let path = std::path::Path::new(&path_str);
+        if path.exists() {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg(path).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer").arg(path).spawn();
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+            }
+            return Ok(format!("Opened {}", filename));
+        }
+    }
+    Err("Attachment file path not found on disk".to_string())
+}
+
+#[tauri::command]
+pub async fn reveal_in_finder(
+    state: State<'_, AppState>,
+    input: Value,
+) -> Result<String, String> {
+    let attachment_id = input["attachment_id"].as_str()
+        .or_else(|| input["attachmentId"].as_str())
+        .or_else(|| input["id"].as_str())
+        .or_else(|| input["input"]["attachment_id"].as_str())
+        .or_else(|| input["input"]["attachmentId"].as_str())
+        .or_else(|| input["input"]["id"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("");
+
+    let db = state.db.lock().await;
+    let stored_path: Option<String> = db.conn.query_row(
+        "SELECT stored_path FROM attachments WHERE id=?1",
+        [attachment_id],
+        |r| r.get(0),
+    ).map_err(|e| format!("Attachment not found: {}", e))?;
+
+    if let Some(path_str) = stored_path {
+        let path = std::path::Path::new(&path_str);
+        if path.exists() {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = std::process::Command::new("open").arg("-R").arg(path).spawn();
+            }
+            #[cfg(target_os = "windows")]
+            {
+                let _ = std::process::Command::new("explorer").arg(format!("/select,{}", path_str)).spawn();
+            }
+            return Ok("Revealed in file manager".to_string());
+        }
+    }
+    Err("Attachment file path not found on disk".to_string())
+}

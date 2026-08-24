@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
 
 export interface TaxonomySubcategorySummary {
   subcategory_id: string;
@@ -30,6 +31,7 @@ export interface ForensicTaxonomyArtifact {
   email_subject: string | null;
   email_from: string;
   date_sent_utc: string | null;
+  occurrenceCount?: number;
 }
 
 export interface EmailMessage {
@@ -49,7 +51,7 @@ export interface EmailMessage {
   body_html: string | null;
   folder_name: string | null;
   folder_category: string;
-  is_deleted: boolean;
+  recovery_status: string;
   deleted_recovered: boolean;
   risk_score: number;
   flags: string;
@@ -68,6 +70,7 @@ export function ArtifactsView({ caseId }: Props) {
   const [selectedArtifactType, setSelectedArtifactType] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [showEmptyDomains, setShowEmptyDomains] = useState<boolean>(false);
+  const [dedupUnique, setDedupUnique] = useState<boolean>(true);
   const [loading, setLoading] = useState<boolean>(true);
   const [scanning, setScanning] = useState<boolean>(false);
   const [scanProgress, setScanProgress] = useState<number>(0);
@@ -123,6 +126,24 @@ export function ArtifactsView({ caseId }: Props) {
       setLoading(false);
     }
   };
+
+  const displayedArtifacts = useMemo(() => {
+    if (!dedupUnique) return artifacts;
+    const map = new Map<string, { item: ForensicTaxonomyArtifact; count: number }>();
+    for (const a of artifacts) {
+      const key = `${a.domain_id}|${a.subcategory_id}|${(a.primary_value || a.title || "").trim().toLowerCase()}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(key, { item: a, count: 1 });
+      }
+    }
+    return Array.from(map.values()).map(({ item, count }) => ({
+      ...item,
+      occurrenceCount: count,
+    }));
+  }, [artifacts, dedupUnique]);
 
   const handleRescan = async () => {
     setScanning(true);
@@ -486,8 +507,18 @@ export function ArtifactsView({ caseId }: Props) {
                 )}
               </div>
 
-              {/* Artifact Type Filter */}
-              <div className="row gap-2" style={{ alignItems: "center" }}>
+              {/* Artifact Type Filter & Deduplication */}
+              <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className={`btn btn-sm ${dedupUnique ? "btn-primary" : "btn-ghost"}`}
+                  style={{ fontSize: 11, fontWeight: 600, padding: "5px 10px" }}
+                  onClick={() => setDedupUnique(!dedupUnique)}
+                  title="Collapse identical artifacts and display unique findings with occurrence counts"
+                >
+                  ⚡ {dedupUnique ? `Unique (${displayedArtifacts.length})` : `All Raw (${artifacts.length})`}
+                </button>
+
                 <span className="muted text-xs">TYPE:</span>
                 <select 
                   className="input text-xs" 
@@ -511,12 +542,12 @@ export function ArtifactsView({ caseId }: Props) {
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {loading ? (
                 <div className="empty" style={{ padding: 40 }}>Classifying and indexing forensic taxonomy artifacts...</div>
-              ) : artifacts.length === 0 ? (
+              ) : displayedArtifacts.length === 0 ? (
                 <div className="card empty" style={{ padding: 40 }}>
                   No artifacts found for the selected taxonomy domain or query.
                 </div>
               ) : (
-                artifacts.map((a) => {
+                displayedArtifacts.map((a) => {
                   const isSelected = selectedArtifact?.id === a.id;
                   return (
                     <div 
@@ -538,6 +569,11 @@ export function ArtifactsView({ caseId }: Props) {
                           {getSeverityBadge(a.severity)}
                           {getTypeBadge(a.artifact_type)}
                           {getConfidenceBadge(a.confidence)}
+                          {a.occurrenceCount && a.occurrenceCount > 1 && (
+                            <span className="badge badge-blue" style={{ fontSize: 10 }}>
+                              x{a.occurrenceCount}
+                            </span>
+                          )}
                         </div>
                         <span style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
                           {a.date_sent_utc ? new Date(a.date_sent_utc).toLocaleDateString() : ""}
@@ -771,23 +807,12 @@ export function ArtifactsView({ caseId }: Props) {
             {/* Email Body View */}
             <div style={{ marginBottom: 16 }}>
               <div className="label">EMAIL MESSAGE CONTENT</div>
-              <div 
-                style={{
-                  background: "#020617",
-                  border: "1px solid #1e293b",
-                  borderRadius: "var(--r-sm)",
-                  padding: 16,
-                  fontSize: 13,
-                  color: "#cbd5e1",
-                  whiteSpace: "pre-wrap",
-                  lineHeight: 1.6,
-                  maxHeight: 350,
-                  overflowY: "auto",
-                  fontFamily: "var(--font-sans)",
-                }}
-              >
-                {previewEmail.body_text || previewEmail.body_html || "(Empty message body)"}
-              </div>
+              <RichEmailBodyViewer
+                bodyText={previewEmail.body_text}
+                bodyHtml={previewEmail.body_html}
+                emailId={previewEmail.id}
+                defaultMode="rendered"
+              />
             </div>
 
             {/* Raw Headers Toggle Section */}
