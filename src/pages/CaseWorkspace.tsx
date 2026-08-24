@@ -9,6 +9,7 @@ import { TimelineView } from "../views/TimelineView";
 import { GraphView } from "../views/GraphView";
 import { NotesView } from "../views/NotesView";
 import { ReportView } from "../views/ReportView";
+import { J12Logo } from "../components/J12Logo";
 
 interface Case { id: string; title: string; case_number: string; description: string; status: string; target_email: string | null; target_name: string | null; target_organization: string | null; investigation_type: string; }
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
@@ -127,7 +128,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
         <div className="row gap-4">
           <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back to Cases</button>
           <div className="brand" style={{ cursor: "pointer" }}>
-            <img src="/j12-logo.png" alt="J12" className="topbar-logo" />
+            <J12Logo size={30} />
             <div>
               <div className="brand-title">{caseData?.title || "Case"}</div>
               <div className="brand-sub">{caseData?.case_number ? `Case #${caseData.case_number}` : "Investigation"}</div>

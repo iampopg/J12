@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { J12Logo } from "../components/J12Logo";
 
 interface Case {
   id: string;
@@ -80,11 +81,7 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <img src="/j12-logo.png" alt="J12" className="topbar-logo" />
-          <div>
-            <div className="brand-title"><span className="brand-j">J</span><span className="brand-12">12</span> Investigations</div>
-            <div className="brand-sub">Email Forensic Platform</div>
-          </div>
+          <J12Logo size={32} showText={true} />
         </div>
         <div className="row gap-4">
           <span className="muted">admin · investigator</span>

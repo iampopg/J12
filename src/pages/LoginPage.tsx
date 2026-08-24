@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../auth";
+import { J12Logo } from "../components/J12Logo";
 
 export function LoginPage() {
   const { login } = useAuth();
@@ -20,9 +21,12 @@ export function LoginPage() {
   return (
     <div className="login-wrap">
       <div className="login-card">
-        <div className="login-brand">
-          <img src="/j12-logo.png" alt="J12 Logo" className="login-logo-img" />
-          <h1 className="login-title"><span className="brand-j">J</span><span className="brand-12">12</span></h1>
+        <div className="login-brand" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <J12Logo size={64} />
+          <h1 className="login-title" style={{ marginTop: 12 }}>
+            <span style={{ color: "#ffffff" }}>J</span>
+            <span style={{ color: "#22c55e" }}>12</span>
+          </h1>
           <p className="login-subtitle">Email Forensic Investigation Platform</p>
         </div>
 
