@@ -1536,7 +1536,12 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
       listen("imap_progress", (event: any) => {
         const p = event.payload;
         if (p?.log) {
-          setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${p.log}`]);
+          setLogs(prev => {
+            const last = prev[prev.length - 1];
+            const newLog = `[${new Date().toLocaleTimeString()}] ${p.log}`;
+            if (last === newLog) return prev;
+            return [...prev, newLog];
+          });
         }
         if (p?.status === "ingested" || p?.status === "folder_discovered" || p?.status === "duplicate_skipped") {
           setProgress(prev => ({
@@ -1552,9 +1557,11 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
             from: p.from || prev?.from,
           }));
         }
-      }).then(u => { unlisten = u; }).catch(() => {});
-    } catch {
-      // Ignore
+      }).then(u => { unlisten = u; }).catch((err) => {
+        console.warn("IMAP progress listener attach warning:", err);
+      });
+    } catch (e) {
+      console.warn("IMAP progress error:", e);
     }
 
     return () => {
