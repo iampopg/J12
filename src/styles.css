@@ -146,3 +146,107 @@ table{width:100%;border-collapse:collapse}
 .sb-folder-content{padding-left:8px}
 .case-card{cursor:pointer;transition:border-color .15s,transform .15s}
 .case-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+
+/* =========================================================
+   COURT-READY FORENSIC REPORT PRINT & PDF STYLES
+   ========================================================= */
+@media print {
+  body, html, .app, .body, .content {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow: visible !important;
+  }
+
+  .topbar, .sidebar, .btn, button, .no-print, nav, .row.gap-2.mb-4, header.topbar {
+    display: none !important;
+  }
+
+  .card {
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    color: #0f172a !important;
+  }
+
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto;
+    margin-bottom: 20px !important;
+  }
+
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  th {
+    background: #f1f5f9 !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    border: 1px solid #94a3b8 !important;
+    padding: 8px 10px !important;
+    font-size: 10pt !important;
+  }
+
+  td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 6px 10px !important;
+    color: #1e293b !important;
+    font-size: 9.5pt !important;
+    background: #ffffff !important;
+  }
+
+  .badge {
+    border: 1px solid #64748b !important;
+    color: #0f172a !important;
+    background: #f8fafc !important;
+    font-weight: 700 !important;
+  }
+
+  .badge-danger, .badge-red {
+    border-color: #ef4444 !important;
+    color: #991b1b !important;
+    background: #fee2e2 !important;
+  }
+
+  .badge-green, .badge-success {
+    border-color: #22c55e !important;
+    color: #166534 !important;
+    background: #dcfce7 !important;
+  }
+
+  h1, h2, h3, h4, h5 {
+    color: #0f172a !important;
+    page-break-after: avoid;
+  }
+
+  h1 { font-size: 22pt !important; }
+  h2 { font-size: 16pt !important; }
+  h3 { font-size: 13pt !important; }
+
+  code, pre, .mono {
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 8.5pt !important;
+    color: #334155 !important;
+    word-break: break-all !important;
+  }
+
+  .report-section {
+    page-break-inside: avoid;
+    margin-bottom: 28px !important;
+  }
+}
+

@@ -153,11 +153,11 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
 
               {/* Working Folder / Storage Location */}
               <div className="field" style={{ marginTop: 12 }}>
-                <label className="label">Case Storage / Working Directory</label>
-                <div className="row gap-2">
+                <label className="label">Case Storage / Working Directory Path *</label>
+                <div className="row gap-2 mb-2">
                   <input 
                     className="input" 
-                    placeholder="e.g. /Users/username/Documents/J12_Cases/CASE-001 (Auto-generated if empty)" 
+                    placeholder="Enter or select path (e.g. /Users/username/Documents/J12_Cases/CASE-001)" 
                     value={form.working_dir}
                     onChange={(e) => setForm({ ...form, working_dir: e.target.value })} 
                     style={{ flex: 1, fontFamily: "var(--mono)", fontSize: 12 }}
@@ -167,11 +167,42 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
                     className="btn btn-ghost" 
                     style={{ whiteSpace: "nowrap" }}
                     onClick={handleBrowseFolder}
+                    title="Open native file explorer to pick a folder"
                   >
                     📂 Browse Folder
                   </button>
                 </div>
-                <span className="muted" style={{ fontSize: 11, marginTop: 4, display: "block" }}>
+
+                {/* Quick Presets for 1-Click Selection */}
+                <div className="row gap-2" style={{ alignItems: "center", fontSize: 11, color: "var(--text-3)" }}>
+                  <span>Quick Presets:</span>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: "2px 8px", fontSize: 11 }}
+                    onClick={() => setForm(f => ({ ...f, working_dir: `~/Documents/J12_Cases/${f.case_number || "CASE-" + Date.now().toString().slice(-4)}` }))}
+                  >
+                    📁 Documents
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: "2px 8px", fontSize: 11 }}
+                    onClick={() => setForm(f => ({ ...f, working_dir: `~/Desktop/J12_Cases/${f.case_number || "CASE-" + Date.now().toString().slice(-4)}` }))}
+                  >
+                    💻 Desktop
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: "2px 8px", fontSize: 11 }}
+                    onClick={() => setForm(f => ({ ...f, working_dir: `~/Downloads/J12_Cases/${f.case_number || "CASE-" + Date.now().toString().slice(-4)}` }))}
+                  >
+                    📥 Downloads
+                  </button>
+                </div>
+
+                <span className="muted" style={{ fontSize: 11, marginTop: 6, display: "block" }}>
                   Destination folder where carved evidence, parsed attachments, reports, and audit logs are saved.
                 </span>
               </div>

@@ -133,8 +133,29 @@ export function ReportView({ caseId, caseData }: { caseId: string; caseData: any
     );
   };
 
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
+
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleExportHTML = async () => {
+    try {
+      const savedPath = await invoke<string>("export_report_pdf", {
+        caseId,
+        sections: sections.filter(s => s.enabled).map(s => s.id),
+        exhibits
+      });
+      showToast(`📥 Exported standalone dossier to Downloads: ${savedPath}`);
+    } catch (e: any) {
+      console.error(e);
+      showToast(`❌ Error exporting report: ${e}`);
+    }
   };
 
   const handleCopyMarkdown = () => {
@@ -188,11 +209,33 @@ I hereby certify that this forensic examination was conducted objectively in acc
 
   return (
     <div>
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div 
+          className="card"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            zIndex: 9999,
+            background: "#1e293b",
+            border: "1px solid #22c55e",
+            color: "#4ade80",
+            padding: "10px 18px",
+            fontWeight: 600,
+            fontSize: 13,
+            boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+          }}
+        >
+          {toastMessage}
+        </div>
+      )}
+
       {/* Top Action Bar */}
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
-            Forensic Investigation & Source Data Report
+            Forensic Investigation &amp; Source Data Report
           </h2>
           <p className="muted" style={{ fontSize: 12 }}>
             Belkasoft / Oxygen style comprehensive dossier with multi-source provenance, folder hierarchy, finding matrices, and itemized evidence ledgers.
@@ -202,7 +245,10 @@ I hereby certify that this forensic examination was conducted objectively in acc
           <button className="btn btn-ghost btn-sm" onClick={handleCopyMarkdown}>
             {copied ? "✓ Copied Markdown" : "📋 Copy Markdown"}
           </button>
-          <button className="btn btn-primary btn-sm" onClick={handlePrint}>
+          <button className="btn btn-ghost btn-sm" onClick={handleExportHTML} title="Export standalone self-contained HTML report to Downloads">
+            📥 Export HTML Dossier
+          </button>
+          <button className="btn btn-primary btn-sm" onClick={handlePrint} title="Print or save as high-quality PDF">
             🖨️ Print / Save as PDF
           </button>
         </div>

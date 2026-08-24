@@ -43,11 +43,12 @@ pub async fn generate_report_data(state: State<'_, AppState>, input: Value) -> R
     ).map_err(|e| format!("Case not found: {}", e))?;
 
     let mut ev_stmt = db.conn.prepare(
-        "SELECT id, filename, format, sha256, size_bytes, acquired_at, acquisition_method
+        "SELECT id, filename, format, sha256, size_bytes, acquired_at, acquisition_method, message_count
          FROM evidence_items WHERE case_id = ?1"
     ).map_err(|e| e.to_string())?;
 
     let evidence_summary = ev_stmt.query_map([&case_id], |row| {
+        let msg_count: i64 = row.get::<_, Option<i64>>(7)?.unwrap_or(0);
         Ok(serde_json::json!({
             "id": row.get::<_, String>(0)?,
             "filename": row.get::<_, String>(1)?,
@@ -56,6 +57,7 @@ pub async fn generate_report_data(state: State<'_, AppState>, input: Value) -> R
             "size_bytes": row.get::<_, i64>(4)?,
             "acquired_at": row.get::<_, String>(5)?,
             "method": row.get::<_, Option<String>>(6)?.unwrap_or_default(),
+            "message_count": msg_count,
         }))
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
@@ -99,14 +101,89 @@ pub async fn generate_report_data(state: State<'_, AppState>, input: Value) -> R
         }))
     }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
 
-    let email_stats: (i64, i64, i64) = db.conn.query_row(
+    // Folder Breakdown Query
+    let mut folder_stmt = db.conn.prepare(
+        "SELECT folder_name, folder_category, COUNT(*), MIN(date_sent_utc), MAX(date_sent_utc)
+         FROM emails WHERE case_id = ?1
+         GROUP BY folder_name, folder_category
+         ORDER BY COUNT(*) DESC"
+    ).map_err(|e| e.to_string())?;
+
+    let folder_breakdown = folder_stmt.query_map([&case_id], |row| {
+        Ok(serde_json::json!({
+            "folder_name": row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "Inbox".to_string()),
+            "folder_category": row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "inbox".to_string()),
+            "count": row.get::<_, i64>(2)?,
+            "date_from": row.get::<_, Option<String>>(3)?,
+            "date_to": row.get::<_, Option<String>>(4)?,
+        }))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+    // Key Evidentiary Messages Ledger (High Risk, Recovered Deleted, Flagged)
+    let mut ledger_stmt = db.conn.prepare(
+        "SELECT id, from_addr, from_display, to_addrs, subject, date_sent_utc, risk_score, folder_category, is_deleted, deleted_recovered
+         FROM emails WHERE case_id = ?1 AND (risk_score > 30 OR is_deleted = 1 OR deleted_recovered = 1)
+         ORDER BY risk_score DESC, date_sent_utc DESC
+         LIMIT 100"
+    ).map_err(|e| e.to_string())?;
+
+    let key_messages_ledger = ledger_stmt.query_map([&case_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "from_addr": row.get::<_, String>(1)?,
+            "from_display": row.get::<_, Option<String>>(2)?,
+            "to_addrs": row.get::<_, String>(3)?,
+            "subject": row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "(No Subject)".to_string()),
+            "date_sent_utc": row.get::<_, Option<String>>(5)?,
+            "risk_score": row.get::<_, i64>(6)?,
+            "folder_category": row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "inbox".to_string()),
+            "is_deleted": row.get::<_, Option<bool>>(8)?.unwrap_or(false),
+            "deleted_recovered": row.get::<_, Option<bool>>(9)?.unwrap_or(false),
+        }))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+    // Attachments Manifest
+    let mut att_stmt = db.conn.prepare(
+        "SELECT a.id, a.filename, a.sha256, a.mime_type, a.size_bytes, a.entropy, a.risk_flags, e.subject, e.from_addr
+         FROM attachments a
+         JOIN emails e ON a.email_id = e.id
+         WHERE e.case_id = ?1
+         ORDER BY a.size_bytes DESC
+         LIMIT 100"
+    ).map_err(|e| e.to_string())?;
+
+    let attachments_manifest = att_stmt.query_map([&case_id], |row| {
+        Ok(serde_json::json!({
+            "id": row.get::<_, String>(0)?,
+            "filename": row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "attachment.bin".to_string()),
+            "sha256": row.get::<_, String>(2)?,
+            "mime_type": row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+            "size_bytes": row.get::<_, i64>(4)?,
+            "entropy": row.get::<_, Option<f64>>(5)?,
+            "risk_flags": row.get::<_, Option<String>>(6)?,
+            "email_subject": row.get::<_, Option<String>>(7)?,
+            "email_from": row.get::<_, Option<String>>(8)?,
+        }))
+    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+
+    let email_stats: (i64, i64, i64, i64, i64, i64) = db.conn.query_row(
         "SELECT COUNT(*), 
-                SUM(CASE WHEN risk_score > 50 THEN 1 ELSE 0 END),
-                SUM(CASE WHEN is_deleted = 1 OR deleted_recovered = 1 THEN 1 ELSE 0 END)
+                SUM(CASE WHEN folder_category = 'inbox' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN folder_category = 'sent' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN folder_category = 'deleted' OR is_deleted = 1 OR deleted_recovered = 1 THEN 1 ELSE 0 END),
+                SUM(CASE WHEN folder_category = 'spam' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN risk_score > 40 THEN 1 ELSE 0 END)
          FROM emails WHERE case_id = ?1",
         [&case_id],
-        |row| Ok((row.get(0)?, row.get::<_, Option<i64>>(1)?.unwrap_or(0), row.get::<_, Option<i64>>(2)?.unwrap_or(0)))
-    ).unwrap_or((0, 0, 0));
+        |row| Ok((
+            row.get(0)?,
+            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(2)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(3)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(4)?.unwrap_or(0),
+            row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+        ))
+    ).unwrap_or((0, 0, 0, 0, 0, 0));
 
     let att_count: i64 = db.conn.query_row(
         "SELECT COUNT(*) FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE case_id = ?1)",
@@ -118,44 +195,61 @@ pub async fn generate_report_data(state: State<'_, AppState>, input: Value) -> R
     let high_count = findings_summary.iter().filter(|f| f["severity"] == "high").count();
 
     let executive_summary = format!(
-        "Forensic email analysis conducted for Case '{}' (Case #: {}). Examiner: Examiner. A total of {} evidence containers were ingested, yielding {} messages and {} attachments. Analysis identified {} total threat findings, including {} critical and {} high-severity indicators.",
+        "Forensic email analysis conducted for Case '{}' (Case Reference: {}). A total of {} forensic evidence source(s) were processed, yielding {} messages, {} attachments, and {} folder structures. Automated inspection identified {} security threat findings ({} critical, {} high-priority) and {} key evidentiary items entered into the forensic ledger.",
         case.title,
         case.case_number,
         evidence_summary.len(),
         email_stats.0,
         att_count,
+        folder_breakdown.len(),
         findings_summary.len(),
         critical_count,
         high_count,
+        key_messages_ledger.len(),
     );
 
+    let case_obj = serde_json::json!({
+        "id": case.id,
+        "title": case.title,
+        "case_number": case.case_number,
+        "examiner_name": "Senior Forensic Examiner",
+        "investigation_type": case.investigation_type,
+        "description": case.description,
+        "status": case.status,
+        "target_email": case.target_email,
+        "target_name": case.target_name,
+        "target_organization": case.target_organization,
+        "working_dir": case.working_dir,
+        "created_at": case.created_at.to_rfc3339(),
+        "updated_at": case.updated_at.to_rfc3339(),
+    });
+
+    let email_stats_obj = serde_json::json!({
+        "total": email_stats.0,
+        "inbox": email_stats.1,
+        "sent": email_stats.2,
+        "deleted": email_stats.3,
+        "spam": email_stats.4,
+        "high_risk": email_stats.5,
+        "total_attachments": att_count,
+    });
+
     Ok(serde_json::json!({
-        "case": {
-            "id": case.id,
-            "title": case.title,
-            "case_number": case.case_number,
-            "examiner_name": "Examiner",
-            "investigation_type": case.investigation_type,
-            "description": case.description,
-            "status": case.status,
-            "target_email": case.target_email,
-            "target_name": case.target_name,
-            "target_organization": case.target_organization,
-            "created_at": case.created_at.to_rfc3339(),
-            "updated_at": case.updated_at.to_rfc3339(),
-        },
+        "case_info": case_obj,
+        "case": case_obj,
         "executive_summary": executive_summary,
+        "evidence_inventory": evidence_summary,
         "evidence_summary": evidence_summary,
-        "email_statistics": {
-            "total_messages": email_stats.0,
-            "high_risk_messages": email_stats.1,
-            "recovered_deleted_messages": email_stats.2,
-            "total_attachments": att_count,
-        },
+        "email_stats": email_stats_obj,
+        "email_statistics": email_stats_obj,
+        "folder_breakdown": folder_breakdown,
+        "key_messages_ledger": key_messages_ledger,
+        "attachments_manifest": attachments_manifest,
         "findings": findings_summary,
         "chain_of_custody": custody_events,
+        "custody_chain": custody_events,
         "generated_at": Utc::now().to_rfc3339(),
-        "tool_version": "J12 Email Forensic Suite v1.0.0",
+        "tool_version": "J12 Email Forensic Suite v1.0.0 (Standards: NIST SP 800-86 / ISO/IEC 27037)",
     }))
 }
 
