@@ -1570,16 +1570,18 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
 
   const testConnection = async () => {
+    const cleanUser = username.trim();
+    const cleanPass = password.trim().replace(/\\+$/, "").trim();
     setConnecting(true);
     setLogs([]);
     addLog(`Testing connection to ${server}:${port} (SSL: ${useSsl ? "YES" : "NO"})...`);
     try {
       const boxes = await invoke<string[]>("imap_list_mailboxes", {
         input: {
-          server, 
+          server: server.trim(), 
           port: parseInt(port) || 993, 
-          username, 
-          password, 
+          username: cleanUser, 
+          password: cleanPass, 
           use_ssl: useSsl,
           useSsl
         }
@@ -1594,9 +1596,11 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   };
 
   const acquireEmails = async () => {
+    const cleanUser = username.trim();
+    const cleanPass = password.trim().replace(/\\+$/, "").trim();
     setFetching(true);
     setLogs([]);
-    addLog(`Starting forensic acquisition for account: ${username}...`);
+    addLog(`Starting forensic acquisition for account: ${cleanUser}...`);
     addLog(`Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
     try {
       const res = await invoke<any>("imap_fetch_emails", {
@@ -1605,10 +1609,10 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
           caseId,
           evidence_id: `imap_${Date.now()}`,
           evidenceId: `imap_${Date.now()}`,
-          server, 
+          server: server.trim(), 
           port: parseInt(port) || 993, 
-          username, 
-          password, 
+          username: cleanUser, 
+          password: cleanPass, 
           use_ssl: useSsl,
           useSsl,
           mailbox: mailboxScope,
