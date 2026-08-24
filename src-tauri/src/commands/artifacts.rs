@@ -51,7 +51,6 @@ pub fn luhn_check(num_str: &str) -> bool {
     if digits.len() < 13 || digits.len() > 19 {
         return false;
     }
-    // Reject repeated digits like 0000-0000-0000-0000 or 1111-1111-1111-1111
     if digits.iter().all(|&d| d == digits[0]) {
         return false;
     }
@@ -112,7 +111,6 @@ pub fn validate_phone(p: &str) -> bool {
     let digits: Vec<char> = p.chars().filter(|c| c.is_ascii_digit()).collect();
     if digits.len() < 10 || digits.len() > 15 { return false; }
     if digits.iter().all(|&c| c == digits[0]) { return false; }
-    // Exclude date patterns like 2024-05-12 or 2023-11-04
     if (p.starts_with("19") || p.starts_with("20")) && p.contains('-') && digits.len() <= 8 {
         return false;
     }
@@ -120,114 +118,178 @@ pub fn validate_phone(p: &str) -> bool {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// APPS, SERVICES, SOCIAL MEDIA & CRYPTO PLATFORMS KNOWLEDGE BASE
+// EXHAUSTIVE DIGITAL FOOTPRINT & APP / SERVICE KNOWLEDGE BASE
 // ─────────────────────────────────────────────────────────────────────────────
 struct AppSignature {
     name: &'static str,
+    domain_id: &'static str,
     subcategory: &'static str,
     keywords: &'static [&'static str],
     category_title: &'static str,
 }
 
 static APP_SIGNATURES: &[AppSignature] = &[
-    // 🪙 Crypto Exchanges & Wallets
-    AppSignature { name: "Binance", subcategory: "crypto_exchanges", keywords: &["binance.com", "binance exchange", "binance verification"], category_title: "Crypto Exchange (Binance)" },
-    AppSignature { name: "Coinbase", subcategory: "crypto_exchanges", keywords: &["coinbase.com", "coinbase pro", "coinbase commerce"], category_title: "Crypto Platform (Coinbase)" },
-    AppSignature { name: "Kraken", subcategory: "crypto_exchanges", keywords: &["kraken.com", "kraken exchange"], category_title: "Crypto Exchange (Kraken)" },
-    AppSignature { name: "KuCoin", subcategory: "crypto_exchanges", keywords: &["kucoin.com", "kucoin exchange"], category_title: "Crypto Exchange (KuCoin)" },
-    AppSignature { name: "MetaMask", subcategory: "crypto_exchanges", keywords: &["metamask.io", "metamask wallet", "metamask extension"], category_title: "Crypto Wallet (MetaMask)" },
-    AppSignature { name: "Trust Wallet", subcategory: "crypto_exchanges", keywords: &["trustwallet.com", "trust wallet"], category_title: "Crypto Wallet (Trust Wallet)" },
-    AppSignature { name: "Ledger", subcategory: "crypto_exchanges", keywords: &["ledger.com", "ledger live", "ledger hardware"], category_title: "Hardware Wallet (Ledger)" },
-    AppSignature { name: "Trezor", subcategory: "crypto_exchanges", keywords: &["trezor.io", "trezor wallet", "trezor suite"], category_title: "Hardware Wallet (Trezor)" },
-    AppSignature { name: "Bybit", subcategory: "crypto_exchanges", keywords: &["bybit.com", "bybit exchange"], category_title: "Crypto Exchange (Bybit)" },
-    AppSignature { name: "OKX", subcategory: "crypto_exchanges", keywords: &["okx.com", "okex.com"], category_title: "Crypto Exchange (OKX)" },
-    AppSignature { name: "Bitfinex", subcategory: "crypto_exchanges", keywords: &["bitfinex.com"], category_title: "Crypto Exchange (Bitfinex)" },
-    AppSignature { name: "Uniswap", subcategory: "crypto_exchanges", keywords: &["uniswap.org", "uniswap protocol"], category_title: "DeFi DEX (Uniswap)" },
-    AppSignature { name: "Phantom", subcategory: "crypto_exchanges", keywords: &["phantom.app", "phantom wallet"], category_title: "Solana Wallet (Phantom)" },
-    AppSignature { name: "Exodus", subcategory: "crypto_exchanges", keywords: &["exodus.com", "exodus wallet"], category_title: "Crypto Wallet (Exodus)" },
-    AppSignature { name: "Paxful", subcategory: "crypto_exchanges", keywords: &["paxful.com", "paxful p2p"], category_title: "P2P Crypto (Paxful)" },
-    AppSignature { name: "Gemini", subcategory: "crypto_exchanges", keywords: &["gemini.com", "gemini exchange"], category_title: "Crypto Exchange (Gemini)" },
+    // 🌐 SOCIAL MEDIA & COMMUNITIES
+    AppSignature { name: "Snapchat", domain_id: "social_media", subcategory: "snapchat", keywords: &["snapchat.com", "sc-corp.com", "team snapchat"], category_title: "Social Media (Snapchat)" },
+    AppSignature { name: "Twitter / X", domain_id: "social_media", subcategory: "twitter_x", keywords: &["twitter.com", "x.com", "api.twitter.com", "twittermail.com"], category_title: "Social Network (Twitter/X)" },
+    AppSignature { name: "Instagram", domain_id: "social_media", subcategory: "instagram", keywords: &["instagram.com", "instagr.am", "mail.instagram.com"], category_title: "Social Network (Instagram)" },
+    AppSignature { name: "Facebook", domain_id: "social_media", subcategory: "facebook", keywords: &["facebook.com", "fb.com", "facebookmail.com"], category_title: "Social Network (Facebook)" },
+    AppSignature { name: "TikTok", domain_id: "social_media", subcategory: "tiktok", keywords: &["tiktok.com", "byteoversea.com", "tiktokmail.com"], category_title: "Social Video (TikTok)" },
+    AppSignature { name: "LinkedIn", domain_id: "social_media", subcategory: "linkedin", keywords: &["linkedin.com", "linkedinmail.com"], category_title: "Professional Network (LinkedIn)" },
+    AppSignature { name: "Reddit", domain_id: "social_media", subcategory: "reddit", keywords: &["reddit.com", "redditmail.com"], category_title: "Social Community (Reddit)" },
+    AppSignature { name: "Pinterest", domain_id: "social_media", subcategory: "pinterest", keywords: &["pinterest.com", "pinterestmail.com"], category_title: "Social Platform (Pinterest)" },
+    AppSignature { name: "YouTube", domain_id: "social_media", subcategory: "youtube", keywords: &["youtube.com", "youtu.be"], category_title: "Video Platform (YouTube)" },
+    AppSignature { name: "Twitch", domain_id: "social_media", subcategory: "twitch", keywords: &["twitch.tv"], category_title: "Live Streaming (Twitch)" },
+    AppSignature { name: "Tumblr", domain_id: "social_media", subcategory: "tumblr", keywords: &["tumblr.com"], category_title: "Social Blog (Tumblr)" },
+    AppSignature { name: "Threads", domain_id: "social_media", subcategory: "threads", keywords: &["threads.net"], category_title: "Social Network (Threads)" },
+    AppSignature { name: "Bluesky", domain_id: "social_media", subcategory: "bluesky", keywords: &["bsky.app", "bsky.social"], category_title: "Social Network (Bluesky)" },
+    AppSignature { name: "VKontakte", domain_id: "social_media", subcategory: "vk", keywords: &["vk.com", "vkontakte.ru"], category_title: "Social Network (VKontakte)" },
 
-    // 💬 Encrypted & Anonymous Messengers
-    AppSignature { name: "Telegram", subcategory: "encrypted_chat", keywords: &["telegram.org", "t.me", "telegram messenger"], category_title: "Encrypted Messenger (Telegram)" },
-    AppSignature { name: "Signal", subcategory: "encrypted_chat", keywords: &["signal.org", "signal.me", "signal messenger"], category_title: "Private Messenger (Signal)" },
-    AppSignature { name: "WhatsApp", subcategory: "encrypted_chat", keywords: &["whatsapp.com", "wa.me", "whatsapp business"], category_title: "Messaging App (WhatsApp)" },
-    AppSignature { name: "Discord", subcategory: "encrypted_chat", keywords: &["discord.com", "discord.gg", "discordapp.com"], category_title: "Chat Platform (Discord)" },
-    AppSignature { name: "Session", subcategory: "encrypted_chat", keywords: &["getsession.org", "session messenger", "session app"], category_title: "Anonymous Chat (Session)" },
-    AppSignature { name: "Threema", subcategory: "encrypted_chat", keywords: &["threema.ch", "threema id"], category_title: "Secure Messenger (Threema)" },
-    AppSignature { name: "Wickr", subcategory: "encrypted_chat", keywords: &["wickr.com", "wickr me", "wickr pro"], category_title: "Ephemeral Chat (Wickr)" },
-    AppSignature { name: "Element/Matrix", subcategory: "encrypted_chat", keywords: &["element.io", "matrix.org"], category_title: "Matrix Protocol (Element)" },
-    AppSignature { name: "Viber", subcategory: "encrypted_chat", keywords: &["viber.com"], category_title: "Messaging App (Viber)" },
-    AppSignature { name: "WeChat", subcategory: "encrypted_chat", keywords: &["wechat.com", "weixin.qq.com"], category_title: "Messaging App (WeChat)" },
+    // 💬 MESSAGING & ENCRYPTED CHAT
+    AppSignature { name: "Telegram", domain_id: "messaging_apps", subcategory: "telegram", keywords: &["telegram.org", "t.me", "telegram messenger"], category_title: "Encrypted Messenger (Telegram)" },
+    AppSignature { name: "Signal", domain_id: "messaging_apps", subcategory: "signal", keywords: &["signal.org", "signal.me", "signal messenger"], category_title: "Private Messenger (Signal)" },
+    AppSignature { name: "WhatsApp", domain_id: "messaging_apps", subcategory: "whatsapp", keywords: &["whatsapp.com", "wa.me", "whatsapp business"], category_title: "Messaging App (WhatsApp)" },
+    AppSignature { name: "Discord", domain_id: "messaging_apps", subcategory: "discord", keywords: &["discord.com", "discord.gg", "discordapp.com"], category_title: "Chat Platform (Discord)" },
+    AppSignature { name: "Session", domain_id: "messaging_apps", subcategory: "session", keywords: &["getsession.org", "session messenger"], category_title: "Anonymous Chat (Session)" },
+    AppSignature { name: "Threema", domain_id: "messaging_apps", subcategory: "threema", keywords: &["threema.ch", "threema id"], category_title: "Secure Messenger (Threema)" },
+    AppSignature { name: "Wickr", domain_id: "messaging_apps", subcategory: "wickr", keywords: &["wickr.com", "wickr me"], category_title: "Ephemeral Chat (Wickr)" },
+    AppSignature { name: "Element / Matrix", domain_id: "messaging_apps", subcategory: "matrix", keywords: &["element.io", "matrix.org"], category_title: "Matrix Protocol (Element)" },
+    AppSignature { name: "Viber", domain_id: "messaging_apps", subcategory: "viber", keywords: &["viber.com"], category_title: "Messaging App (Viber)" },
+    AppSignature { name: "WeChat", domain_id: "messaging_apps", subcategory: "wechat", keywords: &["wechat.com", "weixin.qq.com"], category_title: "Messaging App (WeChat)" },
+    AppSignature { name: "Line", domain_id: "messaging_apps", subcategory: "line", keywords: &["line.me", "naver.jp"], category_title: "Messaging App (Line)" },
+    AppSignature { name: "Skype", domain_id: "messaging_apps", subcategory: "skype", keywords: &["skype.com", "skype.net"], category_title: "VoIP & Chat (Skype)" },
+    AppSignature { name: "Kik", domain_id: "messaging_apps", subcategory: "kik", keywords: &["kik.com"], category_title: "Messaging App (Kik)" },
 
-    // 🌐 Social Media & Community
-    AppSignature { name: "Twitter/X", subcategory: "social_media", keywords: &["twitter.com", "x.com", "api.twitter.com"], category_title: "Social Network (Twitter/X)" },
-    AppSignature { name: "Instagram", subcategory: "social_media", keywords: &["instagram.com", "instagr.am"], category_title: "Social Network (Instagram)" },
-    AppSignature { name: "Facebook", subcategory: "social_media", keywords: &["facebook.com", "fb.com", "facebookmail.com"], category_title: "Social Network (Facebook)" },
-    AppSignature { name: "TikTok", subcategory: "social_media", keywords: &["tiktok.com", "byteoversea.com"], category_title: "Video Social (TikTok)" },
-    AppSignature { name: "LinkedIn", subcategory: "social_media", keywords: &["linkedin.com"], category_title: "Professional Network (LinkedIn)" },
-    AppSignature { name: "Reddit", subcategory: "social_media", keywords: &["reddit.com", "redditmail.com"], category_title: "Community Platform (Reddit)" },
-    AppSignature { name: "Snapchat", subcategory: "social_media", keywords: &["snapchat.com", "sc-corp.com"], category_title: "Social App (Snapchat)" },
-    AppSignature { name: "Pinterest", subcategory: "social_media", keywords: &["pinterest.com"], category_title: "Social Platform (Pinterest)" },
-    AppSignature { name: "YouTube", subcategory: "social_media", keywords: &["youtube.com", "youtu.be"], category_title: "Video Platform (YouTube)" },
-    AppSignature { name: "Twitch", subcategory: "social_media", keywords: &["twitch.tv"], category_title: "Streaming Platform (Twitch)" },
+    // 🪙 CRYPTO PLATFORMS, EXCHANGES & WEB3
+    AppSignature { name: "Binance", domain_id: "crypto_platforms", subcategory: "binance", keywords: &["binance.com", "binance exchange", "binance verification"], category_title: "Crypto Exchange (Binance)" },
+    AppSignature { name: "Coinbase", domain_id: "crypto_platforms", subcategory: "coinbase", keywords: &["coinbase.com", "coinbase pro", "coinbase commerce"], category_title: "Crypto Platform (Coinbase)" },
+    AppSignature { name: "Kraken", domain_id: "crypto_platforms", subcategory: "kraken", keywords: &["kraken.com", "kraken exchange"], category_title: "Crypto Exchange (Kraken)" },
+    AppSignature { name: "KuCoin", domain_id: "crypto_platforms", subcategory: "kucoin", keywords: &["kucoin.com", "kucoin exchange"], category_title: "Crypto Exchange (KuCoin)" },
+    AppSignature { name: "MetaMask", domain_id: "crypto_platforms", subcategory: "metamask", keywords: &["metamask.io", "metamask wallet"], category_title: "Crypto Wallet (MetaMask)" },
+    AppSignature { name: "Trust Wallet", domain_id: "crypto_platforms", subcategory: "trust_wallet", keywords: &["trustwallet.com", "trust wallet"], category_title: "Crypto Wallet (Trust Wallet)" },
+    AppSignature { name: "Ledger", domain_id: "crypto_platforms", subcategory: "ledger", keywords: &["ledger.com", "ledger live"], category_title: "Hardware Wallet (Ledger)" },
+    AppSignature { name: "Trezor", domain_id: "crypto_platforms", subcategory: "trezor", keywords: &["trezor.io", "trezor suite"], category_title: "Hardware Wallet (Trezor)" },
+    AppSignature { name: "Bybit", domain_id: "crypto_platforms", subcategory: "bybit", keywords: &["bybit.com", "bybit exchange"], category_title: "Crypto Exchange (Bybit)" },
+    AppSignature { name: "OKX", domain_id: "crypto_platforms", subcategory: "okx", keywords: &["okx.com", "okex.com"], category_title: "Crypto Exchange (OKX)" },
+    AppSignature { name: "Bitfinex", domain_id: "crypto_platforms", subcategory: "bitfinex", keywords: &["bitfinex.com"], category_title: "Crypto Exchange (Bitfinex)" },
+    AppSignature { name: "Uniswap", domain_id: "crypto_platforms", subcategory: "uniswap", keywords: &["uniswap.org"], category_title: "DeFi DEX (Uniswap)" },
+    AppSignature { name: "Phantom", domain_id: "crypto_platforms", subcategory: "phantom", keywords: &["phantom.app", "phantom wallet"], category_title: "Solana Wallet (Phantom)" },
+    AppSignature { name: "Exodus", domain_id: "crypto_platforms", subcategory: "exodus", keywords: &["exodus.com", "exodus wallet"], category_title: "Crypto Wallet (Exodus)" },
+    AppSignature { name: "Paxful", domain_id: "crypto_platforms", subcategory: "paxful", keywords: &["paxful.com", "paxful p2p"], category_title: "P2P Crypto (Paxful)" },
+    AppSignature { name: "Gemini", domain_id: "crypto_platforms", subcategory: "gemini", keywords: &["gemini.com", "gemini exchange"], category_title: "Crypto Exchange (Gemini)" },
+    AppSignature { name: "OpenSea", domain_id: "crypto_platforms", subcategory: "opensea", keywords: &["opensea.io"], category_title: "NFT Marketplace (OpenSea)" },
+    AppSignature { name: "BitMEX", domain_id: "crypto_platforms", subcategory: "bitmex", keywords: &["bitmex.com"], category_title: "Crypto Derivatives (BitMEX)" },
 
-    // ❤️ Dating & Romance Apps
-    AppSignature { name: "Tinder", subcategory: "dating_apps", keywords: &["gotinder.com", "tinder.com"], category_title: "Dating App (Tinder)" },
-    AppSignature { name: "Bumble", subcategory: "dating_apps", keywords: &["bumble.com"], category_title: "Dating App (Bumble)" },
-    AppSignature { name: "Hinge", subcategory: "dating_apps", keywords: &["hinge.co"], category_title: "Dating App (Hinge)" },
-    AppSignature { name: "Badoo", subcategory: "dating_apps", keywords: &["badoo.com"], category_title: "Dating App (Badoo)" },
-    AppSignature { name: "Grindr", subcategory: "dating_apps", keywords: &["grindr.com"], category_title: "Dating App (Grindr)" },
-    AppSignature { name: "Ashley Madison", subcategory: "dating_apps", keywords: &["ashleymadison.com"], category_title: "Discreet Dating (Ashley Madison)" },
-    AppSignature { name: "OnlyFans", subcategory: "dating_apps", keywords: &["onlyfans.com"], category_title: "Subscription Platform (OnlyFans)" },
-    AppSignature { name: "Fansly", subcategory: "dating_apps", keywords: &["fansly.com"], category_title: "Subscription Platform (Fansly)" },
+    // ❤️ DATING & ROMANCE PLATFORMS
+    AppSignature { name: "Tinder", domain_id: "dating_apps", subcategory: "tinder", keywords: &["gotinder.com", "tinder.com"], category_title: "Dating App (Tinder)" },
+    AppSignature { name: "Bumble", domain_id: "dating_apps", subcategory: "bumble", keywords: &["bumble.com"], category_title: "Dating App (Bumble)" },
+    AppSignature { name: "Hinge", domain_id: "dating_apps", subcategory: "hinge", keywords: &["hinge.co"], category_title: "Dating App (Hinge)" },
+    AppSignature { name: "Badoo", domain_id: "dating_apps", subcategory: "badoo", keywords: &["badoo.com"], category_title: "Dating App (Badoo)" },
+    AppSignature { name: "Grindr", domain_id: "dating_apps", subcategory: "grindr", keywords: &["grindr.com"], category_title: "Dating App (Grindr)" },
+    AppSignature { name: "Match.com", domain_id: "dating_apps", subcategory: "match", keywords: &["match.com"], category_title: "Dating Service (Match.com)" },
+    AppSignature { name: "OkCupid", domain_id: "dating_apps", subcategory: "okcupid", keywords: &["okcupid.com"], category_title: "Dating App (OkCupid)" },
+    AppSignature { name: "Ashley Madison", domain_id: "dating_apps", subcategory: "ashley_madison", keywords: &["ashleymadison.com"], category_title: "Discreet Dating (Ashley Madison)" },
+    AppSignature { name: "OnlyFans", domain_id: "dating_apps", subcategory: "onlyfans", keywords: &["onlyfans.com"], category_title: "Subscription Platform (OnlyFans)" },
+    AppSignature { name: "Fansly", domain_id: "dating_apps", subcategory: "fansly", keywords: &["fansly.com"], category_title: "Subscription Platform (Fansly)" },
 
-    // 🏦 Fintech, Neobanks & Payment Apps
-    AppSignature { name: "PayPal", subcategory: "fintech_neobanks", keywords: &["paypal.com", "paypal-service", "service@paypal"], category_title: "Payment Service (PayPal)" },
-    AppSignature { name: "Stripe", subcategory: "fintech_neobanks", keywords: &["stripe.com"], category_title: "Payment Gateway (Stripe)" },
-    AppSignature { name: "Venmo", subcategory: "fintech_neobanks", keywords: &["venmo.com"], category_title: "P2P Payments (Venmo)" },
-    AppSignature { name: "Cash App", subcategory: "fintech_neobanks", keywords: &["cash.app", "square.com"], category_title: "P2P Payments (Cash App)" },
-    AppSignature { name: "Revolut", subcategory: "fintech_neobanks", keywords: &["revolut.com"], category_title: "Digital Bank (Revolut)" },
-    AppSignature { name: "Wise", subcategory: "fintech_neobanks", keywords: &["wise.com", "transferwise.com"], category_title: "Cross-Border Payments (Wise)" },
-    AppSignature { name: "Payoneer", subcategory: "fintech_neobanks", keywords: &["payoneer.com"], category_title: "Payment Platform (Payoneer)" },
-    AppSignature { name: "Zelle", subcategory: "fintech_neobanks", keywords: &["zellepay.com", "zelle payment"], category_title: "Bank Network (Zelle)" },
-    AppSignature { name: "Robinhood", subcategory: "fintech_neobanks", keywords: &["robinhood.com"], category_title: "Trading App (Robinhood)" },
-    AppSignature { name: "eToro", subcategory: "fintech_neobanks", keywords: &["etoro.com"], category_title: "Trading Platform (eToro)" },
-    AppSignature { name: "Webull", subcategory: "fintech_neobanks", keywords: &["webull.com"], category_title: "Trading App (Webull)" },
+    // 🏦 FINTECH, NEOBANKS & PAYMENTS
+    AppSignature { name: "PayPal", domain_id: "fintech_banking", subcategory: "paypal", keywords: &["paypal.com", "service@paypal"], category_title: "Payment Service (PayPal)" },
+    AppSignature { name: "Stripe", domain_id: "fintech_banking", subcategory: "stripe", keywords: &["stripe.com"], category_title: "Payment Gateway (Stripe)" },
+    AppSignature { name: "Venmo", domain_id: "fintech_banking", subcategory: "venmo", keywords: &["venmo.com"], category_title: "P2P Payments (Venmo)" },
+    AppSignature { name: "Cash App", domain_id: "fintech_banking", subcategory: "cash_app", keywords: &["cash.app", "square.com"], category_title: "P2P Payments (Cash App)" },
+    AppSignature { name: "Revolut", domain_id: "fintech_banking", subcategory: "revolut", keywords: &["revolut.com"], category_title: "Digital Bank (Revolut)" },
+    AppSignature { name: "Wise", domain_id: "fintech_banking", subcategory: "wise", keywords: &["wise.com", "transferwise.com"], category_title: "Cross-Border Payments (Wise)" },
+    AppSignature { name: "Payoneer", domain_id: "fintech_banking", subcategory: "payoneer", keywords: &["payoneer.com"], category_title: "Payment Platform (Payoneer)" },
+    AppSignature { name: "Zelle", domain_id: "fintech_banking", subcategory: "zelle", keywords: &["zellepay.com"], category_title: "Bank Network (Zelle)" },
+    AppSignature { name: "Robinhood", domain_id: "fintech_banking", subcategory: "robinhood", keywords: &["robinhood.com"], category_title: "Trading App (Robinhood)" },
+    AppSignature { name: "eToro", domain_id: "fintech_banking", subcategory: "etoro", keywords: &["etoro.com"], category_title: "Trading Platform (eToro)" },
+    AppSignature { name: "Monzo", domain_id: "fintech_banking", subcategory: "monzo", keywords: &["monzo.com"], category_title: "Digital Bank (Monzo)" },
+    AppSignature { name: "N26", domain_id: "fintech_banking", subcategory: "n26", keywords: &["n26.com"], category_title: "Digital Bank (N26)" },
+    AppSignature { name: "Klarna", domain_id: "fintech_banking", subcategory: "klarna", keywords: &["klarna.com"], category_title: "BNPL Fintech (Klarna)" },
+    AppSignature { name: "Western Union", domain_id: "fintech_banking", subcategory: "western_union", keywords: &["westernunion.com"], category_title: "Money Transfer (Western Union)" },
 
-    // 🛡️ Privacy, VPNs & Anonymity Tools
-    AppSignature { name: "ProtonMail", subcategory: "vpns_anonymity", keywords: &["proton.me", "protonmail.com", "protonvpn"], category_title: "Encrypted Mail (Proton)" },
-    AppSignature { name: "Tutanota / Tuta", subcategory: "vpns_anonymity", keywords: &["tuta.com", "tutanota.com"], category_title: "Encrypted Mail (Tuta)" },
-    AppSignature { name: "SimpleLogin", subcategory: "vpns_anonymity", keywords: &["simplelogin.io", "simplelogin.co"], category_title: "Email Alias (SimpleLogin)" },
-    AppSignature { name: "DuckDuckGo", subcategory: "vpns_anonymity", keywords: &["duck.com", "duckduckgo.com"], category_title: "Private Relay (DuckDuckGo)" },
-    AppSignature { name: "NordVPN", subcategory: "vpns_anonymity", keywords: &["nordvpn.com", "nordaccount.com"], category_title: "VPN Service (NordVPN)" },
-    AppSignature { name: "ExpressVPN", subcategory: "vpns_anonymity", keywords: &["expressvpn.com"], category_title: "VPN Service (ExpressVPN)" },
-    AppSignature { name: "Mullvad", subcategory: "vpns_anonymity", keywords: &["mullvad.net"], category_title: "Anonymous VPN (Mullvad)" },
-    AppSignature { name: "Surfshark", subcategory: "vpns_anonymity", keywords: &["surfshark.com"], category_title: "VPN Service (Surfshark)" },
+    // 📱 MOBILE & ON-DEMAND APPS
+    AppSignature { name: "Uber", domain_id: "mobile_apps", subcategory: "uber", keywords: &["uber.com", "ubereats.com"], category_title: "Ride & Delivery (Uber)" },
+    AppSignature { name: "Lyft", domain_id: "mobile_apps", subcategory: "lyft", keywords: &["lyft.com", "lyftmail.com"], category_title: "Rideshare App (Lyft)" },
+    AppSignature { name: "DoorDash", domain_id: "mobile_apps", subcategory: "doordash", keywords: &["doordash.com"], category_title: "Food Delivery (DoorDash)" },
+    AppSignature { name: "Deliveroo", domain_id: "mobile_apps", subcategory: "deliveroo", keywords: &["deliveroo.co.uk", "deliveroo.com"], category_title: "Food Delivery (Deliveroo)" },
+    AppSignature { name: "Instacart", domain_id: "mobile_apps", subcategory: "instacart", keywords: &["instacart.com"], category_title: "Grocery Delivery (Instacart)" },
+    AppSignature { name: "Airbnb", domain_id: "mobile_apps", subcategory: "airbnb", keywords: &["airbnb.com", "airbnbmail.com"], category_title: "Lodging Booking (Airbnb)" },
+    AppSignature { name: "Booking.com", domain_id: "mobile_apps", subcategory: "booking", keywords: &["booking.com"], category_title: "Travel Booking (Booking.com)" },
+    AppSignature { name: "Spotify", domain_id: "mobile_apps", subcategory: "spotify", keywords: &["spotify.com"], category_title: "Music Streaming (Spotify)" },
+    AppSignature { name: "Netflix", domain_id: "mobile_apps", subcategory: "netflix", keywords: &["netflix.com"], category_title: "Video Streaming (Netflix)" },
+    AppSignature { name: "Disney+", domain_id: "mobile_apps", subcategory: "disney", keywords: &["disneyplus.com", "disneystreaming.com"], category_title: "Streaming (Disney+)" },
+    AppSignature { name: "Apple Services", domain_id: "mobile_apps", subcategory: "apple", keywords: &["apple.com", "itunes.com", "icloud.com"], category_title: "Apple Ecosystem (iOS/iCloud)" },
+    AppSignature { name: "Google Play", domain_id: "mobile_apps", subcategory: "google_play", keywords: &["play.google.com"], category_title: "App Store (Google Play)" },
+    AppSignature { name: "Duolingo", domain_id: "mobile_apps", subcategory: "duolingo", keywords: &["duolingo.com"], category_title: "Language App (Duolingo)" },
+    AppSignature { name: "Strava", domain_id: "mobile_apps", subcategory: "strava", keywords: &["strava.com"], category_title: "Fitness GPS (Strava)" },
 
-    // 🖥️ Remote Access & Control
-    AppSignature { name: "AnyDesk", subcategory: "remote_access", keywords: &["anydesk.com", "anydesk-id"], category_title: "Remote Desktop (AnyDesk)" },
-    AppSignature { name: "TeamViewer", subcategory: "remote_access", keywords: &["teamviewer.com", "teamviewer session"], category_title: "Remote Desktop (TeamViewer)" },
-    AppSignature { name: "RustDesk", subcategory: "remote_access", keywords: &["rustdesk.com"], category_title: "Remote Desktop (RustDesk)" },
-    AppSignature { name: "Splashtop", subcategory: "remote_access", keywords: &["splashtop.com"], category_title: "Remote Desktop (Splashtop)" },
-    AppSignature { name: "LogMeIn", subcategory: "remote_access", keywords: &["logmein.com", "gotomypc.com"], category_title: "Remote Desktop (LogMeIn)" },
+    // 🛍️ E-COMMERCE & MARKETPLACES
+    AppSignature { name: "Amazon", domain_id: "ecommerce_shopping", subcategory: "amazon", keywords: &["amazon.com", "auto-confirm@amazon", "amazon.co.uk", "amazon.de"], category_title: "Marketplace (Amazon)" },
+    AppSignature { name: "eBay", domain_id: "ecommerce_shopping", subcategory: "ebay", keywords: &["ebay.com", "ebay.co.uk", "ebay@ebay"], category_title: "Auction & Marketplace (eBay)" },
+    AppSignature { name: "AliExpress", domain_id: "ecommerce_shopping", subcategory: "aliexpress", keywords: &["aliexpress.com", "alibaba.com"], category_title: "Marketplace (AliExpress)" },
+    AppSignature { name: "Temu", domain_id: "ecommerce_shopping", subcategory: "temu", keywords: &["temu.com", "temu-mail.com"], category_title: "Marketplace (Temu)" },
+    AppSignature { name: "Shein", domain_id: "ecommerce_shopping", subcategory: "shein", keywords: &["shein.com"], category_title: "Fast Fashion (Shein)" },
+    AppSignature { name: "Etsy", domain_id: "ecommerce_shopping", subcategory: "etsy", keywords: &["etsy.com"], category_title: "Craft Marketplace (Etsy)" },
+    AppSignature { name: "Walmart", domain_id: "ecommerce_shopping", subcategory: "walmart", keywords: &["walmart.com"], category_title: "Retail (Walmart)" },
+    AppSignature { name: "Vinted", domain_id: "ecommerce_shopping", subcategory: "vinted", keywords: &["vinted.com", "vinted.fr"], category_title: "Resale App (Vinted)" },
+    AppSignature { name: "StockX", domain_id: "ecommerce_shopping", subcategory: "stockx", keywords: &["stockx.com"], category_title: "Sneaker/Goods (StockX)" },
 
-    // ☁️ Cloud Storage & Collaboration
-    AppSignature { name: "Google Drive", subcategory: "cloud_storage", keywords: &["drive.google.com", "docs.google.com"], category_title: "Cloud Storage (Google Drive)" },
-    AppSignature { name: "Dropbox", subcategory: "cloud_storage", keywords: &["dropbox.com", "dropboxmail.com"], category_title: "Cloud Storage (Dropbox)" },
-    AppSignature { name: "iCloud", subcategory: "cloud_storage", keywords: &["icloud.com", "apple.com/icloud"], category_title: "Cloud Storage (Apple iCloud)" },
-    AppSignature { name: "OneDrive", subcategory: "cloud_storage", keywords: &["onedrive.live.com", "sharepoint.com"], category_title: "Cloud Storage (OneDrive)" },
-    AppSignature { name: "Mega.nz", subcategory: "cloud_storage", keywords: &["mega.nz", "mega.io", "mega.co.nz"], category_title: "Encrypted Cloud (Mega)" },
-    AppSignature { name: "Slack", subcategory: "cloud_storage", keywords: &["slack.com", "slackmail.com"], category_title: "Workspace (Slack)" },
-    AppSignature { name: "Notion", subcategory: "cloud_storage", keywords: &["notion.so", "mail.notion.so"], category_title: "Workspace (Notion)" },
-    AppSignature { name: "Zoom", subcategory: "cloud_storage", keywords: &["zoom.us", "zoom meeting"], category_title: "Video Meetings (Zoom)" },
-    AppSignature { name: "GitHub", subcategory: "cloud_storage", keywords: &["github.com", "notifications@github.com"], category_title: "Code Repository (GitHub)" },
+    // 🤖 AI, CLOUD & DEVELOPER PLATFORMS
+    AppSignature { name: "OpenAI / ChatGPT", domain_id: "ai_cloud_dev", subcategory: "openai", keywords: &["openai.com", "chatgpt.com"], category_title: "AI Platform (OpenAI/ChatGPT)" },
+    AppSignature { name: "Anthropic Claude", domain_id: "ai_cloud_dev", subcategory: "anthropic", keywords: &["anthropic.com", "claude.ai"], category_title: "AI Platform (Anthropic/Claude)" },
+    AppSignature { name: "Midjourney", domain_id: "ai_cloud_dev", subcategory: "midjourney", keywords: &["midjourney.com"], category_title: "Generative AI (Midjourney)" },
+    AppSignature { name: "GitHub", domain_id: "ai_cloud_dev", subcategory: "github", keywords: &["github.com", "notifications@github.com"], category_title: "Code Repository (GitHub)" },
+    AppSignature { name: "GitLab", domain_id: "ai_cloud_dev", subcategory: "gitlab", keywords: &["gitlab.com"], category_title: "Code Repository (GitLab)" },
+    AppSignature { name: "AWS Cloud", domain_id: "ai_cloud_dev", subcategory: "aws", keywords: &["amazonaws.com", "aws.amazon.com"], category_title: "Cloud Services (AWS)" },
+    AppSignature { name: "Google Cloud", domain_id: "ai_cloud_dev", subcategory: "gcp", keywords: &["cloud.google.com"], category_title: "Cloud Services (GCP)" },
+    AppSignature { name: "Vercel", domain_id: "ai_cloud_dev", subcategory: "vercel", keywords: &["vercel.com"], category_title: "Cloud Deployment (Vercel)" },
+    AppSignature { name: "Cloudflare", domain_id: "ai_cloud_dev", subcategory: "cloudflare", keywords: &["cloudflare.com"], category_title: "Infrastructure (Cloudflare)" },
 
-    // 🛒 E-Commerce & Marketplaces
-    AppSignature { name: "Amazon", subcategory: "ecommerce_marketplaces", keywords: &["amazon.com", "auto-confirm@amazon.com", "shipment-tracking@amazon"], category_title: "Marketplace (Amazon)" },
-    AppSignature { name: "eBay", subcategory: "ecommerce_marketplaces", keywords: &["ebay.com", "ebay@ebay.com"], category_title: "Marketplace (eBay)" },
-    AppSignature { name: "AliExpress", subcategory: "ecommerce_marketplaces", keywords: &["aliexpress.com", "alibaba.com"], category_title: "Marketplace (AliExpress)" },
+    // 🛡️ VPNS, ENCRYPTED MAIL & PRIVACY
+    AppSignature { name: "ProtonMail", domain_id: "vpns_privacy", subcategory: "proton", keywords: &["proton.me", "protonmail.com", "protonvpn.com"], category_title: "Encrypted Mail (Proton)" },
+    AppSignature { name: "Tutanota / Tuta", domain_id: "vpns_privacy", subcategory: "tuta", keywords: &["tuta.com", "tutanota.com"], category_title: "Encrypted Mail (Tuta)" },
+    AppSignature { name: "SimpleLogin", domain_id: "vpns_privacy", subcategory: "simplelogin", keywords: &["simplelogin.io", "simplelogin.co"], category_title: "Email Alias (SimpleLogin)" },
+    AppSignature { name: "DuckDuckGo", domain_id: "vpns_privacy", subcategory: "duckduckgo", keywords: &["duck.com", "duckduckgo.com"], category_title: "Privacy Relay (DuckDuckGo)" },
+    AppSignature { name: "NordVPN", domain_id: "vpns_privacy", subcategory: "nordvpn", keywords: &["nordvpn.com", "nordaccount.com"], category_title: "VPN Service (NordVPN)" },
+    AppSignature { name: "ExpressVPN", domain_id: "vpns_privacy", subcategory: "expressvpn", keywords: &["expressvpn.com"], category_title: "VPN Service (ExpressVPN)" },
+    AppSignature { name: "Mullvad VPN", domain_id: "vpns_privacy", subcategory: "mullvad", keywords: &["mullvad.net"], category_title: "Anonymous VPN (Mullvad)" },
+    AppSignature { name: "1Password", domain_id: "vpns_privacy", subcategory: "onepassword", keywords: &["1password.com"], category_title: "Password Manager (1Password)" },
+    AppSignature { name: "Bitwarden", domain_id: "vpns_privacy", subcategory: "bitwarden", keywords: &["bitwarden.com"], category_title: "Password Manager (Bitwarden)" },
+
+    // 🖥️ REMOTE ACCESS & PRODUCTIVITY
+    AppSignature { name: "AnyDesk", domain_id: "remote_collab", subcategory: "anydesk", keywords: &["anydesk.com"], category_title: "Remote Desktop (AnyDesk)" },
+    AppSignature { name: "TeamViewer", domain_id: "remote_collab", subcategory: "teamviewer", keywords: &["teamviewer.com"], category_title: "Remote Desktop (TeamViewer)" },
+    AppSignature { name: "RustDesk", domain_id: "remote_collab", subcategory: "rustdesk", keywords: &["rustdesk.com"], category_title: "Remote Desktop (RustDesk)" },
+    AppSignature { name: "Zoom", domain_id: "remote_collab", subcategory: "zoom", keywords: &["zoom.us"], category_title: "Video Meetings (Zoom)" },
+    AppSignature { name: "Slack", domain_id: "remote_collab", subcategory: "slack", keywords: &["slack.com", "slackmail.com"], category_title: "Workspace (Slack)" },
+    AppSignature { name: "Notion", domain_id: "remote_collab", subcategory: "notion", keywords: &["notion.so"], category_title: "Workspace (Notion)" },
+    AppSignature { name: "Dropbox", domain_id: "remote_collab", subcategory: "dropbox", keywords: &["dropbox.com", "dropboxmail.com"], category_title: "Cloud Storage (Dropbox)" },
+    AppSignature { name: "Google Drive", domain_id: "remote_collab", subcategory: "gdrive", keywords: &["drive.google.com", "docs.google.com"], category_title: "Cloud Storage (Google Drive)" },
+    AppSignature { name: "Microsoft OneDrive", domain_id: "remote_collab", subcategory: "onedrive", keywords: &["onedrive.live.com", "sharepoint.com"], category_title: "Cloud Storage (OneDrive)" },
+    AppSignature { name: "Mega.nz", domain_id: "remote_collab", subcategory: "mega", keywords: &["mega.nz", "mega.io"], category_title: "Encrypted Cloud (Mega)" },
+
+    // 🎮 GAMING, ESPORTS & GAMBLING
+    AppSignature { name: "Steam", domain_id: "gaming_gambling", subcategory: "steam", keywords: &["steampowered.com", "valvesoftware.com"], category_title: "Gaming Platform (Steam)" },
+    AppSignature { name: "Epic Games", domain_id: "gaming_gambling", subcategory: "epic_games", keywords: &["epicgames.com"], category_title: "Gaming Store (Epic Games)" },
+    AppSignature { name: "PlayStation", domain_id: "gaming_gambling", subcategory: "playstation", keywords: &["playstation.com", "sony.com"], category_title: "Console Network (PlayStation)" },
+    AppSignature { name: "Xbox", domain_id: "gaming_gambling", subcategory: "xbox", keywords: &["xbox.com"], category_title: "Gaming Network (Xbox)" },
+    AppSignature { name: "Roblox", domain_id: "gaming_gambling", subcategory: "roblox", keywords: &["roblox.com"], category_title: "Metaverse / Gaming (Roblox)" },
+    AppSignature { name: "Stake.com", domain_id: "gaming_gambling", subcategory: "stake", keywords: &["stake.com"], category_title: "Crypto Gambling (Stake.com)" },
+    AppSignature { name: "Bet365", domain_id: "gaming_gambling", subcategory: "bet365", keywords: &["bet365.com"], category_title: "Sportsbook (Bet365)" },
 ];
+
+/// Helper to parse clean domain from email address or URL
+fn extract_domain(email_or_url: &str) -> Option<String> {
+    if let Some(pos) = email_or_url.find('@') {
+        let domain_part = &email_or_url[pos + 1..];
+        let clean = domain_part.trim().trim_matches(|c| c == '>' || c == '<' || c == ' ' || c == ';' || c == ',');
+        if clean.contains('.') {
+            return Some(clean.to_lowercase());
+        }
+    }
+    None
+}
 
 /// Case Artifacts Summary by Taxonomy Domains (Hides 0-count domains by default)
 #[tauri::command]
@@ -245,10 +307,23 @@ pub async fn case_artifacts_summary(
     let all_artifacts = extract_all_taxonomy_artifacts(&state, &case_id).await?;
 
     let domain_defs = [
+        // Digital Footprint & App Accounts (User Identified Priority)
+        ("social_media", "Social Media & Communities", "🌐"),
+        ("mobile_apps", "Mobile Apps & On-Demand", "📱"),
+        ("crypto_platforms", "Crypto Exchanges & Web3", "🪙"),
+        ("messaging_apps", "Encrypted & Instant Messengers", "💬"),
+        ("dating_apps", "Dating & Romance Platforms", "❤️"),
+        ("fintech_banking", "Fintech & Digital Banking", "🏦"),
+        ("ecommerce_shopping", "E-Commerce & Marketplaces", "🛍️"),
+        ("ai_cloud_dev", "AI, Cloud & Developer Tools", "🤖"),
+        ("vpns_privacy", "VPNs, Privacy & Anonymous Mail", "🛡️"),
+        ("remote_collab", "Remote Desktop & Collaboration", "🖥️"),
+        ("gaming_gambling", "Gaming, Esports & Gambling", "🎮"),
+
+        // Forensic Extractions
         ("credentials", "Credentials & Secrets", "🔑"),
         ("crypto", "Cryptocurrency & Seeds", "🪙"),
-        ("app_services", "Apps, Web Services & Social", "📱"),
-        ("financial", "Financial & Banking", "🏦"),
+        ("financial", "Financial & Banking Numbers", "💳"),
         ("identity_docs", "PII & Identity Documents", "🪪"),
         ("locations", "Locations, Travel & Addresses", "📍"),
         ("contraband", "Threats & Contraband", "🛑"),
@@ -577,8 +652,9 @@ async fn extract_all_taxonomy_artifacts(
         let mut seen: HashSet<String> = HashSet::new();
 
         // ─────────────────────────────────────────────────────────────────────────
-        // 0. APPS, WEB SERVICES, SOCIAL MEDIA & CRYPTO PLATFORMS DETECTION
+        // 0. APPS, SOCIAL MEDIA, MESSENGERS & CLOUD SERVICES SIGNATURE ENGINE
         // ─────────────────────────────────────────────────────────────────────────
+        let mut app_matched = false;
         for sig in APP_SIGNATURES {
             let matched = sig.keywords.iter().any(|&kw| {
                 from_lower.contains(kw) 
@@ -588,16 +664,17 @@ async fn extract_all_taxonomy_artifacts(
             });
 
             if matched {
-                let key = format!("app:{}", sig.name);
+                app_matched = true;
+                let key = format!("app:{}:{}", sig.domain_id, sig.name);
                 if seen.insert(key) {
                     artifacts.push(ForensicTaxonomyArtifact {
                         id: generate_id(),
-                        domain_id: "app_services".to_string(),
+                        domain_id: sig.domain_id.to_string(),
                         subcategory_id: sig.subcategory.to_string(),
                         title: sig.category_title.to_string(),
                         primary_value: sig.name.to_string(),
                         secondary_value: Some(format!("User/Recipient: {}", to_addrs)),
-                        details: format!("Detected active service usage or notifications from '{}'. Subject: '{}'", sig.name, subj),
+                        details: format!("Target account footprint detected on '{}'. Subject: '{}'", sig.name, subj),
                         severity: "medium".to_string(),
                         artifact_type: "derived".to_string(),
                         confidence: Some("high".to_string()),
@@ -606,6 +683,42 @@ async fn extract_all_taxonomy_artifacts(
                         email_from: from_addr.clone(),
                         date_sent_utc: date_opt.clone(),
                     });
+                }
+            }
+        }
+
+        // 0.1 Dynamic External Service Account Extractor (Catches all unknown services/apps)
+        if !app_matched {
+            if let Some(domain) = extract_domain(&from_addr) {
+                // Ignore common corporate/personal email providers from being misclassified
+                let generic_providers = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "icloud.com", "enron.com"];
+                if !generic_providers.iter().any(|&gp| domain.ends_with(gp)) && domain.contains('.') {
+                    let parts: Vec<&str> = domain.split('.').collect();
+                    if parts.len() >= 2 {
+                        let brand = parts[parts.len() - 2];
+                        if brand.len() >= 3 && !brand.chars().all(|c| c.is_ascii_digit()) {
+                            let brand_cap = format!("{}{}", brand[..1].to_uppercase(), &brand[1..]);
+                            let key = format!("dynamic_app:{}", domain);
+                            if seen.insert(key) {
+                                artifacts.push(ForensicTaxonomyArtifact {
+                                    id: generate_id(),
+                                    domain_id: "mobile_apps".to_string(),
+                                    subcategory_id: "external_services".to_string(),
+                                    title: format!("Web & Cloud Service ({})", brand_cap),
+                                    primary_value: domain.clone(),
+                                    secondary_value: Some(format!("Target: {}", to_addrs)),
+                                    details: format!("Digital account correspondence from '{}' to '{}'", domain, to_addrs),
+                                    severity: "info".to_string(),
+                                    artifact_type: "derived".to_string(),
+                                    confidence: Some("medium".to_string()),
+                                    email_id: eid.clone(),
+                                    email_subject: subj_opt.clone(),
+                                    email_from: from_addr.clone(),
+                                    date_sent_utc: date_opt.clone(),
+                                });
+                            }
+                        }
+                    }
                 }
             }
         }
