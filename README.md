@@ -2,7 +2,7 @@
 
 <img src="logo.png" alt="J12 Logo" width="380" />
 
-# <span style="color:#ffffff;">J</span><span style="color:#22c55e;">12</span> Email Forensic Suite
+# <span style="color:#22c55e;">J</span><span style="color:#ffffff;">1</span><span style="color:#22c55e;">2</span> Email Forensic Suite
 ### **Advanced Desktop Email Investigation, Artifact Carving & eDiscovery Intelligence Platform**
 
 [![Status](https://img.shields.io/badge/status-active%20production-22c55e?style=for-the-badge&logo=shield)]()
@@ -22,7 +22,7 @@
 
 ## 🎯 Executive Overview
 
-**<span style="color:#ffffff;">J</span><span style="color:#22c55e;">12</span>** is a court-admissible, multi-user desktop email forensic investigation and eDiscovery platform. Built for digital forensic examiners, incident responders, corporate fraud investigators, and law enforcement agencies, **J12** delivers high-performance parsing of massive digital mail containers (`MBOX`, `PST`, `OST`, `EML`, `MSG`, `EMLX`) and live IMAP mailboxes with instant cryptographic provenance.
+**<span style="color:#22c55e;">J</span><span style="color:#ffffff;">1</span><span style="color:#22c55e;">2</span>** is a court-admissible, multi-user desktop email forensic investigation and eDiscovery platform. Built for digital forensic examiners, incident responders, corporate fraud investigators, and law enforcement agencies, **J12** delivers high-performance parsing of massive digital mail containers (`MBOX`, `PST`, `OST`, `EML`, `MSG`, `EMLX`) and live IMAP mailboxes with instant cryptographic provenance.
 
 > **⚖️ Legal Defensibility & Standards:**
 > While no software can make evidence automatically "admissible," **J12** enforces rigorous **ISO/IEC 27037**, **NIST SP 800-86**, **SWGDE digital evidence protocols**, and **Daubert / FRE 702** standards. Every extracted header, timestamp, and body snippet maintains an immutable cryptographic trace:
@@ -105,7 +105,7 @@ Real-time threat engine surfacing spoofing attempts, lookalike sender anomalies,
 
 ## 📂 Multi-Chapter Court-Ready Forensic Reporting
 
-**<span style="color:#ffffff;">J</span><span style="color:#22c55e;">12</span>** exports exhaustive, formal forensic dossiers formatted for court submission, regulatory inquiry, and internal board presentations:
+**<span style="color:#22c55e;">J</span><span style="color:#ffffff;">1</span><span style="color:#22c55e;">2</span>** exports exhaustive, formal forensic dossiers formatted for court submission, regulatory inquiry, and internal board presentations:
 
 1. **Case Overview & Legal Privilege Metadata**: Agency markings, case file reference, examiner ID, and target subject dossier.
 2. **Evidence Sources & Provenance**: Container physical format, byte size, message tallies, and verifiable SHA-256 acquisition hashes.

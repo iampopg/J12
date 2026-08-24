@@ -29,12 +29,12 @@
   <rect x="0" y="0" width="1200" height="54" fill="#0f1724"/>
   <line x1="0" y1="54" x2="1200" y2="54" stroke="#1e293b" stroke-width="1"/>
 
-  <!-- J12 Brand Logo (J in White, 12 in Green) -->
+  <!-- J12 Brand Logo (J in Green, 1 in White, 2 in Green) -->
   <g transform="translate(18, 12)">
     <rect width="30" height="30" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
     <circle cx="15" cy="15" r="7" fill="none" stroke="#22c55e" stroke-width="2"/>
     <text x="38" y="22" class="font-sans" font-size="19" font-weight="900" letter-spacing="-0.5">
-      <tspan fill="#ffffff">J</tspan><tspan fill="#22c55e">12</tspan>
+      <tspan fill="#22c55e">J</tspan><tspan fill="#ffffff">1</tspan><tspan fill="#22c55e">2</tspan>
       <tspan fill="#94a3b8" font-size="14" font-weight="500"> Forensic Platform</tspan>
     </text>
   </g>

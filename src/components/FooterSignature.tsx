@@ -90,8 +90,9 @@ export function FooterSignature({ compact = false, style }: FooterProps) {
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontWeight: 700, color: "var(--text-1)" }}>
-          <span style={{ color: "#ffffff" }}>J</span>
-          <span style={{ color: "#22c55e" }}>12</span> Forensic Suite
+          <span style={{ color: "#22c55e" }}>J</span>
+          <span style={{ color: "#ffffff" }}>1</span>
+          <span style={{ color: "#22c55e" }}>2</span> Forensic Suite
         </span>
         <span>•</span>
         <span>

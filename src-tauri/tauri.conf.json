@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Email Forensic",
+  "productName": "J12-Forensic",
   "version": "0.1.0",
-  "identifier": "com.emailforensic.app",
+  "identifier": "com.j12.forensic",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Email Forensic Investigation Platform",
+        "title": "J12 Forensic Suite",
         "width": 1400,
         "height": 900,
         "minWidth": 1100,

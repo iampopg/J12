@@ -26,8 +26,9 @@ export function J12Logo({ size = 32, showText = false, className = "" }: J12Logo
       {showText && (
         <div style={{ display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.3px", lineHeight: 1.2 }}>
-            <span style={{ color: "#ffffff" }}>J</span>
-            <span style={{ color: "#22c55e" }}>12</span>
+            <span style={{ color: "#22c55e" }}>J</span>
+            <span style={{ color: "#ffffff" }}>1</span>
+            <span style={{ color: "#22c55e" }}>2</span>
             <span style={{ color: "var(--text-0)", marginLeft: 4 }}>Investigations</span>
           </div>
           <div style={{ fontSize: 10, color: "var(--text-3)", letterSpacing: "0.5px", fontWeight: 600 }}>

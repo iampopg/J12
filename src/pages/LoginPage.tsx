@@ -81,8 +81,9 @@ export function LoginPage() {
         <div className="login-brand" style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 20 }}>
           <J12Logo size={60} />
           <h1 className="login-title" style={{ marginTop: 10, fontSize: 24 }}>
-            <span style={{ color: "#ffffff" }}>J</span>
-            <span style={{ color: "#22c55e" }}>12</span>
+            <span style={{ color: "#22c55e" }}>J</span>
+            <span style={{ color: "#ffffff" }}>1</span>
+            <span style={{ color: "#22c55e" }}>2</span>
           </h1>
           <p className="login-subtitle" style={{ fontSize: 12, color: "var(--text-3)" }}>
             Email Forensic Investigation Platform

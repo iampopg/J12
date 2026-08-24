@@ -1,7 +1,7 @@
 [package]
-name = "email-forensic"
+name = "j12-forensic"
 version = "0.1.0"
-description = "Email Forensic Investigation Platform"
+description = "J12 Email Forensic Investigation Platform"
 edition = "2021"
 
 [dependencies]
