@@ -37,10 +37,11 @@ interface EmailItem {
 
 interface Props {
   caseId: string;
+  evidenceFilter?: string | null;
   onGoToEvidence?: () => void;
 }
 
-export function FindingsView({ caseId }: Props) {
+export function FindingsView({ caseId, evidenceFilter }: Props) {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
@@ -69,7 +70,12 @@ export function FindingsView({ caseId }: Props) {
   const loadFindings = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await invoke<Finding[]>("findings_list", { input: { case_id: caseId } });
+      const data = await invoke<Finding[]>("findings_list", { 
+        input: { 
+          case_id: caseId,
+          evidence_id: evidenceFilter || undefined
+        } 
+      });
       setFindings(data);
       if (selectedFinding) {
         const updated = data.find(f => f.id === selectedFinding.id);
@@ -80,9 +86,9 @@ export function FindingsView({ caseId }: Props) {
     } finally { 
       setLoading(false); 
     }
-  }, [caseId, selectedFinding?.id]);
+  }, [caseId, evidenceFilter, selectedFinding?.id]);
 
-  useEffect(() => { loadFindings(); }, [caseId]);
+  useEffect(() => { loadFindings(); }, [caseId, evidenceFilter, loadFindings]);
 
   // Load related emails when selectedFinding changes
   useEffect(() => {

@@ -224,6 +224,7 @@ impl Database {
                 content TEXT NOT NULL,
                 category TEXT DEFAULT 'general',
                 pinned INTEGER DEFAULT 0,
+                is_pinned INTEGER DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -319,6 +320,9 @@ impl Database {
             email_from TEXT NOT NULL,
             date_sent_utc TEXT
         )", []).ok();
+        
+        // NOTE: Do NOT wipe forensic_artifacts here — they are an expensive extraction cache
+        // that should persist across app restarts. Rescan is triggered manually via the UI.
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_case_id ON emails(case_id)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_from_addr ON emails(from_addr)", []).ok();
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_date_sent ON emails(date_sent_utc)", []).ok();
@@ -376,6 +380,23 @@ impl Database {
         self.conn.execute("ALTER TABLE findings ADD COLUMN notes TEXT", []).ok();
         // Migration: add aliases column to entities if missing
         self.conn.execute("ALTER TABLE entities ADD COLUMN aliases TEXT", []).ok();
+        // Migration: add is_pinned column to case_notes if missing
+        self.conn.execute("ALTER TABLE case_notes ADD COLUMN is_pinned INTEGER DEFAULT 0", []).ok();
+        self.conn.execute("UPDATE case_notes SET is_pinned = pinned WHERE (is_pinned IS NULL OR is_pinned = 0) AND pinned = 1", []).ok();
+        // Migration: Evidence Locker — universal bookmarks table
+        self.conn.execute("CREATE TABLE IF NOT EXISTS item_bookmarks (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            item_id TEXT NOT NULL,
+            item_type TEXT NOT NULL,
+            label TEXT NOT NULL DEFAULT 'Bookmarked',
+            color TEXT NOT NULL DEFAULT '#3b82f6',
+            note TEXT DEFAULT '',
+            created_at TEXT NOT NULL,
+            UNIQUE(case_id, item_id)
+        )", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_case_id ON item_bookmarks(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_bookmarks_item_id ON item_bookmarks(item_id)", []).ok();
         
         // === PERFORMANCE INDEXES (Phase 6) ===
         self.conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_case_id ON emails(case_id)", []).ok();
@@ -405,6 +426,120 @@ impl Database {
         
         // Migration: update existing emails with folder_category from headers_raw X-Folder
         self.migrate_folder_categories();
+        
+        // === AI TABLES (Phase 0) ===
+        self.init_ai_schema();
+    }
+    
+    fn init_ai_schema(&mut self) {
+        // AI Sessions
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_sessions (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            model_version TEXT,
+            system_prompt_version TEXT,
+            created_at TEXT NOT NULL,
+            ended_at TEXT
+        )", []).ok();
+        
+        // AI Messages
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES ai_sessions(id),
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            evidence_refs TEXT DEFAULT '[]',
+            timestamp TEXT NOT NULL
+        )", []).ok();
+        
+        // AI Tool Calls
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_tool_calls (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES ai_sessions(id),
+            tool_name TEXT NOT NULL,
+            arguments TEXT NOT NULL,
+            result_hash TEXT,
+            result_size INTEGER DEFAULT 0,
+            duration_ms INTEGER DEFAULT 0,
+            timestamp TEXT NOT NULL
+        )", []).ok();
+        
+        // AI Evidence Citations
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_evidence_citations (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL REFERENCES ai_messages(id),
+            evidence_id TEXT NOT NULL,
+            artifact_id TEXT,
+            citation_type TEXT NOT NULL,
+            display_text TEXT NOT NULL,
+            is_validated INTEGER DEFAULT 0,
+            representation_hash TEXT
+        )", []).ok();
+        
+        // AI Generated Findings
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_generated_findings (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            session_id TEXT REFERENCES ai_sessions(id),
+            title TEXT NOT NULL,
+            description TEXT NOT NULL,
+            severity TEXT DEFAULT 'medium',
+            status TEXT DEFAULT 'proposed',
+            evidence_refs TEXT DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            reviewed_at TEXT,
+            reviewed_by TEXT
+        )", []).ok();
+        
+        // AI Model Runs
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_model_runs (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES ai_sessions(id),
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            model_version TEXT,
+            temperature REAL,
+            tokens_input INTEGER DEFAULT 0,
+            tokens_output INTEGER DEFAULT 0,
+            timestamp TEXT NOT NULL
+        )", []).ok();
+        
+        // AI Context Snapshots
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_context_snapshots (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES ai_sessions(id),
+            snapshot_type TEXT NOT NULL,
+            emails_referenced TEXT DEFAULT '[]',
+            entities_investigated TEXT DEFAULT '[]',
+            tools_called TEXT DEFAULT '[]',
+            token_count INTEGER DEFAULT 0,
+            timestamp TEXT NOT NULL
+        )", []).ok();
+        
+        // AI Audit Log
+        self.conn.execute("CREATE TABLE IF NOT EXISTS ai_audit_log (
+            id TEXT PRIMARY KEY,
+            case_id TEXT NOT NULL REFERENCES cases(id),
+            action TEXT NOT NULL,
+            provider TEXT,
+            pages_shared INTEGER DEFAULT 0,
+            details TEXT,
+            timestamp TEXT NOT NULL
+        )", []).ok();
+        
+        // AI Indexes
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_sessions_case ON ai_sessions(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_tool_calls_session ON ai_tool_calls(session_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_citations_message ON ai_evidence_citations(message_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_findings_case ON ai_generated_findings(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_findings_status ON ai_generated_findings(status)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_model_runs_session ON ai_model_runs(session_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_context_session ON ai_context_snapshots(session_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_audit_case ON ai_audit_log(case_id)", []).ok();
+        self.conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_audit_timestamp ON ai_audit_log(timestamp)", []).ok();
     }
     
     fn migrate_folder_categories(&mut self) {

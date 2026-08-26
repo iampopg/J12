@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { EmailDetailModal, EmailModalData } from "../components/EmailDetailModal";
+import { BookmarkButton } from "../components/BookmarkButton";
 
 export interface CaseAttachmentItem {
   id: string;
@@ -21,10 +22,11 @@ export interface CaseAttachmentItem {
 
 interface Props {
   caseId: string;
+  evidenceFilter?: string | null;
   onSelectEmail?: (emailId: string) => void;
 }
 
-export function AttachmentsView({ caseId }: Props) {
+export function AttachmentsView({ caseId, evidenceFilter }: Props) {
   const [attachments, setAttachments] = useState<CaseAttachmentItem[]>([]);
   const [category, setCategory] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
@@ -57,11 +59,11 @@ export function AttachmentsView({ caseId }: Props) {
 
   useEffect(() => {
     loadSummary();
-  }, [caseId]);
+  }, [caseId, evidenceFilter]);
 
   useEffect(() => {
     loadData();
-  }, [caseId, category]);
+  }, [caseId, evidenceFilter, category]);
 
   const loadSummary = async () => {
     try {
@@ -72,7 +74,12 @@ export function AttachmentsView({ caseId }: Props) {
         images: number;
         archives: number;
         media: number;
-      }>("case_attachments_summary", { input: { case_id: caseId } });
+      }>("case_attachments_summary", { 
+        input: { 
+          case_id: caseId,
+          evidence_id: evidenceFilter || undefined
+        } 
+      });
       if (c) {
         setCounts(c);
       }
@@ -100,7 +107,12 @@ export function AttachmentsView({ caseId }: Props) {
     setLoading(true);
     try {
       const list = await invoke<CaseAttachmentItem[]>("case_attachments_list", {
-        input: { case_id: caseId, category, search }
+        input: { 
+          case_id: caseId, 
+          evidence_id: evidenceFilter || undefined,
+          category, 
+          search 
+        }
       });
       setAttachments(list);
     } catch (e) {
@@ -225,53 +237,53 @@ export function AttachmentsView({ caseId }: Props) {
         </div>
       )}
 
-      {/* Toast Notification */}
+      {/* Toast Alert */}
       {toastMessage && (
-        <div 
-          className="card"
-          style={{
-            position: "fixed",
-            bottom: 24,
-            right: 24,
-            zIndex: 9999,
-            background: "#1e293b",
-            border: "1px solid #22c55e",
-            color: "#4ade80",
-            padding: "10px 18px",
-            fontWeight: 600,
-            fontSize: 13,
-            boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
-          }}
-        >
+        <div style={{
+          position: "fixed",
+          bottom: 24,
+          right: 24,
+          background: "var(--bg-2)",
+          color: "var(--text-0)",
+          padding: "10px 18px",
+          borderRadius: "var(--r-md)",
+          border: "1px solid var(--border)",
+          boxShadow: "0 10px 30px rgba(0,0,0,0.5)",
+          zIndex: 99999,
+          fontSize: 13,
+          fontWeight: 600,
+          animation: "fadeIn 0.2s ease-out"
+        }}>
           {toastMessage}
         </div>
       )}
 
-      {/* Header */}
-      <div className="row between mb-4">
+      {/* Header View Options */}
+      <div className="row between mb-3" style={{ flexWrap: "wrap", gap: 12 }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
-            Evidence Attachments &amp; Payloads Gallery
+            📎 Evidence Attachments &amp; Image Gallery
           </h2>
-          <p className="muted" style={{ margin: 0 }}>
-            Forensic catalog of all extracted files, photographic evidence, cryptographic hashes, and dangerous payloads.
+          <p className="muted" style={{ fontSize: 12 }}>
+            Forensic analysis, cryptographic SHA-256 validation, malware entropy scoring, and inline photo inspection.
           </p>
         </div>
         <div className="row gap-2">
-          <div className="row" style={{ background: "var(--bg-2)", borderRadius: "var(--r-sm)", padding: 2, border: "1px solid var(--border)" }}>
+          {/* View Mode Toggle */}
+          <div className="row gap-1" style={{ background: "var(--bg-2)", padding: 2, borderRadius: "var(--r-sm)", border: "1px solid var(--border)" }}>
             <button
               className={`btn btn-sm ${viewMode === "table" ? "btn-primary" : "btn-ghost"}`}
               style={{ padding: "4px 10px", fontSize: 12 }}
               onClick={() => setViewMode("table")}
             >
-              📄 List
+              📋 Detailed Forensic Table
             </button>
             <button
               className={`btn btn-sm ${viewMode === "grid" ? "btn-primary" : "btn-ghost"}`}
               style={{ padding: "4px 10px", fontSize: 12 }}
               onClick={() => setViewMode("grid")}
             >
-              🖼️ Photo &amp; Scan Gallery
+              🖼️ Photo Gallery
             </button>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={() => { loadSummary(); loadData(); }}>
@@ -280,7 +292,7 @@ export function AttachmentsView({ caseId }: Props) {
         </div>
       </div>
 
-      {/* Category Filter Tabs */}
+      {/* Category Filter Tabs (Smart Hidden if 0 items) */}
       <div className="row gap-2 mb-4" style={{ flexWrap: "wrap" }}>
         <button
           className={`btn ${category === "all" ? "btn-primary" : "btn-ghost"} btn-sm`}
@@ -288,37 +300,52 @@ export function AttachmentsView({ caseId }: Props) {
         >
           📎 All Files ({counts.all})
         </button>
-        <button
-          className={`btn ${category === "dangerous" ? "btn-danger" : "btn-ghost"} btn-sm`}
-          onClick={() => setCategory("dangerous")}
-          style={{ color: category === "dangerous" ? "#fff" : "var(--danger)", border: "1px solid var(--danger)" }}
-        >
-          🚨 Dangerous / Executables ({counts.dangerous})
-        </button>
-        <button
-          className={`btn ${category === "images" ? "btn-primary" : "btn-ghost"} btn-sm`}
-          onClick={() => { setCategory("images"); setViewMode("grid"); }}
-        >
-          🖼️ Images &amp; Scans ({counts.images})
-        </button>
-        <button
-          className={`btn ${category === "documents" ? "btn-primary" : "btn-ghost"} btn-sm`}
-          onClick={() => setCategory("documents")}
-        >
-          📄 Documents &amp; PDFs ({counts.documents})
-        </button>
-        <button
-          className={`btn ${category === "archives" ? "btn-primary" : "btn-ghost"} btn-sm`}
-          onClick={() => setCategory("archives")}
-        >
-          📦 Archives ({counts.archives})
-        </button>
-        <button
-          className={`btn ${category === "media" ? "btn-primary" : "btn-ghost"} btn-sm`}
-          onClick={() => setCategory("media")}
-        >
-          🎵 Voicemails &amp; Audio ({counts.media})
-        </button>
+
+        {counts.dangerous > 0 && (
+          <button
+            className={`btn ${category === "dangerous" ? "btn-danger" : "btn-ghost"} btn-sm`}
+            onClick={() => setCategory("dangerous")}
+            style={{ color: category === "dangerous" ? "#fff" : "var(--danger)", border: "1px solid var(--danger)" }}
+          >
+            🚨 Dangerous / Executables ({counts.dangerous})
+          </button>
+        )}
+
+        {counts.images > 0 && (
+          <button
+            className={`btn ${category === "images" ? "btn-primary" : "btn-ghost"} btn-sm`}
+            onClick={() => { setCategory("images"); setViewMode("grid"); }}
+          >
+            🖼️ Images &amp; Scans ({counts.images})
+          </button>
+        )}
+
+        {counts.documents > 0 && (
+          <button
+            className={`btn ${category === "documents" ? "btn-primary" : "btn-ghost"} btn-sm`}
+            onClick={() => setCategory("documents")}
+          >
+            📄 Documents &amp; PDFs ({counts.documents})
+          </button>
+        )}
+
+        {counts.archives > 0 && (
+          <button
+            className={`btn ${category === "archives" ? "btn-primary" : "btn-ghost"} btn-sm`}
+            onClick={() => setCategory("archives")}
+          >
+            📦 Archives ({counts.archives})
+          </button>
+        )}
+
+        {counts.media > 0 && (
+          <button
+            className={`btn ${category === "media" ? "btn-primary" : "btn-ghost"} btn-sm`}
+            onClick={() => setCategory("media")}
+          >
+            🎵 Voicemails &amp; Audio ({counts.media})
+          </button>
+        )}
       </div>
 
       {/* Loading Progress Bar */}
@@ -413,7 +440,15 @@ export function AttachmentsView({ caseId }: Props) {
                     <span>{formatSize(att.size_bytes)}</span>
                     <span className="badge" style={{ fontSize: 9 }}>{att.category}</span>
                   </div>
-                  <div className="row gap-1 mt-2" style={{ justifyContent: "flex-end", flexWrap: "wrap" }}>
+                  <div className="row gap-1 mt-2" style={{ justifyContent: "flex-end", flexWrap: "wrap", alignItems: "center" }}>
+                    <div onClick={(e) => e.stopPropagation()}>
+                      <BookmarkButton
+                        caseId={caseId}
+                        itemId={att.id}
+                        itemType="attachment"
+                        compact={true}
+                      />
+                    </div>
                     <button
                       className="btn btn-primary btn-sm"
                       style={{ padding: "2px 6px", fontSize: 10 }}
@@ -471,35 +506,40 @@ export function AttachmentsView({ caseId }: Props) {
                         }}
                         onClick={() => setSelectedAtt(att)}
                       >
-                        <td className="td" style={{ textAlign: "center", fontSize: 20 }}>
-                          {getFileIcon(att.category, att.filename)}
+                        <td className="td" style={{ textAlign: "center", padding: "6px 8px" }}>
+                          <InlineThumb
+                            attachmentId={att.id}
+                            storedPath={att.stored_path}
+                            filename={att.filename}
+                            category={att.category}
+                            fallbackIcon={getFileIcon(att.category, att.filename)}
+                          />
                         </td>
                         <td className="td">
-                          <div style={{ fontWeight: 600, fontSize: 13, color: isDangerous ? "var(--danger)" : "var(--text-0)" }}>
+                          <div style={{ fontWeight: 600, color: "var(--text-0)" }}>
                             {att.filename}
                           </div>
-                          <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
-                            {att.mime_type}
+                          <div className="row gap-2" style={{ fontSize: 10, color: "var(--text-3)" }}>
+                            <span>{att.mime_type}</span>
+                            <span>•</span>
+                            <span className="badge" style={{ fontSize: 9 }}>{att.category}</span>
+                            {att.entropy !== null && (
+                              <>
+                                <span>•</span>
+                                <span style={{ color: att.entropy > 7.0 ? "var(--danger)" : "inherit" }}>
+                                  Entropy: {att.entropy.toFixed(2)}
+                                </span>
+                              </>
+                            )}
                           </div>
                         </td>
-                        <td className="td" style={{ fontSize: 12, fontFamily: "var(--mono)" }}>
+                        <td className="td mono" style={{ fontSize: 12 }}>
                           {formatSize(att.size_bytes)}
                         </td>
-                        <td className="td">
-                          <div className="row gap-1" style={{ alignItems: "center" }}>
-                            <span 
-                              style={{ 
-                                fontFamily: "var(--mono)", 
-                                fontSize: 11, 
-                                color: "#38bdf8",
-                                maxWidth: 120,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap"
-                              }}
-                              title={att.sha256}
-                            >
-                              {att.sha256 ? `${att.sha256.slice(0, 10)}…` : "—"}
+                        <td className="td mono" style={{ fontSize: 11 }}>
+                          <div className="row gap-2" style={{ alignItems: "center" }}>
+                            <span style={{ color: "var(--accent)" }}>
+                              {att.sha256.slice(0, 16)}…
                             </span>
                             {isDangerous && <span className="badge badge-red">RISK</span>}
                           </div>
@@ -513,7 +553,15 @@ export function AttachmentsView({ caseId }: Props) {
                           </div>
                         </td>
                         <td className="td" style={{ textAlign: "right" }}>
-                          <div className="row gap-1" style={{ justifyContent: "flex-end" }}>
+                          <div className="row gap-1" style={{ justifyContent: "flex-end", alignItems: "center" }}>
+                            <div onClick={(e) => e.stopPropagation()}>
+                              <BookmarkButton
+                                caseId={caseId}
+                                itemId={att.id}
+                                itemType="attachment"
+                                compact={true}
+                              />
+                            </div>
                             <button 
                               className="btn btn-primary btn-sm" 
                               style={{ padding: "3px 8px", fontSize: 11 }}
@@ -683,6 +731,54 @@ export function AttachmentsView({ caseId }: Props) {
   );
 }
 
+/** Small inline thumbnail for the table view (44×44px) */
+function InlineThumb({
+  attachmentId,
+  storedPath,
+  filename,
+  category,
+  fallbackIcon,
+}: {
+  attachmentId: string;
+  storedPath?: string | null;
+  filename: string;
+  category: string;
+  fallbackIcon: string;
+}) {
+  const needsPreview = category === "images" || category === "documents" ||
+    filename.toLowerCase().endsWith(".pdf");
+  const [src, setSrc] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    setSrc(null); // reset on id change
+    if (!needsPreview) return;
+    invoke<string | null>("get_attachment_preview", {
+      input: { attachment_id: attachmentId, stored_path: storedPath },
+    })
+      .then((data) => { if (mountedRef.current && data) setSrc(data); })
+      .catch(() => {});
+    return () => { mountedRef.current = false; };
+  }, [attachmentId]);
+
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt={filename}
+        style={{
+          width: 44, height: 44, objectFit: "cover",
+          borderRadius: 4, border: "1px solid var(--border)",
+          display: "block",
+        }}
+      />
+    );
+  }
+  return <span style={{ fontSize: 20 }}>{fallbackIcon}</span>;
+}
+
+/** Large thumbnail card for the photo gallery grid view */
 function AttachmentThumbnail({ 
   attachmentId, 
   storedPath,
@@ -696,29 +792,47 @@ function AttachmentThumbnail({
   category: string; 
   onZoom?: (src: string) => void;
 }) {
+  const needsPreview = category === "images" || category === "documents" ||
+    filename.toLowerCase().endsWith(".pdf");
   const [src, setSrc] = useState<string | null>(null);
-  const [loading, setLoading] = useState(category === "images");
+  const [loading, setLoading] = useState(needsPreview);
+  const mountedRef = useRef(true);
 
   useEffect(() => {
-    if (category === "images") {
-      invoke<string | null>("get_attachment_preview", { 
-        input: { 
-          attachment_id: attachmentId,
-          stored_path: storedPath 
-        } 
-      })
-        .then((data) => {
+    mountedRef.current = true;
+    setSrc(null);
+    setLoading(needsPreview);
+    if (!needsPreview) return;
+    invoke<string | null>("get_attachment_preview", { 
+      input: { 
+        attachment_id: attachmentId,
+        stored_path: storedPath 
+      } 
+    })
+      .then((data) => {
+        if (mountedRef.current) {
           if (data) setSrc(data);
-        })
-        .catch(console.error)
-        .finally(() => setLoading(false));
-    }
-  }, [attachmentId, storedPath, category]);
+          setLoading(false);
+        }
+      })
+      .catch(() => { if (mountedRef.current) setLoading(false); });
+    return () => { mountedRef.current = false; };
+  }, [attachmentId]);
 
   if (loading) {
     return (
-      <div style={{ width: "100%", height: "100%", background: "var(--bg-0)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-3)" }}>
-        <span style={{ fontSize: 11 }}>Loading...</span>
+      <div style={{
+        width: "100%", height: "100%", background: "var(--bg-0)",
+        borderRadius: 6, display: "flex", alignItems: "center",
+        justifyContent: "center", color: "var(--text-3)",
+        flexDirection: "column", gap: 6,
+      }}>
+        <div style={{
+          width: 28, height: 28, border: "3px solid var(--border)",
+          borderTopColor: "var(--accent)", borderRadius: "50%",
+          animation: "spin 0.8s linear infinite",
+        }} />
+        <span style={{ fontSize: 10 }}>Loading...</span>
       </div>
     );
   }
@@ -728,24 +842,39 @@ function AttachmentThumbnail({
       <div 
         style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", borderRadius: 6, cursor: "zoom-in" }}
         onClick={(e) => { e.stopPropagation(); onZoom?.(src); }}
-        title="Click to zoom image"
+        title="Click to zoom"
       >
         <img 
           src={src} 
           alt={filename} 
           style={{ width: "100%", height: "100%", objectFit: "cover" }} 
         />
-        <span style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(0,0,0,0.6)", color: "#fff", padding: "2px 6px", borderRadius: 4, fontSize: 9 }}>
+        <span style={{
+          position: "absolute", bottom: 4, right: 4,
+          background: "rgba(0,0,0,0.65)", color: "#fff",
+          padding: "2px 6px", borderRadius: 4, fontSize: 9,
+        }}>
           🔍 Zoom
         </span>
+        {filename.toLowerCase().endsWith(".pdf") && (
+          <span style={{
+            position: "absolute", top: 4, left: 4,
+            background: "rgba(220,38,38,0.85)", color: "#fff",
+            padding: "2px 5px", borderRadius: 3, fontSize: 9, fontWeight: 700,
+          }}>PDF</span>
+        )}
       </div>
     );
   }
 
   return (
-    <div style={{ width: "100%", height: "100%", background: "var(--bg-2)", borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
+    <div style={{
+      width: "100%", height: "100%", background: "var(--bg-2)", borderRadius: 6,
+      display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", gap: 6,
+    }}>
       <span style={{ fontSize: 36 }}>
-        {category === "dangerous" ? "🚨" : category === "documents" ? "📄" : category === "archives" ? "📦" : "📎"}
+        {category === "dangerous" ? "🚨" : filename.toLowerCase().endsWith(".pdf") ? "📕" : category === "documents" ? "📄" : category === "archives" ? "📦" : "📎"}
       </span>
       <span style={{ fontSize: 10, color: "var(--text-3)", textTransform: "uppercase" }}>{category}</span>
     </div>

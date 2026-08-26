@@ -28,8 +28,8 @@ pub async fn evidence_upload(state: State<'_, AppState>, input: EvidenceUploadIn
 
     let db = state.db.lock().await;
     db.conn.execute(
-        "INSERT INTO evidence_items (id,case_id,filename,original_path,stored_path,format,sha256,sha512,size_bytes,source_description,acquired_by,acquired_at,acquisition_method,integrity_level,parse_status,message_count,deleted_recovered)
-         VALUES (?1,?2,?3,?4,?4,?5,?6,?7,?8,?9,?10,?11,?12,'verified','pending',0,0)",
+        "INSERT INTO evidence_items (id,case_id,filename,original_path,stored_path,format,sha256,sha512,size_bytes,source_description,acquired_by,acquired_at,acquisition_method,integrity_level,parse_status,message_count,deleted_recovered,created_at)
+         VALUES (?1,?2,?3,?4,?4,?5,?6,?7,?8,?9,?10,?11,?12,'verified','pending',0,0,?11)",
         rusqlite::params![id, input.case_id, filename, input.file_path, fmt, sha256, sha512, meta.len() as i64, desc, acq_by, now.to_rfc3339(), acq_mth],
     ).map_err(|e| e.to_string())?;
 
@@ -209,13 +209,14 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
             let date_str = email.date_sent.as_ref().map(|d| d.to_rfc3339());
             let ref_str = serde_json::to_string(&email.references).unwrap_or_else(|_| "[]".to_string());
 
+            let now_str = Utc::now().to_rfc3339();
             tx.execute(
                 "INSERT INTO emails (
                     id, evidence_id, case_id, message_id, in_reply_to, msg_references,
                     from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, reply_to,
                     subject, date_sent, date_sent_utc, headers_raw, body_text, body_html,
-                    folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags
-                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0,'[]')",
+                    folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags, created_at
+                ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,0,'[]',?23)",
                 rusqlite::params![
                     email_id,
                     evidence_id,
@@ -239,6 +240,7 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                     email.folder_category,
                     if is_del { 1 } else { 0 },
                     if is_recovered { 1 } else { 0 },
+                    now_str,
                 ],
             ).map_err(|e| e.to_string())?;
 
@@ -265,19 +267,53 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                     Some(ent)
                 } else { None };
 
+                let mut risk_flags = Vec::new();
+                let lower_name = att.filename.as_deref().unwrap_or("").to_lowercase();
+                if lower_name.ends_with(".exe") || lower_name.ends_with(".bat") || lower_name.ends_with(".cmd") || lower_name.ends_with(".ps1") || lower_name.ends_with(".vbs") || lower_name.ends_with(".js") {
+                    risk_flags.push("executable");
+                }
+                if lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm") || lower_name.ends_with(".pptm") {
+                    risk_flags.push("macro_enabled");
+                }
+                if let Some(ent) = entropy {
+                    if ent > 7.5 {
+                        risk_flags.push("high_entropy_encrypted");
+                    }
+                }
+                let risk_flags_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
+
+                let mut stored_path = String::new();
+                if !att.data.is_empty() {
+                    let att_dir = dirs::data_dir()
+                        .unwrap_or_else(|| std::path::PathBuf::from("."))
+                        .join("j12-forensic")
+                        .join("evidence")
+                        .join(&case_id)
+                        .join("attachments");
+                    let _ = std::fs::create_dir_all(&att_dir);
+                    let safe_name = att.filename.as_deref().unwrap_or("attachment.bin")
+                        .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+                    let att_file = att_dir.join(format!("{}_{}", &att_id[..std::cmp::min(8, att_id.len())], safe_name));
+                    if std::fs::write(&att_file, &att.data).is_ok() {
+                        stored_path = att_file.to_string_lossy().to_string();
+                    }
+                }
+
                 tx.execute(
                     "INSERT INTO attachments (
-                        id, email_id, filename, mime_type, size_bytes, sha256, md5, entropy,
-                        is_inline, is_macro_enabled, is_executable, risk_flags
-                    ) VALUES (?1,?2,?3,?4,?5,?6,'',?7,0,0,0,'[]')",
+                        id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags, created_at
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     rusqlite::params![
                         att_id,
                         email_id,
                         att.filename,
+                        sha256,
                         att.content_type,
                         att.data.len() as i64,
-                        sha256,
+                        stored_path,
                         entropy,
+                        risk_flags_json,
+                        now_str,
                     ],
                 ).map_err(|e| e.to_string())?;
             }
@@ -305,6 +341,9 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
             format!("Parsed {} messages ({} deleted/recovered)", total, deleted_count)
         ],
     );
+
+    // Invalidate cached artifacts cache so next view loads fresh multi-source artifacts
+    let _ = db.conn.execute("DELETE FROM forensic_artifacts WHERE case_id = ?1", [&case_id]);
 
     Ok(total)
 }

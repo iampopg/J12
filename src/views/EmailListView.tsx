@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
+import { BookmarkButton } from "../components/BookmarkButton";
 
 // Helper to clean display names
 function cleanDisplayName(name: string | null): string {
@@ -39,7 +40,33 @@ interface Email {
   recovery_status: string;
   deleted_recovered: boolean;
   risk_score: number;
+  attachment_count?: number;
+  image_count?: number;
 }
+
+export interface ColumnSettings {
+  name: boolean;
+  from: boolean;
+  to: boolean;
+  subject: boolean;
+  attachments: boolean;
+  date: boolean;
+  folder: boolean;
+  risk: boolean;
+  tag: boolean;
+}
+
+export const DEFAULT_COLUMNS: ColumnSettings = {
+  name: true,
+  from: true,
+  to: false,
+  subject: true,
+  attachments: true,
+  date: true,
+  folder: true,
+  risk: true,
+  tag: true,
+};
 
 export interface EmailTag {
   id: string;
@@ -62,10 +89,14 @@ export type SortDir = "asc" | "desc";
 export function EmailListView({
   caseId,
   filter,
+  evidenceFilter,
+  onEvidenceFilterChange,
   onViewEntity,
 }: {
   caseId: string;
   filter?: string;
+  evidenceFilter?: string | null;
+  onEvidenceFilterChange?: (evidenceId: string | null) => void;
   onViewEntity?: (email: string) => void;
 }) {
   const [emails, setEmails] = useState<Email[]>([]);
@@ -74,6 +105,14 @@ export function EmailListView({
   const [loading, setLoading] = useState(true);
   
   // Search & Filter state
+  const [selectedEvidenceId, setSelectedEvidenceId] = useState<string | null>(evidenceFilter || null);
+
+  useEffect(() => {
+    if (evidenceFilter !== undefined) {
+      setSelectedEvidenceId(evidenceFilter);
+    }
+  }, [evidenceFilter]);
+
   const [q, setQ] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -88,19 +127,68 @@ export function EmailListView({
   const [endDate, setEndDate] = useState<string>("");
   const [showFilterDrawer, setShowFilterDrawer] = useState(false);
 
+  // Column customization state
+  const [columns, setColumns] = useState<ColumnSettings>(() => {
+    try {
+      const saved = localStorage.getItem("j12_email_columns");
+      if (saved) return { ...DEFAULT_COLUMNS, ...JSON.parse(saved) };
+    } catch {}
+    return DEFAULT_COLUMNS;
+  });
+  const [showColumnPicker, setShowColumnPicker] = useState(false);
+  const columnPickerRef = useRef<HTMLDivElement>(null);
+
+  const toggleColumn = (key: keyof ColumnSettings) => {
+    setColumns((prev) => {
+      const updated = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem("j12_email_columns", JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  };
+
+  const resetColumns = () => {
+    setColumns(DEFAULT_COLUMNS);
+    try {
+      localStorage.setItem("j12_email_columns", JSON.stringify(DEFAULT_COLUMNS));
+    } catch {}
+  };
+
+  useEffect(() => {
+    if (!showColumnPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (columnPickerRef.current && !columnPickerRef.current.contains(e.target as Node)) {
+        setShowColumnPicker(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showColumnPicker]);
+
   const load = async () => {
+    if (!caseId) return;
     setLoading(true);
     try {
       const [em, ev, tg] = await Promise.all([
-        invoke<Email[]>("email_list", { input: { case_id: caseId, limit: 10000 } }),
-        invoke<Evidence[]>("evidence_list", { input: { case_id: caseId } }),
-        invoke<EmailTag[]>("email_tags_list", { caseId }).catch(() => [] as EmailTag[]),
+        invoke<Email[]>("email_list", { input: { case_id: caseId, limit: 10000 } }).catch((err) => {
+          console.error("Failed to load email_list:", err);
+          return [] as Email[];
+        }),
+        invoke<Evidence[]>("evidence_list", { input: { case_id: caseId } }).catch((err) => {
+          console.error("Failed to load evidence_list:", err);
+          return [] as Evidence[];
+        }),
+        invoke<EmailTag[]>("email_tags_list", { input: { case_id: caseId } }).catch((err) => {
+          console.error("Failed to load email_tags_list:", err);
+          return [] as EmailTag[];
+        }),
       ]);
       setEmails(em);
       setEvidence(ev);
       setTags(tg);
     } catch (e) {
-      console.error(e);
+      console.error("Error loading email data:", e);
     } finally {
       setLoading(false);
     }
@@ -108,11 +196,12 @@ export function EmailListView({
 
   useEffect(() => {
     load();
-  }, []);
+  }, [caseId, filter]);
 
   const loadTags = async () => {
+    if (!caseId) return;
     try {
-      const tg = await invoke<EmailTag[]>("email_tags_list", { caseId });
+      const tg = await invoke<EmailTag[]>("email_tags_list", { input: { case_id: caseId } });
       setTags(tg);
     } catch (e) {
       console.error(e);
@@ -157,17 +246,30 @@ export function EmailListView({
     });
   }, [emails, showUnique]);
 
+  const evidenceCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    emails.forEach((e) => {
+      counts[e.evidence_id] = (counts[e.evidence_id] || 0) + 1;
+    });
+    return counts;
+  }, [emails]);
+
+  const filteredBySource = useMemo(() => {
+    if (!selectedEvidenceId) return uniqueEmails;
+    return uniqueEmails.filter((e) => e.evidence_id === selectedEvidenceId);
+  }, [uniqueEmails, selectedEvidenceId]);
+
   // Folder Category Filter
   const filteredByFolder = useMemo(() => {
-    if (!filter || filter === "all") return uniqueEmails;
+    if (!filter || filter === "all") return filteredBySource;
     if (filter === "sent") {
-      return uniqueEmails.filter((e) => e.folder_category === "sent");
+      return filteredBySource.filter((e) => e.folder_category === "sent");
     }
     if (filter === "inbox") {
-      return uniqueEmails.filter((e) => e.folder_category === "inbox");
+      return filteredBySource.filter((e) => e.folder_category === "inbox");
     }
     if (filter === "important") {
-      return uniqueEmails.filter(
+      return filteredBySource.filter(
         (e) =>
           e.folder_category === "important" ||
           (e.folder_name && e.folder_name.toLowerCase().includes("important")) ||
@@ -175,7 +277,7 @@ export function EmailListView({
       );
     }
     if (filter === "soft_deleted" || filter === "trash" || filter === "deleted") {
-      return uniqueEmails.filter(
+      return filteredBySource.filter(
         (e) =>
           e.folder_category === "soft_deleted" ||
           e.folder_category === "trash" ||
@@ -187,31 +289,31 @@ export function EmailListView({
       );
     }
     if (filter === "hard_deleted") {
-      return uniqueEmails.filter(
+      return filteredBySource.filter(
         (e) => e.recovery_status === "hard_deleted" || e.recovery_status === "purged"
       );
     }
     if (filter === "recoverable") {
-      return uniqueEmails.filter(
+      return filteredBySource.filter(
         (e) => e.recovery_status === "recoverable" || e.deleted_recovered
       );
     }
     if (filter === "drafts") {
-      return uniqueEmails.filter((e) => e.folder_category === "drafts");
+      return filteredBySource.filter((e) => e.folder_category === "drafts");
     }
     if (filter === "spam") {
-      return uniqueEmails.filter((e) => e.folder_category === "spam");
+      return filteredBySource.filter((e) => e.folder_category === "spam");
     }
     if (filter === "other") {
-      return uniqueEmails.filter(
+      return filteredBySource.filter(
         (e) =>
           e.folder_category === "other" ||
           (!["inbox", "important", "sent", "drafts", "spam", "trash", "soft_deleted"].includes(e.folder_category) &&
             !e.is_deleted)
       );
     }
-    return uniqueEmails;
-  }, [uniqueEmails, filter]);
+    return filteredBySource;
+  }, [filteredBySource, filter]);
 
   // Master Filter & Sort
   const filtered = useMemo(() => {
@@ -330,7 +432,17 @@ export function EmailListView({
     endDate ||
     showUnique;
 
-  if (loading) return <div className="empty">Loading emails...</div>;
+  if (loading) {
+    return (
+      <div className="card" style={{ padding: "60px 20px", textAlign: "center", minHeight: 320, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+        <div className="spinner mb-3" style={{ width: 28, height: 28, border: "3px solid var(--border)", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+        <div style={{ fontSize: 16, fontWeight: 600, color: "var(--text-0)" }}>
+          Loading emails...
+        </div>
+        <div className="muted text-sm mt-1">Retrieving forensic email records and metadata</div>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -384,6 +496,85 @@ export function EmailListView({
                 />
                 <strong>Unique Only</strong>
               </label>
+
+              {/* Column Settings Picker */}
+              <div style={{ position: "relative" }}>
+                <button
+                  className={`btn btn-sm ${showColumnPicker ? "btn-primary" : "btn-ghost"}`}
+                  onClick={() => setShowColumnPicker(!showColumnPicker)}
+                  title="Customize table columns"
+                >
+                  ⚙️ Columns
+                </button>
+
+                {showColumnPicker && (
+                  <div
+                    ref={columnPickerRef}
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: "calc(100% + 6px)",
+                      zIndex: 9999,
+                      background: "var(--bg-1)",
+                      border: "1px solid var(--border)",
+                      borderRadius: "var(--r-md)",
+                      boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+                      padding: 14,
+                      width: 220,
+                    }}
+                  >
+                    <div className="row between mb-2" style={{ alignItems: "center" }}>
+                      <strong style={{ fontSize: 12, color: "var(--text-0)" }}>Visible Columns</strong>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: 10, padding: "2px 6px" }}
+                        onClick={resetColumns}
+                      >
+                        Reset
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 12 }}>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.name} onChange={() => toggleColumn("name")} />
+                        <span>Sender Name</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.from} onChange={() => toggleColumn("from")} />
+                        <span>From Email</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.to} onChange={() => toggleColumn("to")} />
+                        <span>To Recipient</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.subject} onChange={() => toggleColumn("subject")} />
+                        <span>Subject &amp; Tags</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.attachments} onChange={() => toggleColumn("attachments")} />
+                        <span>Attachments (📎/🖼️)</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.date} onChange={() => toggleColumn("date")} />
+                        <span>Date Sent</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.folder} onChange={() => toggleColumn("folder")} />
+                        <span>Folder Category</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.risk} onChange={() => toggleColumn("risk")} />
+                        <span>Risk Score</span>
+                      </label>
+                      <label className="row gap-2" style={{ cursor: "pointer" }}>
+                        <input type="checkbox" checked={columns.tag} onChange={() => toggleColumn("tag")} />
+                        <span>Tag / Locker (🔖)</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <button
                 className={`btn btn-sm ${showFilterDrawer ? "btn-primary" : "btn-ghost"}`}
                 onClick={() => setShowFilterDrawer(!showFilterDrawer)}
@@ -395,6 +586,101 @@ export function EmailListView({
               </button>
             </div>
           </div>
+
+          {/* Evidence Source Switcher Bar (Quick Filter) */}
+          {evidence.length > 1 && (
+            <div
+              className="card mb-3"
+              style={{
+                padding: "8px 12px",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                flexWrap: "wrap",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border)",
+                borderRadius: "var(--r-md)",
+              }}
+            >
+              <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 4 }}>
+                <span>📁 Source Filter:</span>
+              </span>
+
+              {/* All Sources Pill */}
+              <button
+                className={`btn btn-sm ${!selectedEvidenceId ? "btn-primary" : "btn-ghost"}`}
+                style={{ fontSize: 11, padding: "3px 10px", borderRadius: "var(--r-sm)", fontWeight: !selectedEvidenceId ? 700 : 500 }}
+                onClick={() => {
+                  setSelectedEvidenceId(null);
+                  onEvidenceFilterChange?.(null);
+                }}
+              >
+                🌐 All Sources ({emails.length.toLocaleString()})
+              </button>
+
+              {/* Individual Evidence Source Pills */}
+              {evidence.map((ev) => {
+                const isSelected = selectedEvidenceId === ev.id;
+                const count = evidenceCounts[ev.id] || 0;
+                const icon = ev.filename.includes("gmail") || ev.filename.includes("imap") ? "☁️" : ev.filename.endsWith(".mbox") ? "📦" : ev.filename.endsWith(".eml") ? "📧" : "📄";
+
+                return (
+                  <button
+                    key={ev.id}
+                    className={`btn btn-sm ${isSelected ? "btn-primary" : "btn-ghost"}`}
+                    style={{
+                      fontSize: 11,
+                      padding: "3px 10px",
+                      borderRadius: "var(--r-sm)",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      border: isSelected ? "1px solid var(--accent)" : "1px solid var(--border)",
+                      background: isSelected ? "var(--accent)" : "var(--bg-3)",
+                      color: isSelected ? "#fff" : "var(--text-1)",
+                      fontWeight: isSelected ? 700 : 500,
+                    }}
+                    onClick={() => {
+                      const next = isSelected ? null : ev.id;
+                      setSelectedEvidenceId(next);
+                      onEvidenceFilterChange?.(next);
+                    }}
+                    title={`Switch view to only ${ev.filename}`}
+                  >
+                    <span>{icon}</span>
+                    <span style={{ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {ev.filename}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 10,
+                        padding: "1px 6px",
+                        borderRadius: 10,
+                        background: isSelected ? "rgba(0,0,0,0.25)" : "var(--bg-4)",
+                        color: isSelected ? "#fff" : "var(--text-2)",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {count.toLocaleString()}
+                    </span>
+                  </button>
+                );
+              })}
+
+              {selectedEvidenceId && (
+                <button
+                  className="btn btn-ghost btn-sm"
+                  style={{ fontSize: 11, padding: "2px 8px", color: "var(--accent)", marginLeft: "auto" }}
+                  onClick={() => {
+                    setSelectedEvidenceId(null);
+                    onEvidenceFilterChange?.(null);
+                  }}
+                >
+                  ✕ Show All ({emails.length.toLocaleString()})
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Quick Search and Active Filter Pills */}
           <div className="row gap-2 mb-3" style={{ flexWrap: "wrap" }}>
@@ -448,107 +734,109 @@ export function EmailListView({
               className="card mb-3"
               style={{
                 padding: "16px 20px",
-                background: "var(--bg-1)",
+                background: "var(--bg-2)",
                 border: "1px solid var(--border)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 16,
               }}
             >
-              <div className="row between mb-3">
-                <strong style={{ fontSize: 13, color: "var(--text-0)" }}>
-                  📅 Advanced Date & Forensic Tag Filters
-                </strong>
+              <div className="row between" style={{ alignItems: "center" }}>
+                <span style={{ fontWeight: 600, fontSize: 13, color: "var(--text-0)" }}>
+                  📅 Advanced Temporal &amp; Classification Filters
+                </span>
                 <button
                   className="btn btn-ghost btn-sm"
-                  style={{ padding: "2px 8px", fontSize: 11 }}
-                  onClick={() => setShowFilterDrawer(false)}
+                  style={{ fontSize: 11 }}
+                  onClick={handleResetFilters}
                 >
-                  Hide
+                  Reset All Filters
                 </button>
               </div>
 
-              {/* Date Filter Modes */}
-              <div className="row gap-3 mb-3" style={{ flexWrap: "wrap", alignItems: "center" }}>
-                <span className="muted" style={{ fontSize: 12 }}>
-                  Date Filter Mode:
-                </span>
+              {/* Mode Selection */}
+              <div className="row gap-2">
                 <button
                   className={`btn btn-sm ${dateFilterMode === "all" ? "btn-primary" : "btn-ghost"}`}
-                  style={{ fontSize: 11 }}
-                  onClick={() => {
-                    setDateFilterMode("all");
-                    setSingleDate("");
-                    setStartDate("");
-                    setEndDate("");
-                  }}
+                  onClick={() => setDateFilterMode("all")}
                 >
                   All Dates
                 </button>
                 <button
-                  className={`btn btn-sm ${
-                    dateFilterMode === "single" ? "btn-primary" : "btn-ghost"
-                  }`}
-                  style={{ fontSize: 11 }}
+                  className={`btn btn-sm ${dateFilterMode === "single" ? "btn-primary" : "btn-ghost"}`}
                   onClick={() => setDateFilterMode("single")}
                 >
-                  This Date Only
+                  Single Date
                 </button>
                 <button
-                  className={`btn btn-sm ${
-                    dateFilterMode === "range" ? "btn-primary" : "btn-ghost"
-                  }`}
-                  style={{ fontSize: 11 }}
+                  className={`btn btn-sm ${dateFilterMode === "range" ? "btn-primary" : "btn-ghost"}`}
                   onClick={() => setDateFilterMode("range")}
                 >
-                  Date Range (From - To)
+                  Date Range
                 </button>
               </div>
 
-              {/* Date Inputs */}
+              {/* Single Date Picker */}
               {dateFilterMode === "single" && (
-                <div className="row gap-2 mb-3" style={{ alignItems: "center" }}>
-                  <label className="muted" style={{ fontSize: 12 }}>
-                    Exact Date:
-                  </label>
+                <div className="row gap-2" style={{ alignItems: "center" }}>
+                  <span className="muted" style={{ fontSize: 12 }}>
+                    Pick Day:
+                  </span>
                   <input
                     type="date"
-                    className="input"
-                    style={{ width: 180, padding: "6px 12px", fontSize: 12 }}
+                    className="input input-sm"
                     value={singleDate}
                     onChange={(e) => setSingleDate(e.target.value)}
                   />
                   {singleDate && (
-                    <span className="muted" style={{ fontSize: 11 }}>
-                      Showing only emails sent on {new Date(singleDate).toLocaleDateString()}
-                    </span>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => setSingleDate("")}
+                      style={{ fontSize: 11 }}
+                    >
+                      Clear
+                    </button>
                   )}
                 </div>
               )}
 
+              {/* Date Range Picker */}
               {dateFilterMode === "range" && (
-                <div className="row gap-3 mb-3" style={{ flexWrap: "wrap", alignItems: "center" }}>
-                  <div className="row gap-2">
-                    <label className="muted" style={{ fontSize: 12 }}>
+                <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
+                  <div className="row gap-1" style={{ alignItems: "center" }}>
+                    <span className="muted" style={{ fontSize: 12 }}>
                       From:
-                    </label>
+                    </span>
                     <input
                       type="date"
-                      className="input"
-                      style={{ width: 160, padding: "6px 10px", fontSize: 12 }}
+                      className="input input-sm"
                       value={startDate}
                       onChange={(e) => setStartDate(e.target.value)}
                     />
                   </div>
-                  <div className="row gap-2">
-                    <label className="muted" style={{ fontSize: 12 }}>
+                  <div className="row gap-1" style={{ alignItems: "center" }}>
+                    <span className="muted" style={{ fontSize: 12 }}>
                       To:
-                    </label>
+                    </span>
                     <input
                       type="date"
-                      className="input"
-                      style={{ width: 160, padding: "6px 10px", fontSize: 12 }}
+                      className="input input-sm"
                       value={endDate}
                       onChange={(e) => setEndDate(e.target.value)}
                     />
                   </div>
+                  {(startDate || endDate) && (
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => {
+                        setStartDate("");
+                        setEndDate("");
+                      }}
+                      style={{ fontSize: 11 }}
+                    >
+                      Clear Range
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -593,12 +881,38 @@ export function EmailListView({
             onToggleSort={toggleSort}
             onSelect={setSelected}
             onViewEntity={onViewEntity}
+            columns={columns}
+            caseId={caseId}
           />
         </>
       )}
     </div>
   );
 }
+
+interface ColumnWidths {
+  name: number;
+  from: number;
+  to: number;
+  subject: number;
+  attachments: number;
+  date: number;
+  folder: number;
+  risk: number;
+  tag: number;
+}
+
+const DEFAULT_COL_WIDTHS: ColumnWidths = {
+  name: 150,
+  from: 180,
+  to: 160,
+  subject: 320,
+  attachments: 85,
+  date: 105,
+  folder: 85,
+  risk: 65,
+  tag: 65,
+};
 
 function VirtualEmailList({
   emails,
@@ -608,6 +922,8 @@ function VirtualEmailList({
   onToggleSort,
   onSelect,
   onViewEntity,
+  columns,
+  caseId,
 }: {
   emails: Email[];
   tagsByEmail: Map<string, EmailTag[]>;
@@ -616,11 +932,52 @@ function VirtualEmailList({
   onToggleSort: (field: SortField) => void;
   onSelect: (e: Email) => void;
   onViewEntity?: (email: string) => void;
+  columns: ColumnSettings;
+  caseId: string;
 }) {
   const [scrollOffset, setScrollOffset] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
-  const rowHeight = 41;
+  const rowHeight = 44;
   const visibleCount = 40;
+
+  // Resizable column widths state
+  const [colWidths, setColWidths] = useState<ColumnWidths>(() => {
+    try {
+      const saved = localStorage.getItem("j12_email_col_widths");
+      if (saved) return { ...DEFAULT_COL_WIDTHS, ...JSON.parse(saved) };
+    } catch {}
+    return DEFAULT_COL_WIDTHS;
+  });
+
+  const resizingRef = useRef<{ col: keyof ColumnWidths; startX: number; startW: number } | null>(null);
+
+  const startResize = (col: keyof ColumnWidths, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = { col, startX: e.clientX, startW: colWidths[col] };
+
+    const onMouseMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const delta = ev.clientX - resizingRef.current.startX;
+      const newWidth = Math.max(45, resizingRef.current.startW + delta);
+      setColWidths((prev) => {
+        const next = { ...prev, [resizingRef.current!.col]: newWidth };
+        try {
+          localStorage.setItem("j12_email_col_widths", JSON.stringify(next));
+        } catch {}
+        return next;
+      });
+    };
+
+    const onMouseUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  };
 
   const handleScroll = useCallback(() => {
     if (containerRef.current) {
@@ -636,6 +993,21 @@ function VirtualEmailList({
     }
   }, [handleScroll]);
 
+  // Compute dynamic grid template with resizable widths
+  const gridTemplate = useMemo(() => {
+    const parts: string[] = [];
+    if (columns.name) parts.push(`${colWidths.name}px`);
+    if (columns.from) parts.push(`${colWidths.from}px`);
+    if (columns.to) parts.push(`${colWidths.to}px`);
+    if (columns.subject) parts.push(`${colWidths.subject}px`);
+    if (columns.attachments) parts.push(`${colWidths.attachments}px`);
+    if (columns.date) parts.push(`${colWidths.date}px`);
+    if (columns.folder) parts.push(`${colWidths.folder}px`);
+    if (columns.risk) parts.push(`${colWidths.risk}px`);
+    if (columns.tag) parts.push(`${colWidths.tag}px`);
+    return parts.length > 0 ? parts.join(" ") : "1fr";
+  }, [columns, colWidths]);
+
   const totalHeight = emails.length * rowHeight;
   const startIdx = Math.max(0, Math.floor(scrollOffset / rowHeight));
   const endIdx = Math.min(emails.length, startIdx + visibleCount);
@@ -645,6 +1017,28 @@ function VirtualEmailList({
     <span style={{ opacity: sortField === field ? 1 : 0.35, marginLeft: 4, fontSize: 11 }}>
       {sortField === field ? (sortDir === "asc" ? "▲" : "▼") : "⇅"}
     </span>
+  );
+
+  const Resizer = ({ col }: { col: keyof ColumnWidths }) => (
+    <div
+      style={{
+        position: "absolute",
+        right: 0,
+        top: 0,
+        bottom: 0,
+        width: 8,
+        cursor: "col-resize",
+        zIndex: 5,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onMouseDown={(e) => startResize(col, e)}
+      onClick={(e) => e.stopPropagation()}
+      title="Drag to resize column width"
+    >
+      <div style={{ width: 2, height: "60%", background: "var(--border)", borderRadius: 1 }} />
+    </div>
   );
 
   if (emails.length === 0) {
@@ -660,71 +1054,123 @@ function VirtualEmailList({
   }
 
   return (
-    <div className="card" style={{ padding: 0, overflow: "hidden" }}>
-      {/* Interactive Sortable Header */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "170px 210px 1fr 110px 90px",
-          alignItems: "center",
-          padding: "10px 16px",
-          background: "var(--bg-1)",
-          borderBottom: "1px solid var(--border)",
-          fontSize: 11,
-          fontWeight: 600,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          color: "var(--text-3)",
-          userSelect: "none",
-        }}
-      >
+    <div className="card" style={{ padding: 0, overflowX: "auto", overflowY: "hidden" }}>
+      <div style={{ minWidth: "100%", width: "max-content" }}>
+        {/* Interactive Sortable & Resizable Header */}
         <div
-          className="sort-header"
-          onClick={() => onToggleSort("name")}
-          title="Click to sort by Name (A-Z / Z-A)"
+          style={{
+            display: "grid",
+            gridTemplateColumns: gridTemplate,
+            alignItems: "center",
+            padding: "10px 16px",
+            background: "var(--bg-1)",
+            borderBottom: "1px solid var(--border)",
+            fontSize: 11,
+            fontWeight: 600,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+            color: "var(--text-3)",
+            userSelect: "none",
+            gap: 8,
+          }}
         >
-          Name <SortIcon field="name" />
+          {columns.name && (
+            <div
+              className="sort-header"
+              style={{ position: "relative", paddingRight: 10 }}
+              onClick={() => onToggleSort("name")}
+              title="Click to sort by Name (A-Z / Z-A). Drag right edge to resize."
+            >
+              Name <SortIcon field="name" />
+              <Resizer col="name" />
+            </div>
+          )}
+          {columns.from && (
+            <div
+              className="sort-header"
+              style={{ position: "relative", paddingRight: 10 }}
+              onClick={() => onToggleSort("from")}
+              title="Click to sort by Sender Email (A-Z / Z-A). Drag right edge to resize."
+            >
+              From <SortIcon field="from" />
+              <Resizer col="from" />
+            </div>
+          )}
+          {columns.to && (
+            <div style={{ position: "relative", paddingRight: 10 }} title="Recipient Email. Drag right edge to resize.">
+              To
+              <Resizer col="to" />
+            </div>
+          )}
+          {columns.subject && (
+            <div
+              className="sort-header"
+              style={{ position: "relative", paddingRight: 10 }}
+              onClick={() => onToggleSort("subject")}
+              title="Click to sort by Subject (A-Z / Z-A). Drag right edge to resize."
+            >
+              Subject &amp; Tags <SortIcon field="subject" />
+              <Resizer col="subject" />
+            </div>
+          )}
+          {columns.attachments && (
+            <div style={{ position: "relative", textAlign: "center", paddingRight: 10 }} title="Attachments &amp; Photos. Drag right edge to resize.">
+              📎 Files
+              <Resizer col="attachments" />
+            </div>
+          )}
+          {columns.date && (
+            <div
+              className="sort-header"
+              style={{ position: "relative", textAlign: "right", paddingRight: 10 }}
+              onClick={() => onToggleSort("date")}
+              title="Click to sort by Date (Newest / Oldest). Drag right edge to resize."
+            >
+              Date <SortIcon field="date" />
+              <Resizer col="date" />
+            </div>
+          )}
+          {columns.folder && (
+            <div
+              className="sort-header"
+              style={{ position: "relative", textAlign: "center", paddingRight: 10 }}
+              onClick={() => onToggleSort("folder")}
+              title="Click to sort by Folder. Drag right edge to resize."
+            >
+              Folder <SortIcon field="folder" />
+              <Resizer col="folder" />
+            </div>
+          )}
+          {columns.risk && (
+            <div
+              className="sort-header"
+              style={{ position: "relative", textAlign: "center", paddingRight: 10 }}
+              onClick={() => onToggleSort("risk")}
+              title="Click to sort by Risk Score. Drag right edge to resize."
+            >
+              Risk <SortIcon field="risk" />
+              <Resizer col="risk" />
+            </div>
+          )}
+          {columns.tag && (
+            <div style={{ position: "relative", textAlign: "center", paddingRight: 10 }} title="Evidence Locker Bookmark. Drag right edge to resize.">
+              Locker
+              <Resizer col="tag" />
+            </div>
+          )}
         </div>
-        <div
-          className="sort-header"
-          onClick={() => onToggleSort("from")}
-          title="Click to sort by Sender Email (A-Z / Z-A)"
-        >
-          Email <SortIcon field="from" />
-        </div>
-        <div
-          className="sort-header"
-          onClick={() => onToggleSort("subject")}
-          title="Click to sort by Subject (A-Z / Z-A)"
-        >
-          Subject & Tags <SortIcon field="subject" />
-        </div>
-        <div
-          className="sort-header"
-          style={{ textAlign: "right" }}
-          onClick={() => onToggleSort("date")}
-          title="Click to sort by Date (Newest / Oldest)"
-        >
-          Date <SortIcon field="date" />
-        </div>
-        <div
-          className="sort-header"
-          style={{ textAlign: "center" }}
-          onClick={() => onToggleSort("folder")}
-          title="Click to sort by Folder"
-        >
-          Folder <SortIcon field="folder" />
-        </div>
-      </div>
 
-      {/* Virtual Scroll Area */}
-      <div
-        ref={containerRef}
-        style={{ height: "60vh", overflowY: "auto", position: "relative" }}
-      >
+        {/* Virtual Scroll Area */}
+        <div
+          ref={containerRef}
+          style={{ height: "60vh", overflowY: "auto", position: "relative" }}
+        >
         <div style={{ height: totalHeight, position: "relative" }}>
           {visibleEmails.map((e, i) => {
             const emailTags = tagsByEmail.get(e.id) || [];
+            const attCount = e.attachment_count || 0;
+            const imgCount = e.image_count || 0;
+
             return (
               <div
                 key={e.id}
@@ -736,121 +1182,223 @@ function VirtualEmailList({
                   right: 0,
                   height: rowHeight,
                   display: "grid",
-                  gridTemplateColumns: "170px 210px 1fr 110px 90px",
+                  gridTemplateColumns: gridTemplate,
                   alignItems: "center",
                   padding: "0 16px",
                   borderBottom: "1px solid var(--border)",
                   fontSize: 13,
                   transition: "background 0.1s",
+                  gap: 8,
                 }}
                 onClick={() => onSelect(e)}
               >
                 {/* Name */}
-                <div
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    color: "var(--text-1)",
-                    paddingRight: 10,
-                  }}
-                  title={e.from_display || undefined}
-                >
-                  {cleanDisplayName(e.from_display) || "—"}
-                </div>
-
-                {/* Email */}
-                <div
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    fontFamily: "var(--mono)",
-                    fontSize: 11,
-                    color: "var(--accent)",
-                    paddingRight: 10,
-                  }}
-                  title={e.from_addr}
-                >
-                  {e.from_addr}
-                </div>
-
-                {/* Subject & Tags */}
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    overflow: "hidden",
-                    paddingRight: 12,
-                  }}
-                >
-                  <span
+                {columns.name && (
+                  <div
                     style={{
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
-                      color: "var(--text-0)",
-                      fontWeight: 500,
+                      color: "var(--text-1)",
+                    }}
+                    title={e.from_display || undefined}
+                  >
+                    {cleanDisplayName(e.from_display) || "—"}
+                  </div>
+                )}
+
+                {/* From Email */}
+                {columns.from && (
+                  <div
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                      color: "var(--accent)",
+                    }}
+                    title={e.from_addr}
+                  >
+                    {e.from_addr}
+                  </div>
+                )}
+
+                {/* To Recipient */}
+                {columns.to && (
+                  <div
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontFamily: "var(--mono)",
+                      fontSize: 11,
+                      color: "var(--text-2)",
+                    }}
+                    title={e.to_addrs}
+                  >
+                    {e.to_addrs || "—"}
+                  </div>
+                )}
+
+                {/* Subject & Tags */}
+                {columns.subject && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      overflow: "hidden",
                     }}
                   >
-                    {e.subject || <span className="muted">(no subject)</span>}
-                  </span>
-                  {emailTags.map((t) => (
                     <span
-                      key={t.id}
-                      className="badge"
                       style={{
-                        background: `${t.color}22`,
-                        color: t.color,
-                        border: `1px solid ${t.color}44`,
-                        fontSize: 9,
-                        padding: "1px 5px",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
-                        flexShrink: 0,
+                        color: "var(--text-0)",
+                        fontWeight: 500,
                       }}
                     >
-                      {t.tag}
+                      {e.subject || <span className="muted">(no subject)</span>}
                     </span>
-                  ))}
-                </div>
+                    {emailTags.map((t) => (
+                      <span
+                        key={t.id}
+                        className="badge"
+                        style={{
+                          background: `${t.color}22`,
+                          color: t.color,
+                          border: `1px solid ${t.color}44`,
+                          fontSize: 9,
+                          padding: "1px 5px",
+                          whiteSpace: "nowrap",
+                          flexShrink: 0,
+                        }}
+                      >
+                        {t.tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Attachments / Photos Badge Indicator */}
+                {columns.attachments && (
+                  <div style={{ display: "flex", justifyContent: "center", gap: 4, alignItems: "center" }}>
+                    {attCount > 0 ? (
+                      <span
+                        className="badge badge-blue"
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 2,
+                          fontWeight: 700,
+                        }}
+                        title={`${attCount} total attachment(s)`}
+                      >
+                        📎 {attCount}
+                      </span>
+                    ) : null}
+
+                    {imgCount > 0 ? (
+                      <span
+                        className="badge badge-green"
+                        style={{
+                          fontSize: 10,
+                          padding: "1px 6px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 2,
+                          fontWeight: 700,
+                        }}
+                        title={`${imgCount} image attachment(s)`}
+                      >
+                        🖼️ {imgCount}
+                      </span>
+                    ) : null}
+
+                    {attCount === 0 && imgCount === 0 && (
+                      <span className="muted" style={{ opacity: 0.25, fontSize: 11 }}>—</span>
+                    )}
+                  </div>
+                )}
 
                 {/* Date */}
-                <div
-                  style={{
-                    textAlign: "right",
-                    fontSize: 11,
-                    color: "var(--text-3)",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
-                </div>
+                {columns.date && (
+                  <div
+                    style={{
+                      textAlign: "right",
+                      fontSize: 11,
+                      color: "var(--text-3)",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {e.date_sent ? new Date(e.date_sent).toLocaleDateString() : "—"}
+                  </div>
+                )}
 
                 {/* Folder */}
-                <div style={{ textAlign: "center" }}>
-                  <span className="badge badge-gray" style={{ fontSize: 9 }}>
-                    {e.folder_category}
-                  </span>
-                </div>
+                {columns.folder && (
+                  <div style={{ textAlign: "center" }}>
+                    <span className="badge badge-gray" style={{ fontSize: 9 }}>
+                      {e.folder_category}
+                    </span>
+                  </div>
+                )}
+
+                {/* Risk Score */}
+                {columns.risk && (
+                  <div style={{ textAlign: "center" }}>
+                    <span
+                      className={`badge ${
+                        e.risk_score >= 50
+                          ? "badge-red"
+                          : e.risk_score >= 25
+                          ? "badge-orange"
+                          : "badge-gray"
+                      }`}
+                      style={{ fontSize: 10, fontWeight: 700, minWidth: 26, textAlign: "center" }}
+                    >
+                      {e.risk_score}
+                    </span>
+                  </div>
+                )}
+
+                {/* Locker Bookmark Button */}
+                {columns.tag && (
+                  <div
+                    style={{ display: "flex", justifyContent: "center" }}
+                    onClick={(ev) => ev.stopPropagation()}
+                  >
+                    <BookmarkButton
+                      caseId={caseId}
+                      itemId={e.id}
+                      itemType="email"
+                      compact={true}
+                    />
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       </div>
-      <div
-        style={{
-          padding: "8px 16px",
-          background: "var(--bg-3)",
-          fontSize: 11,
-          color: "var(--text-3)",
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-        Showing {emails.length.toLocaleString()} emails
-      </div>
     </div>
-  );
+    <div
+      style={{
+        padding: "8px 16px",
+        background: "var(--bg-3)",
+        fontSize: 11,
+        color: "var(--text-3)",
+        borderTop: "1px solid var(--border)",
+      }}
+    >
+      Showing {emails.length.toLocaleString()} emails
+    </div>
+  </div>
+);
 }
 
 function EmailDetail({

@@ -55,10 +55,11 @@ type FilterCategory = "all" | "sent" | "received" | "deleted" | "flagged" | "aft
 
 interface Props {
   caseId: string;
+  evidenceFilter?: string | null;
   onSelectEmail?: (id: string) => void;
 }
 
-export function TimelineView({ caseId }: Props) {
+export function TimelineView({ caseId, evidenceFilter }: Props) {
   const [dailyData, setDailyData] = useState<DailyRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [dateRange, setDateRange] = useState<{ min: string; max: string }>({ min: "", max: "" });
@@ -79,12 +80,17 @@ export function TimelineView({ caseId }: Props) {
 
   useEffect(() => {
     loadData();
-  }, [caseId]);
+  }, [caseId, evidenceFilter]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await invoke<any>("timeline_data", { input: { case_id: caseId } });
+      const res = await invoke<any>("timeline_data", { 
+        input: { 
+          case_id: caseId,
+          evidence_id: evidenceFilter || undefined
+        } 
+      });
       const daily: DailyRecord[] = res.daily || [];
       setDailyData(daily);
       if (res.date_range) {
@@ -129,17 +135,31 @@ export function TimelineView({ caseId }: Props) {
       if (period.length === 10) {
         // Daily date
         res = await invoke<TimelineEmail[]>("emails_by_date", {
-          input: { case_id: caseId, date: period },
+          input: { 
+            case_id: caseId, 
+            date: period,
+            evidence_id: evidenceFilter || undefined
+          },
         });
       } else if (period.length === 7) {
         // Monthly prefix (search with after & before)
         res = await invoke<TimelineEmail[]>("advanced_search", {
-          input: { case_id: caseId, query: `after:${period}-01 before:${period}-31`, limit: 500 },
+          input: { 
+            case_id: caseId, 
+            query: `after:${period}-01 before:${period}-31`, 
+            limit: 500,
+            evidence_id: evidenceFilter || undefined
+          },
         });
       } else {
         // All emails
         res = await invoke<TimelineEmail[]>("advanced_search", {
-          input: { case_id: caseId, query: "", limit: 500 },
+          input: { 
+            case_id: caseId, 
+            query: "", 
+            limit: 500,
+            evidence_id: evidenceFilter || undefined
+          },
         });
       }
       setStreamEmails(res || []);

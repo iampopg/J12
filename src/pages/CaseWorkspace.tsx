@@ -9,8 +9,10 @@ import { TimelineView } from "../views/TimelineView";
 import { GraphView } from "../views/GraphView";
 import { NotesView } from "../views/NotesView";
 import { ReportView } from "../views/ReportView";
+import { AISetupPage } from "../views/AISetupPage";
 import { ArtifactsView } from "../views/ArtifactsView";
 import { AttachmentsView } from "../views/AttachmentsView";
+import { DocumentationView } from "../views/DocumentationView";
 import { J12Logo } from "../components/J12Logo";
 import { FooterSignature } from "../components/FooterSignature";
 
@@ -18,8 +20,8 @@ interface Case { id: string; title: string; case_number: string; description: st
 interface Evidence { id: string; case_id: string; filename: string; format: string; sha256: string; size_bytes: number; parse_status: string; message_count: number; deleted_recovered: number; acquired_at: string; source_description: string; parse_error: string | null; }
 interface Dashboard { evidence_count: number; email_count: number; deleted_recovered: number; entity_count: number; finding_count: number; severity_breakdown: Record<string, number>; date_range: [string | null, string | null]; sent_count: number; inbox_count: number; important_count?: number; soft_deleted_count: number; drafts_count: number; spam_count: number; other_count: number; high_risk_emails: number; }
 
-type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "important" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other" | "flagged" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity" | "artifacts" | "attachments";
-type FolderFilter = "all" | "inbox" | "important" | "sent" | "drafts" | "soft_deleted" | "hard_deleted" | "recoverable" | "spam" | "other";
+type View = "dashboard" | "evidence" | "emails" | "sent" | "inbox" | "drafts" | "soft_deleted" | "spam" | "other" | "search" | "timeline" | "graph" | "entities" | "findings" | "custody" | "target" | "notes" | "case_manage" | "report" | "integrity" | "artifacts" | "attachments" | "docs" | "ai_setup";
+type FolderFilter = "all" | "inbox" | "sent" | "drafts" | "soft_deleted" | "spam" | "other";
 
 function cleanDisplayName(name: string | null): string {
   if (!name) return "";
@@ -72,13 +74,14 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
     setSidebarCollapsedState(val);
   };
 
+  // Collapsible folder states with localStorage persistence (Default: ONLY Case Overview & Forensic Intelligence uncollapsed)
   const [overviewOpen, setOverviewOpenState] = useState(() => localStorage.getItem("sb_overview_open") !== "false");
   const setOverviewOpen = (val: boolean) => {
     localStorage.setItem("sb_overview_open", String(val));
     setOverviewOpenState(val);
   };
 
-  const [evidenceFolderOpen, setEvidenceFolderOpenState] = useState(() => localStorage.getItem("sb_evidence_open") !== "false");
+  const [evidenceFolderOpen, setEvidenceFolderOpenState] = useState(() => localStorage.getItem("sb_evidence_open") === "true");
   const setEvidenceFolderOpen = (val: boolean) => {
     localStorage.setItem("sb_evidence_open", String(val));
     setEvidenceFolderOpenState(val);
@@ -90,31 +93,79 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
     setIntelligenceOpenState(val);
   };
 
-  const [emailFolderOpen, setEmailFolderOpenState] = useState(() => localStorage.getItem("sb_email_open") !== "false");
+  const [emailFolderOpen, setEmailFolderOpenState] = useState(() => localStorage.getItem("sb_email_open") === "true");
   const setEmailFolderOpen = (val: boolean) => {
     localStorage.setItem("sb_email_open", String(val));
     setEmailFolderOpenState(val);
   };
 
-  const [investigationFolderOpen, setInvestigationFolderOpenState] = useState(() => localStorage.getItem("sb_invest_open") !== "false");
+  const [investigationFolderOpen, setInvestigationFolderOpenState] = useState(() => localStorage.getItem("sb_invest_open") === "true");
   const setInvestigationFolderOpen = (val: boolean) => {
     localStorage.setItem("sb_invest_open", String(val));
     setInvestigationFolderOpenState(val);
   };
 
-  const [caseManagementOpen, setCaseManagementOpenState] = useState(() => localStorage.getItem("sb_manage_open") !== "false");
+  const [caseManagementOpen, setCaseManagementOpenState] = useState(() => localStorage.getItem("sb_manage_open") === "true");
   const setCaseManagementOpen = (val: boolean) => {
     localStorage.setItem("sb_manage_open", String(val));
     setCaseManagementOpenState(val);
   };
 
+  const [helpFolderOpen, setHelpFolderOpenState] = useState(() => localStorage.getItem("sb_help_open") === "true");
+  const setHelpFolderOpen = (val: boolean) => {
+    localStorage.setItem("sb_help_open", String(val));
+    setHelpFolderOpenState(val);
+  };
+
   const [folderFilter, setFolderFilter] = useState<FolderFilter>("all");
+  const [activeEvidenceId, setActiveEvidenceId] = useState<string | null>(null);
+  const [showEvidenceDropdown, setShowEvidenceDropdown] = useState(false);
+  const evidenceDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showEvidenceDropdown) return;
+    const handler = (e: MouseEvent) => {
+      if (evidenceDropdownRef.current && !evidenceDropdownRef.current.contains(e.target as Node)) {
+        setShowEvidenceDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showEvidenceDropdown]);
+
   const [showDeleteCase, setShowDeleteCase] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletingCase, setDeletingCase] = useState(false);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportToast, setExportToast] = useState<string | null>(null);
+  
+  // AI State
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const [aiConfig, setAiConfig] = useState({
+    provider: "local",
+    api_key: "",
+    model: "llama3.2",
+    endpoint: "http://localhost:11434",
+  });
+  const [aiSetupComplete, setAiSetupComplete] = useState(false);
 
   const hasEvidence = evidence.length > 0;
-  const hasDone = evidence.some((e) => e.parse_status === "done");
+  const hasDone = evidence.some((e) => e.parse_status === "done" || e.parse_status === "parsed");
+
+  // Load AI config
+  useEffect(() => {
+    const saved = localStorage.getItem(`ai_config_${caseId}`);
+    if (saved) {
+      try {
+        const config = JSON.parse(saved);
+        setAiConfig(config);
+        setAiEnabled(config.enabled || false);
+        setAiSetupComplete(true);
+      } catch (e) {
+        console.error("Failed to load AI config:", e);
+      }
+    }
+  }, [caseId]);
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -122,7 +173,12 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
       const [c, ev, dash] = await Promise.all([
         invoke<Case>("case_get", { input: { case_id: caseId } }),
         invoke<Evidence[]>("evidence_list", { input: { case_id: caseId } }),
-        invoke<Dashboard>("dashboard", { input: { case_id: caseId } }),
+        invoke<Dashboard>("dashboard", { 
+          input: { 
+            case_id: caseId,
+            evidence_id: activeEvidenceId || undefined
+          } 
+        }),
       ]);
       setCaseData(c);
       setEvidence(ev);
@@ -132,9 +188,21 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
       }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [caseId]);
+  }, [caseId, activeEvidenceId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Re-fetch dashboard whenever active evidence source filter changes
+  useEffect(() => {
+    invoke<Dashboard>("dashboard", { 
+      input: { 
+        case_id: caseId,
+        evidence_id: activeEvidenceId || undefined
+      } 
+    })
+      .then(dash => setDashboard(dash))
+      .catch(e => console.error("Failed to update dashboard for evidence filter:", e));
+  }, [caseId, activeEvidenceId]);
 
   const handleDeleteCase = async () => {
     if (!caseId) return;
@@ -152,7 +220,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
 
   // Auto-refresh while parsing
   useEffect(() => {
-    const hasParsing = evidence.some(e => e.parse_status === "parsing");
+    const hasParsing = evidence.some(e => e.parse_status === "parsing" || e.parse_status === "ingesting");
     if (!hasParsing) return;
     const interval = setInterval(loadAll, 3000);
     return () => clearInterval(interval);
@@ -173,6 +241,7 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
   };
 
   const emailCounts = getEmailCounts();
+  const activeEvidenceObj = activeEvidenceId ? evidence.find(e => e.id === activeEvidenceId) : null;
 
   if (loading && !caseData) return <div className="app"><div className="empty">Loading case...</div></div>;
 
@@ -189,237 +258,447 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
             </div>
           </div>
         </div>
-        <div className="row gap-4">
+        <div className="row gap-3" style={{ alignItems: "center" }}>
           {caseData?.target_email && (
             <div style={{ textAlign: "right" }}>
               <div style={{ fontSize: 10, color: "var(--text-3)" }}>TARGET</div>
               <div style={{ fontSize: 12, color: "var(--accent)", fontFamily: "var(--mono)" }}>{caseData.target_email}</div>
             </div>
           )}
-          {hasDone && <span className="badge badge-green">● {dashboard?.email_count?.toLocaleString() || 0} emails</span>}
+
+          {/* Evidence Source Switcher Dropdown (Top Bar) */}
+          {evidence.length > 0 && (
+            <div ref={evidenceDropdownRef} style={{ position: "relative" }}>
+              <button
+                className={`btn btn-sm ${activeEvidenceId ? "btn-primary" : "btn-ghost"}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  padding: "5px 12px",
+                  borderRadius: "var(--r-sm)",
+                  border: activeEvidenceId ? "1px solid var(--accent)" : "1px solid var(--border)",
+                  background: activeEvidenceId ? "rgba(56, 189, 248, 0.15)" : "var(--bg-2)",
+                  color: activeEvidenceId ? "var(--accent)" : "var(--text-1)",
+                }}
+                onClick={() => setShowEvidenceDropdown(!showEvidenceDropdown)}
+                title="Switch between evidence sources or view combined case"
+              >
+                <span>{activeEvidenceObj ? (activeEvidenceObj.format === "imap" ? "☁️" : activeEvidenceObj.format === "mbox" ? "📦" : "📧") : "🌐"}</span>
+                <span style={{ maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 }}>
+                  {activeEvidenceObj ? activeEvidenceObj.filename : `All Sources (${evidence.length})`}
+                </span>
+                <span style={{ fontSize: 9, opacity: 0.7 }}>▼</span>
+              </button>
+
+              {showEvidenceDropdown && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: "calc(100% + 6px)",
+                    right: 0,
+                    zIndex: 9999,
+                    background: "var(--bg-1)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--r-md)",
+                    boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
+                    padding: 8,
+                    width: 320,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                  }}
+                >
+                  <div className="row between mb-1" style={{ padding: "4px 8px" }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "var(--text-3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                      Switch Evidence Source
+                    </span>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      style={{ fontSize: 10, padding: "1px 6px" }}
+                      onClick={() => {
+                        setView("evidence");
+                        setShowEvidenceDropdown(false);
+                      }}
+                    >
+                      + Ingest New
+                    </button>
+                  </div>
+
+                  {/* All Sources Option */}
+                  <div
+                    className="tr-click"
+                    style={{
+                      padding: "8px 10px",
+                      borderRadius: "var(--r-sm)",
+                      background: !activeEvidenceId ? "var(--accent-subtle)" : "transparent",
+                      border: !activeEvidenceId ? "1px solid var(--accent)" : "1px solid transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                    onClick={() => {
+                      setActiveEvidenceId(null);
+                      setShowEvidenceDropdown(false);
+                    }}
+                  >
+                    <div className="row gap-2" style={{ alignItems: "center" }}>
+                      <span style={{ fontSize: 16 }}>🌐</span>
+                      <div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-0)" }}>
+                          All Evidence Sources
+                        </div>
+                        <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                          Combined case records ({evidence.length} sources)
+                        </div>
+                      </div>
+                    </div>
+                    <span className="badge" style={{ fontSize: 10 }}>
+                      {dashboard?.email_count?.toLocaleString() || 0}
+                    </span>
+                  </div>
+
+                  <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
+
+                  {/* Individual Evidence Source Options */}
+                  {evidence.map((ev) => {
+                    const isSelected = activeEvidenceId === ev.id;
+                    const icon = ev.format === "imap" ? "☁️" : ev.format === "mbox" ? "📦" : ev.format === "eml" ? "📧" : "📄";
+                    return (
+                      <div
+                        key={ev.id}
+                        className="tr-click"
+                        style={{
+                          padding: "8px 10px",
+                          borderRadius: "var(--r-sm)",
+                          background: isSelected ? "var(--accent-subtle)" : "transparent",
+                          border: isSelected ? "1px solid var(--accent)" : "1px solid transparent",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          gap: 8,
+                        }}
+                        onClick={() => {
+                          setActiveEvidenceId(ev.id);
+                          setView("emails");
+                          setFolderFilter("all");
+                          setShowEvidenceDropdown(false);
+                        }}
+                      >
+                        <div className="row gap-2" style={{ alignItems: "center", minWidth: 0, flex: 1 }}>
+                          <span style={{ fontSize: 16 }}>{icon}</span>
+                          <div style={{ minWidth: 0 }}>
+                            <div
+                              style={{
+                                fontSize: 12,
+                                fontWeight: 600,
+                                color: isSelected ? "var(--accent)" : "var(--text-0)",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {ev.filename}
+                            </div>
+                            <div style={{ fontSize: 10, color: "var(--text-3)" }}>
+                              {ev.format.toUpperCase()} · {(ev.size_bytes / 1024).toFixed(0)} KB
+                            </div>
+                          </div>
+                        </div>
+                        <span className="badge badge-blue" style={{ fontSize: 10, flexShrink: 0 }}>
+                          {ev.message_count.toLocaleString()} msgs
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {hasDone && (
+            <span className="badge badge-green" style={{ fontSize: 11 }}>
+              ● {dashboard?.email_count?.toLocaleString() || 0} emails
+            </span>
+          )}
+
           <button
             className={`btn ${view === "evidence" ? "btn-primary" : "btn-ghost"} btn-sm`}
             onClick={() => setView("evidence")}
             style={{ fontSize: 12 }}
           >
-            📥 {evidence.length} Evidence Source(s)
+            📥 Ingest Hub
           </button>
         </div>
       </header>
 
       <div className="body">
-         {/* Case Navigator Sidebar */}
-         <nav className="sidebar" style={{ width: sidebarCollapsed ? 50 : 230, minWidth: sidebarCollapsed ? 50 : 230 }}>
-           <div className="sb-section" style={{ display: "flex", justifyContent: "flex-end", padding: "6px 8px" }}>
-             <button className="sb-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}>
-               {sidebarCollapsed ? "→" : "←"}
-             </button>
-           </div>
+          {/* Case Navigator Sidebar */}
+          <nav className="sidebar" style={{ width: sidebarCollapsed ? 50 : 230, minWidth: sidebarCollapsed ? 50 : 230 }}>
+            <div className="sb-section" style={{ display: "flex", justifyContent: "flex-end", padding: "6px 8px" }}>
+              <button className="sb-toggle" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} title={sidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}>
+                {sidebarCollapsed ? "→" : "←"}
+              </button>
+            </div>
 
-           {/* 1. Overview & Dossier */}
-           {!sidebarCollapsed && (
-             <div className="sb-folder">
-               <div className="sb-folder-header" onClick={() => setOverviewOpen(!overviewOpen)}>
-                 <span className="sb-folder-arrow">{overviewOpen ? "▼" : "▶"}</span>
-                 <span className="sb-label" style={{ margin: 0 }}>Case Overview</span>
-               </div>
-               {overviewOpen && (
-                 <div className="sb-folder-content">
-                   <button className={`sb-item ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")} style={{ fontWeight: 600 }}>
-                     <span className="sb-icon">◫</span> Case Dashboard
-                   </button>
-                   <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")}>
-                     <span className="sb-icon">🎯</span> Target Dossier
-                   </button>
-                 </div>
-               )}
-             </div>
-           )}
+            {/* 1. 📁 Case Overview (Default: Open) */}
+            {!sidebarCollapsed && (
+              <div className="sb-folder">
+                <div className="sb-folder-header" onClick={() => setOverviewOpen(!overviewOpen)}>
+                  <span className="sb-folder-arrow">{overviewOpen ? "▼" : "▶"}</span>
+                  <span className="sb-label" style={{ margin: 0 }}>📁 Case Overview</span>
+                </div>
+                {overviewOpen && (
+                  <div className="sb-folder-content">
+                    <button className={`sb-item ${view === "dashboard" ? "active" : ""}`} onClick={() => setView("dashboard")} style={{ fontWeight: 600 }}>
+                      <span className="sb-icon">◫</span> Case Dashboard
+                    </button>
+                    <button className={`sb-item ${view === "target" ? "active" : ""}`} onClick={() => setView("target")}>
+                      <span className="sb-icon">🎯</span> Target Dossier
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
-           {/* 2. Evidence Sources & Acquisition */}
-           <div className="sb-folder">
-             <div
-               className="sb-folder-header"
-               style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
-               onClick={() => {
-                 setEvidenceFolderOpen(!evidenceFolderOpen);
-               }}
-             >
-               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                 <span className="sb-folder-arrow" style={{ fontSize: 10 }}>
-                   {evidenceFolderOpen ? "▼" : "▶"}
-                 </span>
-                 <span className="sb-label" style={{ margin: 0, padding: 0 }}>Evidence Sources</span>
-               </div>
-               {!sidebarCollapsed && (
-                 <button
-                   className="btn btn-ghost btn-sm"
-                   style={{ padding: "2px 6px", fontSize: 10, height: 20 }}
-                   onClick={(e) => {
-                     e.stopPropagation();
-                     setView("evidence");
-                   }}
-                 >
-                   + Add
-                 </button>
-               )}
-             </div>
-             {evidenceFolderOpen && !sidebarCollapsed && (
-               <div className="sb-folder-content">
-                 <button
-                   className={`sb-item ${view === "evidence" ? "active" : ""}`}
-                   onClick={() => setView("evidence")}
-                 >
-                   <span className="sb-icon">📥</span>
-                   <span>Acquire / Ingest</span>
-                   <span className="sb-count">{evidence.length}</span>
-                 </button>
-                 {evidence.map((e) => (
-                   <button
-                     key={e.id}
-                     className={`sb-item ${view === "evidence" ? "active" : ""}`}
-                     onClick={() => setView("evidence")}
-                     style={{ paddingLeft: 20 }}
-                     title={e.filename}
-                   >
-                     <span className="sb-icon">{e.format === "imap" ? "☁️" : e.format === "eml" ? "📧" : e.format === "mbox" ? "📦" : "📄"}</span>
-                     <span className="sb-text-truncate">{e.filename}</span>
-                     <span className={`sb-status sb-${e.parse_status}`}>{e.parse_status === "done" ? "✓" : e.parse_status === "error" ? "!" : "•"}</span>
-                   </button>
-                 ))}
-               </div>
-             )}
-           </div>
+            {/* 2. 📁 Evidence Sources (Default: Open) */}
+            <div className="sb-folder">
+              <div
+                className="sb-folder-header"
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer" }}
+                onClick={() => {
+                  setEvidenceFolderOpen(!evidenceFolderOpen);
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="sb-folder-arrow" style={{ fontSize: 10 }}>
+                    {evidenceFolderOpen ? "▼" : "▶"}
+                  </span>
+                  <span className="sb-label" style={{ margin: 0, padding: 0 }}>📁 Evidence Sources</span>
+                </div>
+                {!sidebarCollapsed && (
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: "2px 6px", fontSize: 10, height: 20 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setView("evidence");
+                    }}
+                  >
+                    + Ingest
+                  </button>
+                )}
+              </div>
+              {evidenceFolderOpen && !sidebarCollapsed && (
+                <div className="sb-folder-content">
+                  <button
+                    className={`sb-item ${view === "evidence" && !activeEvidenceId ? "active" : ""}`}
+                    onClick={() => {
+                      setActiveEvidenceId(null);
+                      setView("evidence");
+                    }}
+                  >
+                    <span className="sb-icon">📥</span>
+                    <span>All Sources (Ingest Hub)</span>
+                    <span className="sb-count">{evidence.length}</span>
+                  </button>
+                  {evidence.map((e) => {
+                    const isSourceActive = activeEvidenceId === e.id && (view === "emails" || view === "inbox" || view === "sent");
+                    return (
+                      <button
+                        key={e.id}
+                        className={`sb-item ${isSourceActive ? "active" : ""}`}
+                        onClick={() => {
+                          setActiveEvidenceId(e.id);
+                          setFolderFilter("all");
+                          setView("emails");
+                        }}
+                        style={{
+                          paddingLeft: 20,
+                          borderLeft: isSourceActive ? "3px solid var(--accent)" : "3px solid transparent",
+                        }}
+                        title={`Filter case to ${e.filename} (${e.message_count} emails)`}
+                      >
+                        <span className="sb-icon">{e.format === "imap" ? "☁️" : e.format === "eml" ? "📧" : e.format === "mbox" ? "📦" : "📄"}</span>
+                        <span className="sb-text-truncate">{e.filename}</span>
+                        <span className={`sb-status sb-${e.parse_status}`}>
+                          {e.parse_status === "done" || e.parse_status === "parsed" ? "✓" : e.parse_status === "error" || e.parse_status === "failed" ? "!" : "•"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
 
-           {/* 3. Forensic Intelligence */}
-           {!sidebarCollapsed && (
-             <div className="sb-folder">
-               <div className="sb-folder-header" onClick={() => setIntelligenceOpen(!intelligenceOpen)}>
-                 <span className="sb-folder-arrow">{intelligenceOpen ? "▼" : "▶"}</span>
-                 <span className="sb-label" style={{ margin: 0 }}>Forensic Intelligence</span>
-               </div>
-               {intelligenceOpen && (
-                 <div className="sb-folder-content">
-                   <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")}>
-                     <span className="sb-icon">🧩</span> Artifacts Hub
-                   </button>
-                   <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")}>
-                     <span className="sb-icon">📎</span> Attachments &amp; Files
-                   </button>
-                   <button className={`sb-item ${view === "findings" ? "active" : ""}`} onClick={() => setView("findings")}>
-                     <span className="sb-icon">🚨</span> Security Findings
-                     {dashboard && dashboard.finding_count > 0 && <span className="sb-count" style={{ background: "rgba(239, 68, 68, 0.2)", color: "#ef4444" }}>{dashboard.finding_count}</span>}
-                   </button>
-                 </div>
-               )}
-             </div>
-           )}
+            {/* 3. 📁 Forensic Intelligence (Default: Open) */}
+            {!sidebarCollapsed && (
+              <div className="sb-folder">
+                <div className="sb-folder-header" onClick={() => setIntelligenceOpen(!intelligenceOpen)}>
+                  <span className="sb-folder-arrow">{intelligenceOpen ? "▼" : "▶"}</span>
+                  <span className="sb-label" style={{ margin: 0 }}>📁 Forensic Intelligence</span>
+                </div>
+                {intelligenceOpen && (
+                  <div className="sb-folder-content">
+                    <button className={`sb-item ${view === "artifacts" ? "active" : ""}`} onClick={() => setView("artifacts")}>
+                      <span className="sb-icon">🧩</span> Artifacts Hub
+                    </button>
+                    <button className={`sb-item ${view === "attachments" ? "active" : ""}`} onClick={() => setView("attachments")}>
+                      <span className="sb-icon">📎</span> Attachments &amp; Files
+                    </button>
+                    <button className={`sb-item ${view === "findings" ? "active" : ""}`} onClick={() => setView("findings")}>
+                      <span className="sb-icon">🚨</span> Security Findings
+                      {dashboard && dashboard.finding_count > 0 && <span className="sb-count" style={{ background: "rgba(239, 68, 68, 0.2)", color: "#ef4444" }}>{dashboard.finding_count}</span>}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
-           {/* 4. Email Folders - Collapsible */}
-           <div className="sb-folder">
-             <div className="sb-folder-header" onClick={() => setEmailFolderOpen(!emailFolderOpen)}>
-               <span className="sb-folder-arrow">{emailFolderOpen ? "▼" : "▶"}</span>
-               <span className="sb-label" style={{ margin: 0 }}>Email Messages</span>
-             </div>
-             {emailFolderOpen && !sidebarCollapsed && (
-               <div className="sb-folder-content">
-                 <button className={`sb-item ${folderFilter === "all" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("all"); setView("emails"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">📬</span> All Emails
-                   <span className="sb-count">{emailCounts.total || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "inbox" && (view === "inbox" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">📥</span> Inbox
-                   <span className="sb-count">{emailCounts.inbox || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "important" && (view === "important" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("important"); setView("important"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">⭐</span> Important
-                   <span className="sb-count">{emailCounts.important || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "sent" && (view === "sent" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("sent"); setView("sent"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">📤</span> Sent
-                   <span className="sb-count">{emailCounts.sent || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "drafts" && (view === "drafts" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("drafts"); setView("drafts"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">📝</span> Drafts
-                   <span className="sb-count">{emailCounts.drafts || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "soft_deleted" && (view === "soft_deleted" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("soft_deleted"); setView("soft_deleted"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">🗑️</span> Deleted (Recycle Bin)
-                   <span className="sb-count">{emailCounts.soft_deleted || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "spam" && (view === "spam" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("spam"); setView("spam"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">⚠</span> Spam / Junk
-                   <span className="sb-count">{emailCounts.spam || 0}</span>
-                 </button>
-                 <button className={`sb-item ${folderFilter === "other" && (view === "other" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("other"); setView("other"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">📁</span> Other Folders
-                   <span className="sb-count">{emailCounts.other || 0}</span>
-                 </button>
-               </div>
-             )}
-           </div>
+            {/* 4. 📁 Email Messages (Default: Collapsed) */}
+            <div className="sb-folder">
+              <div className="sb-folder-header" onClick={() => setEmailFolderOpen(!emailFolderOpen)}>
+                <span className="sb-folder-arrow">{emailFolderOpen ? "▼" : "▶"}</span>
+                <span className="sb-label" style={{ margin: 0 }}>📁 Email Messages</span>
+              </div>
+              {emailFolderOpen && !sidebarCollapsed && (
+                <div className="sb-folder-content">
+                  <button className={`sb-item ${folderFilter === "all" && view === "emails" ? "active" : ""}`} onClick={() => { setFolderFilter("all"); setView("emails"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">📬</span> All Emails
+                    <span className="sb-count">{emailCounts.total || 0}</span>
+                  </button>
+                  <button className={`sb-item ${folderFilter === "inbox" && (view === "inbox" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("inbox"); setView("inbox"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">📥</span> Inbox
+                    <span className="sb-count">{emailCounts.inbox || 0}</span>
+                  </button>
+                  <button className={`sb-item ${folderFilter === "sent" && (view === "sent" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("sent"); setView("sent"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">📤</span> Sent
+                    <span className="sb-count">{emailCounts.sent || 0}</span>
+                  </button>
+                  <button className={`sb-item ${folderFilter === "drafts" && (view === "drafts" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("drafts"); setView("drafts"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">📝</span> Drafts
+                    <span className="sb-count">{emailCounts.drafts || 0}</span>
+                  </button>
+                  <button className={`sb-item ${folderFilter === "soft_deleted" && (view === "soft_deleted" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("soft_deleted"); setView("soft_deleted"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">🗑️</span> Deleted (Recycle Bin)
+                    <span className="sb-count">{emailCounts.soft_deleted || 0}</span>
+                  </button>
+                  <button className={`sb-item ${folderFilter === "spam" && (view === "spam" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("spam"); setView("spam"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">⚠</span> Spam / Junk
+                    <span className="sb-count">{emailCounts.spam || 0}</span>
+                  </button>
+                  <button className={`sb-item ${folderFilter === "other" && (view === "other" || view === "emails") ? "active" : ""}`} onClick={() => { setFolderFilter("other"); setView("other"); }} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">📁</span> Other Folders
+                    <span className="sb-count">{emailCounts.other || 0}</span>
+                  </button>
+                </div>
+              )}
+            </div>
 
-           {/* 5. Investigation & Analytics - Collapsible */}
-           <div className="sb-folder">
-             <div className="sb-folder-header" onClick={() => setInvestigationFolderOpen(!investigationFolderOpen)}>
-               <span className="sb-folder-arrow">{investigationFolderOpen ? "▼" : "▶"}</span>
-               <span className="sb-label" style={{ margin: 0 }}>Investigation &amp; Graph</span>
-             </div>
-             {investigationFolderOpen && !sidebarCollapsed && (
-               <div className="sb-folder-content">
-                 <button className={`sb-item ${view === "search" ? "active" : ""}`} onClick={() => setView("search")}>
-                   <span className="sb-icon">🔍</span> Advanced Search
-                 </button>
-                 <button className={`sb-item ${view === "graph" ? "active" : ""}`} onClick={() => hasDone && setView("graph")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">🕸️</span> Network Graph
-                 </button>
-                 <button className={`sb-item ${view === "entities" ? "active" : ""}`} onClick={() => hasDone && setView("entities")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">👥</span> Entity Profiles
-                 </button>
-                 <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
-                   <span className="sb-icon">📅</span> Incident Timeline
-                 </button>
-               </div>
-             )}
-           </div>
+            {/* 5. 📁 Investigation & Graph (Default: Collapsed) */}
+            <div className="sb-folder">
+              <div className="sb-folder-header" onClick={() => setInvestigationFolderOpen(!investigationFolderOpen)}>
+                <span className="sb-folder-arrow">{investigationFolderOpen ? "▼" : "▶"}</span>
+                <span className="sb-label" style={{ margin: 0 }}>📁 Investigation &amp; Graph</span>
+              </div>
+              {investigationFolderOpen && !sidebarCollapsed && (
+                <div className="sb-folder-content">
+                  <button className={`sb-item ${view === "search" ? "active" : ""}`} onClick={() => setView("search")}>
+                    <span className="sb-icon">🔍</span> Advanced Search
+                  </button>
+                  <button className={`sb-item ${view === "graph" ? "active" : ""}`} onClick={() => hasDone && setView("graph")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">🕸️</span> Network Graph
+                  </button>
+                  <button className={`sb-item ${view === "entities" ? "active" : ""}`} onClick={() => hasDone && setView("entities")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">👥</span> Entity Profiles
+                  </button>
+                  <button className={`sb-item ${view === "timeline" ? "active" : ""}`} onClick={() => hasDone && setView("timeline")} style={{ opacity: hasDone ? 1 : 0.4 }}>
+                    <span className="sb-icon">📅</span> Incident Timeline
+                  </button>
+                </div>
+              )}
+            </div>
 
-           {/* 6. Case Management & Integrity - Collapsible */}
-           <div className="sb-folder">
-             <div className="sb-folder-header" onClick={() => setCaseManagementOpen(!caseManagementOpen)}>
-               <span className="sb-folder-arrow">{caseManagementOpen ? "▼" : "▶"}</span>
-               <span className="sb-label" style={{ margin: 0 }}>Case Management</span>
-             </div>
-             {caseManagementOpen && !sidebarCollapsed && (
-               <div className="sb-folder-content">
-                 <button className={`sb-item ${view === "case_manage" ? "active" : ""}`} onClick={() => setView("case_manage")}>
-                   <span className="sb-icon">⚙️</span> Manage Case &amp; Directory
-                 </button>
-                 <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
-                   <span className="sb-icon">📋</span> Chain of Custody
-                 </button>
-                 <button className={`sb-item ${view === "integrity" ? "active" : ""}`} onClick={() => setView("integrity")}>
-                   <span className="sb-icon">🔒</span> Verify Integrity &amp; Hashes
-                 </button>
-                 <button className={`sb-item ${view === "notes" ? "active" : ""}`} onClick={() => setView("notes")}>
-                   <span className="sb-icon">📝</span> Case Notes
-                   {notesCount > 0 && <span className="sb-count">{notesCount}</span>}
-                 </button>
-                 <button className={`sb-item ${view === "report" ? "active" : ""}`} onClick={() => setView("report")}>
-                   <span className="sb-icon">📄</span> Generate Report
-                 </button>
-                 <button className="sb-item" style={{ color: "var(--red)" }} onClick={() => setShowDeleteCase(true)}>
-                   <span className="sb-icon">🗑️</span> Delete Case
-                 </button>
-               </div>
-             )}
-           </div>
+            {/* 6. 📁 Case Management (Default: Collapsed) */}
+            <div className="sb-folder">
+              <div className="sb-folder-header" onClick={() => setCaseManagementOpen(!caseManagementOpen)}>
+                <span className="sb-folder-arrow">{caseManagementOpen ? "▼" : "▶"}</span>
+                <span className="sb-label" style={{ margin: 0 }}>📁 Case Management</span>
+              </div>
+              {caseManagementOpen && !sidebarCollapsed && (
+                <div className="sb-folder-content">
+                  <button className={`sb-item ${view === "case_manage" ? "active" : ""}`} onClick={() => setView("case_manage")}>
+                    <span className="sb-icon">⚙️</span> Case Settings
+                  </button>
+                  <button className={`sb-item ${view === "custody" ? "active" : ""}`} onClick={() => setView("custody")}>
+                    <span className="sb-icon">📋</span> Chain of Custody
+                  </button>
+                  <button className={`sb-item ${view === "integrity" ? "active" : ""}`} onClick={() => setView("integrity")}>
+                    <span className="sb-icon">🔒</span> Verify Evidence Integrity
+                  </button>
+                  <button className={`sb-item ${view === "notes" ? "active" : ""}`} onClick={() => setView("notes")}>
+                    <span className="sb-icon">📝</span> Case Notes
+                    {notesCount > 0 && <span className="sb-count">{notesCount}</span>}
+                  </button>
+                  <button className={`sb-item ${view === "report" ? "active" : ""}`} onClick={() => setView("report")}>
+                    <span className="sb-icon">📄</span> Generate Report
+                  </button>
+                  <button className="sb-item" style={{ opacity: 0.5, cursor: "not-allowed" }} disabled title="Coming Soon">
+                    <span className="sb-icon">🤖</span> AI Setup
+                    <span className="sb-count badge-gray">Soon</span>
+                  </button>
+                  <button className="sb-item" onClick={() => setShowExportModal(true)}>
+                    <span className="sb-icon">📦</span> Export Case
+                  </button>
+                  <button className="sb-item" style={{ color: "var(--red)" }} onClick={() => setShowDeleteCase(true)}>
+                    <span className="sb-icon">🗑️</span> Delete Case
+                  </button>
+                </div>
+              )}
+            </div>
 
-           {/* Sidebar Footer Signature */}
-           {!sidebarCollapsed && <FooterSignature compact style={{ marginTop: "auto" }} />}
-         </nav>
+            {/* 7. 📁 Help (Default: Collapsed) */}
+            <div className="sb-folder">
+              <div className="sb-folder-header" onClick={() => setHelpFolderOpen(!helpFolderOpen)}>
+                <span className="sb-folder-arrow">{helpFolderOpen ? "▼" : "▶"}</span>
+                <span className="sb-label" style={{ margin: 0 }}>📁 Help</span>
+              </div>
+              {helpFolderOpen && !sidebarCollapsed && (
+                <div className="sb-folder-content">
+                  <button className={`sb-item ${view === "docs" ? "active" : ""}`} onClick={() => setView("docs")}>
+                    <span className="sb-icon">📖</span> Documentation
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Sidebar Footer Signature */}
+            {!sidebarCollapsed && <FooterSignature compact style={{ marginTop: "auto" }} />}
+          </nav>
 
         {/* Main content area */}
         <main className="content">
+          {exportToast && (
+            <div
+              style={{
+                position: "fixed",
+                bottom: 30,
+                right: 30,
+                background: "#1e293b",
+                border: "1px solid #38bdf8",
+                color: "#f8fafc",
+                padding: "10px 18px",
+                borderRadius: "var(--r-sm)",
+                fontSize: 12,
+                zIndex: 10001,
+                boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+              }}
+            >
+              {exportToast}
+            </div>
+          )}
+
           {view === "dashboard" && dashboard && (
             <DashboardView
               data={dashboard}
@@ -430,32 +709,131 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
               onRefresh={loadAll}
             />
           )}
-          {view === "evidence" && <EvidenceView evidence={evidence} caseId={caseId} onRefresh={loadAll} />}
-           {view === "emails" && <EmailListView caseId={caseId} filter={folderFilter} onViewEntity={(email) => setView("entities")} />}
-           {view === "sent" && <EmailListView caseId={caseId} filter="sent" onViewEntity={(email) => setView("entities")} />}
-           {view === "inbox" && <EmailListView caseId={caseId} filter="inbox" onViewEntity={(email) => setView("entities")} />}
-           {view === "important" && <EmailListView caseId={caseId} filter="important" onViewEntity={(email) => setView("entities")} />}
-           {view === "drafts" && <EmailListView caseId={caseId} filter="drafts" onViewEntity={(email) => setView("entities")} />}
-           {view === "soft_deleted" && <EmailListView caseId={caseId} filter="soft_deleted" onViewEntity={(email) => setView("entities")} />}
-           {view === "hard_deleted" && <EmailListView caseId={caseId} filter="hard_deleted" onViewEntity={(email) => setView("entities")} />}
-           {view === "recoverable" && <EmailListView caseId={caseId} filter="recoverable" onViewEntity={(email) => setView("entities")} />}
-           {view === "spam" && <EmailListView caseId={caseId} filter="spam" onViewEntity={(email) => setView("entities")} />}
-            {view === "other" && <EmailListView caseId={caseId} filter="other" onViewEntity={(email) => setView("entities")} />}
-           {view === "search" && <SearchView caseId={caseId} onViewEntity={(email) => { setView("entities"); }} />}
-           {view === "entities" && <EntityDiveView caseId={caseId} />}
-           {view === "timeline" && <TimelineView caseId={caseId} />}
-           {view === "graph" && <GraphView caseId={caseId} />}
-           {view === "findings" && <FindingsView caseId={caseId} onGoToEvidence={() => setView("evidence")} />}
-           {view === "artifacts" && <ArtifactsView caseId={caseId} onSelectEmail={() => { setView("emails"); }} />}
-           {view === "attachments" && <AttachmentsView caseId={caseId} onSelectEmail={() => { setView("emails"); }} />}
-           {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
-            {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
-            {view === "notes" && <NotesView caseId={caseId} onNotesCountChange={setNotesCount} />}
-            {view === "case_manage" && <CaseManageView caseData={caseData} caseId={caseId} onUpdate={loadAll} onBack={() => setView("dashboard")} />}
-             {view === "report" && <ReportView caseId={caseId} caseData={caseData} />}
-             {view === "integrity" && <IntegrityView caseId={caseId} />}
+          {view === "evidence" && (
+            <EvidenceView
+              evidence={evidence}
+              caseId={caseId}
+              onRefresh={loadAll}
+              onViewEmails={(evId) => {
+                setActiveEvidenceId(evId);
+                setFolderFilter("all");
+                setView("emails");
+              }}
+            />
+          )}
+          {view === "emails" && <EmailListView caseId={caseId} filter={folderFilter} evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "sent" && <EmailListView caseId={caseId} filter="sent" evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "inbox" && <EmailListView caseId={caseId} filter="inbox" evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "drafts" && <EmailListView caseId={caseId} filter="drafts" evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "soft_deleted" && <EmailListView caseId={caseId} filter="soft_deleted" evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "spam" && <EmailListView caseId={caseId} filter="spam" evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "other" && <EmailListView caseId={caseId} filter="other" evidenceFilter={activeEvidenceId} onEvidenceFilterChange={setActiveEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "search" && <SearchView caseId={caseId} evidenceFilter={activeEvidenceId} onViewEntity={() => setView("entities")} />}
+          {view === "entities" && <EntityDiveView caseId={caseId} evidenceFilter={activeEvidenceId} />}
+          {view === "timeline" && <TimelineView caseId={caseId} evidenceFilter={activeEvidenceId} />}
+          {view === "graph" && <GraphView caseId={caseId} evidenceFilter={activeEvidenceId} />}
+          {view === "findings" && <FindingsView caseId={caseId} evidenceFilter={activeEvidenceId} onGoToEvidence={() => setView("evidence")} />}
+          {view === "artifacts" && <ArtifactsView caseId={caseId} evidenceFilter={activeEvidenceId} onSelectEmail={() => setView("emails")} />}
+          {view === "attachments" && <AttachmentsView caseId={caseId} evidenceFilter={activeEvidenceId} onSelectEmail={() => setView("emails")} />}
+          {view === "target" && <TargetProfileView caseId={caseId} caseData={caseData} />}
+          {view === "custody" && <CustodyView evidence={evidence} caseId={caseId} />}
+          {view === "notes" && <NotesView caseId={caseId} onNotesCountChange={setNotesCount} />}
+          {view === "case_manage" && <CaseManageView caseData={caseData} caseId={caseId} onUpdate={loadAll} onBack={() => setView("dashboard")} />}
+          {view === "report" && <ReportView caseId={caseId} caseData={caseData} />}
+          {view === "ai_setup" && (
+            <AISetupPage
+              caseId={caseId}
+              onAIEnabled={() => setAiEnabled(true)}
+              onAIConfigured={(config) => {
+                setAiConfig(config);
+                setAiEnabled(config.enabled);
+                setAiSetupComplete(true);
+              }}
+            />
+          )}
+          {view === "integrity" && <IntegrityView caseId={caseId} />}
+           {view === "docs" && <DocumentationView />}
          </main>
        </div>
+
+       {/* Export Case Modal */}
+      {showExportModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", backdropFilter: "blur(5px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}>
+          <div className="card" style={{ maxWidth: 520, width: "90%", padding: 24, border: "1px solid var(--accent)", boxShadow: "0 25px 60px rgba(0,0,0,0.8)" }}>
+            <div className="row between mb-3" style={{ alignItems: "center" }}>
+              <div className="row gap-2" style={{ alignItems: "center" }}>
+                <span style={{ fontSize: 22 }}>📦</span>
+                <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: "var(--text-0)" }}>Export Forensic Case Archive</h3>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowExportModal(false)}>✕</button>
+            </div>
+
+            <p style={{ fontSize: 12.5, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.5 }}>
+              Export complete digital case files, forensic taxonomy summaries, audit trails, and SHA-256 chain of custody records for case <strong>"{caseData?.title}"</strong>.
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+              <div 
+                style={{ background: "var(--bg-1)", padding: 12, borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer" }}
+                onClick={async () => {
+                  try {
+                    const auditPath = await invoke<string>("export_audit_log", { input: { case_id: caseId } });
+                    setExportToast(`✓ Exported Case Audit Log to: ${auditPath}`);
+                    setTimeout(() => setExportToast(null), 4000);
+                    setShowExportModal(false);
+                  } catch (err) {
+                    setExportToast(`❌ Export failed: ${err}`);
+                  }
+                }}
+              >
+                <div className="row between" style={{ alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text-0)" }}>📋 Export Chain of Custody &amp; Audit Log (CSV)</div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>Cryptographic verification timestamps, examiner records, SHA-256 seals</div>
+                  </div>
+                  <button className="btn btn-sm btn-ghost">Export</button>
+                </div>
+              </div>
+
+              <div 
+                style={{ background: "var(--bg-1)", padding: 12, borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer" }}
+                onClick={() => {
+                  setView("report");
+                  setShowExportModal(false);
+                }}
+              >
+                <div className="row between" style={{ alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text-0)" }}>📄 Comprehensive Investigation Report (PDF / Markdown)</div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>Executive overview, findings breakdown, entity graph, timeline analysis</div>
+                  </div>
+                  <button className="btn btn-sm btn-primary">Go to Reports</button>
+                </div>
+              </div>
+
+              <div 
+                style={{ background: "var(--bg-1)", padding: 12, borderRadius: "var(--r-sm)", border: "1px solid var(--border)", cursor: "pointer" }}
+                onClick={() => {
+                  setView("artifacts");
+                  setShowExportModal(false);
+                }}
+              >
+                <div className="row between" style={{ alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13, color: "var(--text-0)" }}>🧩 Extracted Taxonomy Artifacts (CSV)</div>
+                    <div style={{ fontSize: 11, color: "var(--text-3)", marginTop: 2 }}>Credentials, banking IOCs, crypto wallets, and derived evidence</div>
+                  </div>
+                  <button className="btn btn-sm btn-ghost">Artifacts Hub</button>
+                </div>
+              </div>
+            </div>
+
+            <div className="row end">
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowExportModal(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
 
        {/* Delete Case Confirmation Modal */}
        {showDeleteCase && (
@@ -983,7 +1361,7 @@ function DashboardView({
   );
 }
 
-function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; caseId: string; onRefresh: () => void }) {
+function EvidenceView({ evidence, caseId, onRefresh, onViewEmails }: { evidence: Evidence[]; caseId: string; onRefresh: () => void; onViewEmails?: (evidenceId: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -1157,7 +1535,7 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
         <div className="row gap-2 mb-4" style={{ borderBottom: "1px solid var(--border)", paddingBottom: 0 }}>
           {[
             { key: "file", label: "📁 File Import", desc: "EML, MBOX, PST, MSG", active: true },
-            { key: "server", label: "☁️ Mail Server", desc: "IMAP, OAuth, Cloud", active: false },
+            { key: "server", label: "☁️ Mail Server", desc: "IMAP / POP3 / TLS Live", active: true },
             { key: "client", label: "💻 Mail Client", desc: "Outlook, Apple Mail, Thunderbird", active: false },
             { key: "imaging", label: "💾 Forensic Imaging", desc: "Disk, Device, E01", active: false },
           ].map(tab => (
@@ -1293,6 +1671,19 @@ function EvidenceView({ evidence, caseId, onRefresh }: { evidence: Evidence[]; c
                   <td className="td mono muted">{e.sha256 ? `${e.sha256.slice(0, 12)}…` : "—"}</td>
                   <td className="td" style={{ textAlign: "right" }}>
                     <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                      {(e.parse_status === "done" || e.parse_status === "parsed") && (
+                        <button
+                          className="btn btn-primary btn-sm"
+                          style={{ padding: "4px 9px", fontSize: 11, fontWeight: 600 }}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            onViewEmails?.(e.id);
+                          }}
+                          title={`View emails specifically from ${e.filename}`}
+                        >
+                          📬 View Emails
+                        </button>
+                      )}
                       {e.parse_status === "pending" && <button className="btn btn-primary btn-sm" onClick={(ev) => { ev.stopPropagation(); handleParse(e.id, e.filename); }}>Parse</button>}
                       {e.parse_status === "parsing" && <span className="muted text-sm">Parsing...</span>}
                       {e.parse_status === "error" && <button className="btn btn-ghost btn-sm" onClick={(ev) => { ev.stopPropagation(); handleParse(e.id, e.filename); }}>Retry</button>}
@@ -1440,8 +1831,8 @@ function CaseManageView({ caseData, caseId, onUpdate, onBack }: { caseData: Case
     <div>
       <div className="row between mb-4">
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Manage Case</h2>
-          <p className="muted">Edit case details or delete the case</p>
+          <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>Case Settings</h2>
+          <p className="muted">Configure investigation metadata, target parameters, and case lifecycle</p>
         </div>
         <button className="btn btn-ghost btn-sm" onClick={onBack}>← Back to Dashboard</button>
       </div>
@@ -1593,8 +1984,8 @@ function IntegrityView({ caseId }: { caseId: string }) {
 
   return (
     <div>
-      <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", marginBottom: 16 }}>Integrity & Verification</h2>
-      <p className="muted mb-4">Verify evidence integrity and export audit logs</p>
+      <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)", marginBottom: 16 }}>Verify Evidence Integrity</h2>
+      <p className="muted mb-4">Validate cryptographic SHA-256 evidence seals and export audit logs</p>
 
       <div className="row gap-2 mb-4">
         <button className="btn btn-primary" onClick={verifyHashes} disabled={loading}>🔍 Verify Evidence Hashes</button>
@@ -1636,8 +2027,11 @@ function IntegrityView({ caseId }: { caseId: string }) {
       {chainCheck && (
         <div className="card">
           <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16 }}>Custody Chain Check</h3>
-          <p>Chain Intact: <span className={`badge ${chainCheck.chain_intact ? "badge-green" : "badge-red"}`}>{chainCheck.chain_intact ? "YES" : "NO"}</span></p>
-          {chainCheck.gaps.length > 0 && (
+          <p>Chain Intact: <span className={`badge ${chainCheck.chain_intact || chainCheck.is_valid ? "badge-green" : "badge-red"}`}>{chainCheck.chain_intact || chainCheck.is_valid ? "YES" : "NO"}</span></p>
+          {chainCheck.events_count !== undefined && (
+            <p className="muted" style={{ marginTop: 6, fontSize: 12 }}>Custody Events Logged: {chainCheck.events_count}</p>
+          )}
+          {Array.isArray(chainCheck.gaps) && chainCheck.gaps.length > 0 && (
             <div style={{ marginTop: 12 }}>
               <strong>Gaps Found:</strong>
               <ul style={{ paddingLeft: 20, marginTop: 8 }}>
@@ -1661,6 +2055,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
   };
   const saved = getSaved();
 
+  const [protocol, setProtocol] = useState<"imap" | "pop3">(saved.protocol || "imap");
   const [username, setUsername] = useState(saved.username || "");
   const [password, setPassword] = useState(saved.password || "");
   const [server, setServer] = useState(saved.server || "imap.gmail.com");
@@ -1689,63 +2084,72 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
 
   useEffect(() => {
     localStorage.setItem(`imap_creds_${caseId}`, JSON.stringify({
-      username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs
+      protocol, username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs
     }));
-  }, [caseId, username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs]);
+  }, [caseId, protocol, username, password, server, port, useSsl, mailboxScope, mailboxes, result, logs]);
 
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [logs]);
 
-  // Automatically detect IMAP server settings based on email domain
+  // Auto-adjust port when protocol changes
+  const handleProtocolChange = (newProtocol: "imap" | "pop3") => {
+    setProtocol(newProtocol);
+    if (newProtocol === "imap") {
+      setPort("993");
+      setUseSsl(true);
+      // Update server if it was a POP3 server
+      if (server.includes("pop.") || server === "imap.gmail.com") {
+        setServer("imap.gmail.com");
+      }
+    } else {
+      setPort("995");
+      setUseSsl(true);
+      // Update server to POP3
+      if (server.includes("imap.")) {
+        setServer(server.replace("imap.", "pop."));
+      }
+    }
+  };
+
+  // Automatically detect server settings based on email domain
   const handleEmailChange = (val: string) => {
     setUsername(val);
     const domain = val.includes("@") ? val.split("@")[1].toLowerCase().trim() : "";
-    if (domain.includes("gmail") || domain.includes("googlemail")) {
-      setServer("imap.gmail.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live.com") || domain.includes("office365")) {
-      setServer("outlook.office365.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("yahoo") || domain.includes("ymail") || domain.includes("rocketmail")) {
-      setServer("imap.mail.yahoo.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("icloud") || domain.includes("me.com") || domain.includes("mac.com")) {
-      setServer("imap.mail.me.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("zoho")) {
-      setServer("imap.zoho.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("aol.com")) {
-      setServer("imap.aol.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("fastmail")) {
-      setServer("imap.fastmail.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("gmx")) {
-      setServer("imap.gmx.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("mail.com")) {
-      setServer("imap.mail.com");
-      setPort("993");
-      setUseSsl(true);
-    } else if (domain.includes("proton")) {
-      setServer("127.0.0.1");
-      setPort("1143");
-      setUseSsl(false);
-    } else if (domain.includes(".") && !domain.endsWith(".")) {
-      setServer(`imap.${domain}`);
-      setPort("993");
-      setUseSsl(true);
+    if (protocol === "imap") {
+      if (domain.includes("gmail") || domain.includes("googlemail")) {
+        setServer("imap.gmail.com");
+        setPort("993");
+      } else if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live.com")) {
+        setServer("outlook.office365.com");
+        setPort("993");
+      } else if (domain.includes("yahoo")) {
+        setServer("imap.mail.yahoo.com");
+        setPort("993");
+      } else if (domain.includes("icloud") || domain.includes("me.com")) {
+        setServer("imap.mail.me.com");
+        setPort("993");
+      } else if (domain.includes(".") && !domain.endsWith(".")) {
+        setServer(`imap.${domain}`);
+        setPort("993");
+      }
+    } else {
+      // POP3 settings
+      if (domain.includes("gmail") || domain.includes("googlemail")) {
+        setServer("pop.gmail.com");
+        setPort("995");
+      } else if (domain.includes("outlook") || domain.includes("hotmail") || domain.includes("live.com")) {
+        setServer("outlook.office365.com");
+        setPort("995");
+      } else if (domain.includes("yahoo")) {
+        setServer("pop.mail.yahoo.com");
+        setPort("995");
+      } else if (domain.includes(".") && !domain.endsWith(".")) {
+        setServer(`pop.${domain}`);
+        setPort("995");
+      }
     }
+    setUseSsl(true);
   };
 
   const addLog = (msg: string) => setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
@@ -1756,21 +2160,38 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     const effectivePass = cleanUser.toLowerCase().includes("gmail") ? cleanPass.replace(/\s+/g, "") : cleanPass;
     setConnecting(true);
     setLogs([]);
-    addLog(`Testing connection to ${server}:${port} (SSL: ${useSsl ? "YES" : "NO"})...`);
+    addLog(`Testing ${protocol.toUpperCase()} connection to ${server}:${port} (SSL: ${useSsl ? "YES" : "NO"})...`);
     try {
-      const boxes = await invoke<string[]>("imap_list_mailboxes", {
-        input: {
-          server: server.trim(), 
-          port: parseInt(port) || 993, 
-          username: cleanUser, 
-          password: effectivePass, 
-          use_ssl: useSsl,
-          useSsl
-        }
-      });
-      setMailboxes(boxes);
-      addLog(`✓ Connection & Authentication Successful!`);
-      addLog(`Discovered ${boxes.length} account folders: ${boxes.join(", ")}`);
+      if (protocol === "imap") {
+        const boxes = await invoke<string[]>("imap_list_mailboxes", {
+          input: {
+            server: server.trim(), 
+            port: parseInt(port) || 993, 
+            username: cleanUser, 
+            password: effectivePass, 
+            use_ssl: useSsl,
+            useSsl
+          }
+        });
+        setMailboxes(boxes);
+        addLog(`✓ Connection & Authentication Successful!`);
+        addLog(`Discovered ${boxes.length} account folders: ${boxes.join(", ")}`);
+      } else {
+        // POP3 - just test connection
+        await invoke("pop3_test_connection", {
+          input: {
+            server: server.trim(), 
+            port: parseInt(port) || 995, 
+            username: cleanUser, 
+            password: effectivePass, 
+            use_ssl: useSsl,
+            useSsl
+          }
+        });
+        setMailboxes(["INBOX"]);
+        addLog(`✓ POP3 Connection & Authentication Successful!`);
+        addLog(`POP3 accounts have a single INBOX folder`);
+      }
     } catch (e: any) {
       addLog(`✗ Connection failed: ${e}`);
     }
@@ -1785,7 +2206,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     setLogs([]);
     setProgress(null);
     addLog(`Starting forensic streaming acquisition for account: ${cleanUser}...`);
-    addLog(`Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
+    addLog(`Protocol: ${protocol.toUpperCase()} | Scope: ${mailboxScope === "ALL" ? "Entire Account (All Mailboxes)" : mailboxScope}`);
     addLog(`⚡ Real-time incremental deduplication active (previously ingested emails will be preserved)`);
 
     const onEvent = new Channel<any>();
@@ -1815,24 +2236,45 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     };
 
     try {
-      const res = await invoke<any>("imap_fetch_emails", {
-        input: {
-          case_id: caseId,
-          caseId,
-          evidence_id: `imap_${Date.now()}`,
-          evidenceId: `imap_${Date.now()}`,
-          server: server.trim(), 
-          port: parseInt(port) || 993, 
-          username: cleanUser, 
-          password: effectivePass, 
-          use_ssl: useSsl,
-          useSsl,
-          mailbox: mailboxScope,
-          max_messages: null
-        },
-        on_event: onEvent,
-        onEvent
-      });
+      let res;
+      if (protocol === "imap") {
+        res = await invoke<any>("imap_fetch_emails", {
+          input: {
+            case_id: caseId,
+            caseId,
+            evidence_id: `imap_${Date.now()}`,
+            evidenceId: `imap_${Date.now()}`,
+            server: server.trim(), 
+            port: parseInt(port) || 993, 
+            username: cleanUser, 
+            password: effectivePass, 
+            use_ssl: useSsl,
+            useSsl,
+            mailbox: mailboxScope,
+            max_messages: null
+          },
+          on_event: onEvent,
+          onEvent
+        });
+      } else {
+        res = await invoke<any>("pop3_fetch_emails", {
+          input: {
+            case_id: caseId,
+            caseId,
+            evidence_id: `pop3_${Date.now()}`,
+            evidenceId: `pop3_${Date.now()}`,
+            server: server.trim(), 
+            port: parseInt(port) || 995, 
+            username: cleanUser, 
+            password: effectivePass, 
+            use_ssl: useSsl,
+            useSsl,
+            max_messages: null
+          },
+          on_event: onEvent,
+          onEvent
+        });
+      }
       setResult(res);
       addLog(`✓ Acquisition Finished: Ingested ${res.downloaded} new emails (${res.duplicates_skipped || 0} duplicates skipped) across ${res.folders_acquired?.length || 1} folders`);
       onComplete();
@@ -1857,7 +2299,7 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
     <div>
       <div className="row between mb-3">
         <div>
-          <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-0)" }}>Live IMAP Account Acquisition</h3>
+          <h3 style={{ fontSize: 16, fontWeight: 600, color: "var(--text-0)" }}>Live Mail Server Acquisition (IMAP / POP3)</h3>
           <p className="muted" style={{ fontSize: 12 }}>
             Forensic multi-folder streaming extraction over TLS with live deduplication &amp; disk payload storage
           </p>
@@ -1870,6 +2312,36 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
       
       <div className="card mb-4">
         <div className="grid-2">
+          <div className="field">
+            <label className="label">Protocol</label>
+            <div className="row gap-2" style={{ paddingTop: 4 }}>
+              <button
+                type="button"
+                className={`btn btn-sm ${protocol === "imap" ? "btn-primary" : "btn-ghost"}`}
+                onClick={() => handleProtocolChange("imap")}
+                style={{ flex: 1, padding: "8px 16px" }}
+              >
+                IMAP (Port 993)
+              </button>
+              <button
+                type="button"
+                className={`btn btn-sm ${protocol === "pop3" ? "btn-primary" : "btn-ghost"}`}
+                onClick={() => handleProtocolChange("pop3")}
+                style={{ flex: 1, padding: "8px 16px" }}
+              >
+                POP3 (Port 995)
+              </button>
+            </div>
+          </div>
+          <div className="field">
+            <label className="label">Mailbox Scope</label>
+            <select className="input" value={mailboxScope} onChange={e => setMailboxScope(e.target.value)}>
+              <option value="ALL">Entire Account (All Folders)</option>
+              {mailboxes.map((mb, i) => (<option key={i} value={mb}>{mb}</option>))}
+            </select>
+          </div>
+        </div>
+        <div className="grid-2" style={{ marginTop: 12 }}>
           <div className="field">
             <label className="label">Target Email / Account *</label>
             <input 
@@ -1920,20 +2392,20 @@ function ImapAcquisition({ caseId, onComplete }: { caseId: string; onComplete: (
         {/* Collapsible Advanced Server Configuration */}
         {showAdvanced && (
           <div style={{ marginTop: 16, padding: 14, background: "var(--bg-3)", borderRadius: "var(--r-md)" }}>
-            <h5 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", marginBottom: 10 }}>IMAP Server Parameters</h5>
+            <h5 style={{ fontSize: 12, fontWeight: 600, color: "var(--text-1)", marginBottom: 10 }}>{protocol.toUpperCase()} Server Parameters</h5>
             <div className="grid-3">
               <div className="field">
                 <label className="label">Host / Server</label>
-                <input className="input" value={server} onChange={e => setServer(e.target.value)} placeholder="imap.server.com" />
+                <input className="input" value={server} onChange={e => setServer(e.target.value)} placeholder={protocol === "imap" ? "imap.server.com" : "pop.server.com"} />
               </div>
               <div className="field">
                 <label className="label">Port</label>
-                <input className="input" value={port} onChange={e => setPort(e.target.value)} placeholder="993" />
+                <input className="input" value={port} onChange={e => setPort(e.target.value)} placeholder={protocol === "imap" ? "993" : "995"} />
               </div>
               <div className="field" style={{ display: "flex", alignItems: "center", paddingTop: 20 }}>
                 <label className="row gap-2" style={{ cursor: "pointer" }}>
                   <input type="checkbox" checked={useSsl} onChange={e => setUseSsl(e.target.checked)} />
-                  <span style={{ fontSize: 12, fontWeight: 500 }}>Use SSL / TLS (Port 993)</span>
+                  <span style={{ fontSize: 12, fontWeight: 500 }}>Use SSL / TLS (Port {protocol === "imap" ? "993" : "995"})</span>
                 </label>
               </div>
             </div>

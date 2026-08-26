@@ -48,9 +48,10 @@ interface ExchangedEmail {
 
 interface Props {
   caseId: string;
+  evidenceFilter?: string | null;
 }
 
-export function GraphView({ caseId }: Props) {
+export function GraphView({ caseId, evidenceFilter }: Props) {
   const [nodes, setNodes] = useState<GraphNode[]>([]);
   const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [targetEmail, setTargetEmail] = useState<string | null>(null);
@@ -80,12 +81,17 @@ export function GraphView({ caseId }: Props) {
 
   useEffect(() => {
     loadData();
-  }, [caseId]);
+  }, [caseId, evidenceFilter]);
 
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await invoke<any>("graph_data", { input: { case_id: caseId } });
+      const res = await invoke<any>("graph_data", { 
+        input: { 
+          case_id: caseId,
+          evidence_id: evidenceFilter || undefined
+        } 
+      });
       const rawNodes: GraphNode[] = (res.nodes || []).map((n: any) => ({
         id: n.id,
         name: n.name,
@@ -454,7 +460,7 @@ export function GraphView({ caseId }: Props) {
       const radius = node.is_target ? 24 : Math.max(14, Math.min(28, 12 + Math.log2(node.total + 1) * 2.5));
       const dx = gx - node.x;
       const dy = gy - node.y;
-      if (dx * dx + dy * dy <= (radius + 4) * (radius + 4)) {
+      if (dx * dx + dy * dy <= (radius + 6) * (radius + 6)) {
         draggedNode.current = node;
         setSelectedNode(node);
         setSelectedEdge(null);
@@ -492,15 +498,115 @@ export function GraphView({ caseId }: Props) {
     draggedNode.current = null;
   };
 
+  // Cursor-centered zoom calculation
   const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
     e.preventDefault();
-    const zoomFactor = e.deltaY < 0 ? 1.15 : 0.88;
-    setZoom((prev) => Math.max(0.3, Math.min(3.5, prev * zoomFactor)));
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+
+    const rawDelta = e.deltaY;
+    const zoomStep = -Math.sign(rawDelta) * Math.min(0.18, Math.max(0.04, Math.abs(rawDelta) * 0.0015));
+    const factor = 1 + zoomStep;
+    const newZoom = Math.max(0.2, Math.min(4.0, zoom * factor));
+
+    const newPanX = pan.x - (mx - cx - pan.x) * (newZoom / zoom - 1);
+    const newPanY = pan.y - (my - cy - pan.y) * (newZoom / zoom - 1);
+
+    setZoom(newZoom);
+    setPan({ x: newPanX, y: newPanY });
   };
 
+  // Zoom In button
+  const handleZoomIn = () => {
+    const newZoom = Math.min(4.0, zoom * 1.25);
+    setZoom(newZoom);
+  };
+
+  // Zoom Out button
+  const handleZoomOut = () => {
+    const newZoom = Math.max(0.2, zoom * 0.8);
+    setZoom(newZoom);
+  };
+
+  // Direct Zoom Slider
+  const handleZoomSlider = (val: number) => {
+    const newZoom = Math.max(0.2, Math.min(4.0, val / 100));
+    setZoom(newZoom);
+  };
+
+  // Reset to 100% and Center
   const handleResetCamera = () => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
+  };
+
+  // Fit all visible nodes within canvas with padding
+  const handleFitView = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || activeNodes.length === 0) {
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      return;
+    }
+    const rect = canvas.getBoundingClientRect();
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    activeNodes.forEach((n) => {
+      if (n.x < minX) minX = n.x;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.y > maxY) maxY = n.y;
+    });
+
+    const graphWidth = Math.max(120, maxX - minX + 160);
+    const graphHeight = Math.max(120, maxY - minY + 160);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+
+    const padding = 60;
+    const availWidth = Math.max(100, rect.width - padding * 2);
+    const availHeight = Math.max(100, rect.height - padding * 2);
+
+    const fitScale = Math.max(0.25, Math.min(2.0, Math.min(availWidth / graphWidth, availHeight / graphHeight)));
+    setZoom(fitScale);
+    setPan({ x: -centerX * fitScale, y: -centerY * fitScale });
+  }, [activeNodes]);
+
+  // Double click on canvas / node
+  const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const gx = (mx - (rect.width / 2 + pan.x)) / zoom;
+    const gy = (my - (rect.height / 2 + pan.y)) / zoom;
+
+    // Check if double-clicked a node -> center & focus on node
+    for (const node of activeNodes) {
+      const radius = node.is_target ? 24 : Math.max(14, Math.min(28, 12 + Math.log2(node.total + 1) * 2.5));
+      const dx = gx - node.x;
+      const dy = gy - node.y;
+      if (dx * dx + dy * dy <= (radius + 6) * (radius + 6)) {
+        setSelectedNode(node);
+        loadEmailsForEntity(node.id);
+        const focusZoom = 1.35;
+        setZoom(focusZoom);
+        setPan({ x: -node.x * focusZoom, y: -node.y * focusZoom });
+        return;
+      }
+    }
+
+    // Double clicking empty space fits the view
+    handleFitView();
   };
 
   const handlePartnerClick = (partnerId: string) => {
@@ -526,14 +632,17 @@ export function GraphView({ caseId }: Props) {
             Communication Network Graph
           </h2>
           <p className="muted" style={{ fontSize: 12 }}>
-            Interactive sociogram and relationship mapping. Drag nodes, zoom with mouse wheel, and click any person or link to inspect shared threads.
+            Interactive relationship mapping. Drag nodes to explore, zoom with buttons or mouse wheel, and click any person to inspect communications.
           </p>
         </div>
         <div className="row gap-2">
-          <button className="btn btn-ghost btn-sm" onClick={handleResetCamera} title="Center camera">
-            🎯 Reset View
+          <button className="btn btn-ghost btn-sm" onClick={handleFitView} title="Fit entire network within screen">
+            ⛶ Fit to Screen
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={loadData}>
+          <button className="btn btn-ghost btn-sm" onClick={handleResetCamera} title="Reset camera to center at 100% zoom">
+            🎯 100% Center
+          </button>
+          <button className="btn btn-ghost btn-sm" onClick={loadData} title="Reload network data">
             ↻ Refresh
           </button>
         </div>
@@ -612,6 +721,10 @@ export function GraphView({ caseId }: Props) {
               if (found) {
                 setSelectedNode(found);
                 loadEmailsForEntity(found.id);
+                // Center on found entity
+                const searchZoom = Math.max(1.0, zoom);
+                setZoom(searchZoom);
+                setPan({ x: -found.x * searchZoom, y: -found.y * searchZoom });
               }
             }}
           />
@@ -647,16 +760,112 @@ export function GraphView({ caseId }: Props) {
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onWheel={handleWheel}
+            onDoubleClick={handleDoubleClick}
           />
 
-          {/* Canvas Overlay Legend */}
+          {/* Floating On-Canvas Zoom & Navigation Toolbar (Top-Right) */}
+          <div
+            style={{
+              position: "absolute",
+              top: 14,
+              right: 14,
+              background: "rgba(15, 23, 42, 0.88)",
+              backdropFilter: "blur(10px)",
+              padding: "6px 10px",
+              borderRadius: "var(--r-sm)",
+              border: "1px solid rgba(255,255,255,0.12)",
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              boxShadow: "0 6px 18px rgba(0,0,0,0.45)",
+              zIndex: 10,
+            }}
+          >
+            {/* Zoom Out Button */}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ padding: "4px 8px", fontSize: 13, fontWeight: 700 }}
+              onClick={handleZoomOut}
+              title="Zoom Out (-)"
+            >
+              ➖
+            </button>
+
+            {/* Interactive Zoom Slider */}
+            <input
+              type="range"
+              min="20"
+              max="350"
+              value={Math.round(zoom * 100)}
+              onChange={(e) => handleZoomSlider(Number(e.target.value))}
+              style={{ width: 70, cursor: "pointer", accentColor: "var(--accent)" }}
+              title="Drag to zoom"
+            />
+
+            {/* Zoom In Button */}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ padding: "4px 8px", fontSize: 13, fontWeight: 700 }}
+              onClick={handleZoomIn}
+              title="Zoom In (+)"
+            >
+              ➕
+            </button>
+
+            {/* Zoom Percentage Clickable Badge */}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--mono)",
+                color: "var(--accent)",
+                padding: "2px 6px",
+                border: "1px solid rgba(56, 189, 248, 0.3)",
+                borderRadius: 4,
+              }}
+              onClick={handleResetCamera}
+              title="Click to reset to 100%"
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+
+            {/* Fit Network Button */}
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ padding: "4px 8px", fontSize: 11 }}
+              onClick={handleFitView}
+              title="Fit all nodes on screen"
+            >
+              ⛶ Fit
+            </button>
+          </div>
+
+          {/* Canvas Helper Pill (Bottom Center) */}
+          <div
+            style={{
+              position: "absolute",
+              bottom: 12,
+              right: 14,
+              background: "rgba(15, 23, 42, 0.8)",
+              backdropFilter: "blur(6px)",
+              padding: "4px 10px",
+              borderRadius: "var(--r-xs)",
+              fontSize: 10,
+              color: "var(--text-3)",
+              border: "1px solid rgba(255,255,255,0.06)",
+            }}
+          >
+            💡 Scroll / buttons to zoom · Drag canvas to pan · Double-click to fit
+          </div>
+
+          {/* Canvas Overlay Legend (Bottom Left) */}
           <div
             style={{
               position: "absolute",
               bottom: 12,
               left: 12,
-              background: "rgba(15, 23, 42, 0.85)",
-              backdropFilter: "blur(6px)",
+              background: "rgba(15, 23, 42, 0.88)",
+              backdropFilter: "blur(8px)",
               padding: "6px 12px",
               borderRadius: "var(--r-sm)",
               border: "1px solid rgba(255,255,255,0.08)",
@@ -670,21 +879,6 @@ export function GraphView({ caseId }: Props) {
             <span>🔵 <strong>Active Sender</strong></span>
             <span>🟢 <strong>Active Receiver</strong></span>
             <span>🟣 <strong>Balanced Hub</strong></span>
-          </div>
-
-          <div
-            style={{
-              position: "absolute",
-              top: 12,
-              right: 12,
-              background: "rgba(15, 23, 42, 0.85)",
-              padding: "4px 8px",
-              borderRadius: "var(--r-sm)",
-              fontSize: 10,
-              color: "var(--text-3)",
-            }}
-          >
-            Zoom: {Math.round(zoom * 100)}%
           </div>
         </div>
 

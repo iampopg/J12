@@ -1,5 +1,8 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
+import { EmailDetailModal, EmailModalData } from "../components/EmailDetailModal";
+import { BookmarkButton } from "../components/BookmarkButton";
 
 function cleanDisplayName(name: string | null): string {
   if (!name) return "";
@@ -34,6 +37,7 @@ interface Email {
   risk_score: number;
   flags: string | null;
   body_text: string | null;
+  body_html: string | null;
   headers_raw: string | null;
 }
 
@@ -41,11 +45,22 @@ type SortField = "date" | "from" | "subject" | "risk";
 
 interface Props {
   caseId: string;
+  evidenceFilter?: string | null;
   onSelectEmail?: (email: Email) => void;
   onViewEntity?: (email: string) => void;
 }
 
-export function SearchView({ caseId, onViewEntity }: Props) {
+const SEARCH_OPERATORS = [
+  { op: "from:", desc: "Filter by sender address" },
+  { op: "to:", desc: "Filter by recipient address" },
+  { op: "subject:", desc: "Search subject lines" },
+  { op: "body:", desc: "Email body text search" },
+  { op: "has:attachment", desc: "Emails containing file attachments" },
+  { op: "is:deleted", desc: "Recovered and soft-deleted messages" },
+  { op: "risk:>50", desc: "High-risk threat scored messages" },
+];
+
+export function SearchView({ caseId, evidenceFilter, onViewEntity }: Props) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Email[]>([]);
   const [loading, setLoading] = useState(false);
@@ -53,13 +68,14 @@ export function SearchView({ caseId, onViewEntity }: Props) {
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null);
+  const [fullEmailData, setFullEmailData] = useState<EmailModalData | null>(null);
+  const [showFullModal, setShowFullModal] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
-    // Run initial search to show recent emails
     doSearch("");
-  }, [caseId]);
+  }, [caseId, evidenceFilter]);
 
   const doSearch = async (searchQuery?: string) => {
     const q = searchQuery !== undefined ? searchQuery : query;
@@ -68,7 +84,12 @@ export function SearchView({ caseId, onViewEntity }: Props) {
     setSelectedEmail(null);
     try {
       const res = await invoke<Email[]>("advanced_search", {
-        input: { case_id: caseId, query: q.trim(), limit: 500 },
+        input: { 
+          case_id: caseId, 
+          query: q.trim(), 
+          limit: 500,
+          evidence_id: evidenceFilter || undefined
+        },
       });
       setResults(res || []);
     } catch (e) {
@@ -83,11 +104,6 @@ export function SearchView({ caseId, onViewEntity }: Props) {
     if (e.key === "Enter") doSearch();
   };
 
-  const handleQuickSearch = (q: string) => {
-    setQuery(q);
-    doSearch(q);
-  };
-
   const handleAddOperator = (op: string) => {
     setQuery((prev) => {
       const trimmed = prev.trim();
@@ -95,6 +111,19 @@ export function SearchView({ caseId, onViewEntity }: Props) {
     });
     inputRef.current?.focus();
   };
+
+  // When selectedEmail changes, fetch full email record to get complete body_html and inline images
+  useEffect(() => {
+    if (!selectedEmail) {
+      setFullEmailData(null);
+      return;
+    }
+    invoke<EmailModalData | null>("email_get", { input: { id: selectedEmail.id } })
+      .then((data) => {
+        if (data) setFullEmailData(data);
+      })
+      .catch((e) => console.error("Failed to load full email details:", e));
+  }, [selectedEmail]);
 
   const sortedResults = useMemo(() => {
     let sorted = [...results];
@@ -105,7 +134,9 @@ export function SearchView({ caseId, onViewEntity }: Props) {
           cmp = (a.date_sent_utc || "").localeCompare(b.date_sent_utc || "");
           break;
         case "from":
-          cmp = (a.from_display || a.from_addr).localeCompare(b.from_display || b.from_addr);
+          cmp = (cleanDisplayName(a.from_display) || a.from_addr).localeCompare(
+            cleanDisplayName(b.from_display) || b.from_addr
+          );
           break;
         case "subject":
           cmp = (a.subject || "").localeCompare(b.subject || "");
@@ -119,7 +150,7 @@ export function SearchView({ caseId, onViewEntity }: Props) {
     return sorted;
   }, [results, sortField, sortDir]);
 
-  const handleSort = (field: SortField) => {
+  const toggleSort = (field: SortField) => {
     if (sortField === field) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     } else {
@@ -128,323 +159,272 @@ export function SearchView({ caseId, onViewEntity }: Props) {
     }
   };
 
-  const quickPresets = [
-    { label: "🚨 High Risk Flags", query: "risk:high" },
-    { label: "🗑️ Deleted & Recovered", query: "is:deleted" },
-    { label: "📎 Has Attachments", query: "has:attachment" },
-    { label: "🔗 Contains URLs", query: "has:url" },
-    { label: "📬 Sent Items", query: "folder:sent" },
-    { label: "📥 Inbox Items", query: "folder:inbox" },
-  ];
-
-  const operatorChips = [
-    { op: "from:", desc: "Sender contains (e.g. from:stacey)" },
-    { op: "to:", desc: "Recipient contains (e.g. to:casey)" },
-    { op: "subject:", desc: "Subject line keyword" },
-    { op: "body:", desc: "Email body text search" },
-    { op: "risk:>50", desc: "Risk score threshold" },
-    { op: "is:deleted", desc: "Deleted emails only" },
-    { op: "after:2001-08-01", desc: "Sent after date" },
-    { op: "before:2002-01-01", desc: "Sent before date" },
-    { op: "filename:pdf", desc: "Attachment filename" },
-  ];
-
   return (
-    <div>
-      {/* Top Title */}
-      <div className="row between mb-4">
+    <div className="view-content" style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Search Header */}
+      <div className="row between mb-3" style={{ flexWrap: "wrap", gap: 10 }}>
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
-            Forensic & eDiscovery Search
+            ⚡ Advanced Search &amp; Discovery
           </h2>
           <p className="muted" style={{ fontSize: 12 }}>
-            Multi-field keyword indexing, Boolean operators, metadata targeting, and risk filtering.
+            Instant forensic queries across all headers, bodies, senders, recipients, and reconstructed text.
           </p>
         </div>
       </div>
 
-      {/* Main Search Bar Card */}
-      <div className="card mb-3" style={{ padding: 16 }}>
-        <div className="row gap-2 mb-3">
-          <input
-            ref={inputRef}
-            className="input"
-            style={{ flex: 1, fontSize: 14, padding: "10px 14px" }}
-            placeholder='Search keywords or operators (e.g., from:stacey subject:urgent risk:>25 is:deleted)...'
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <button
-            className="btn btn-primary"
-            style={{ padding: "0 20px" }}
-            onClick={() => doSearch()}
-            disabled={loading}
-          >
-            {loading ? "Searching..." : "🔍 Search"}
-          </button>
-          {query && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                setQuery("");
-                doSearch("");
+      {/* Main Search Input Box */}
+      <div className="card mb-3" style={{ padding: 14 }}>
+        <div className="row gap-2" style={{ alignItems: "center" }}>
+          <div style={{ flex: 1, position: "relative" }}>
+            <input
+              ref={inputRef}
+              className="input"
+              style={{
+                width: "100%",
+                paddingLeft: 36,
+                fontSize: 14,
+                fontWeight: 500,
+                background: "var(--bg-0)",
+              }}
+              placeholder="Search across all emails (e.g. from:enron.com has:attachment risk:>50 wire transfer)..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <span
+              style={{
+                position: "absolute",
+                left: 12,
+                top: "50%",
+                transform: "translateY(-50%)",
+                fontSize: 15,
+                color: "var(--text-2)",
               }}
             >
-              Clear
-            </button>
-          )}
+              🔍
+            </span>
+          </div>
+          <button
+            className="btn btn-primary"
+            disabled={loading}
+            onClick={() => doSearch()}
+            style={{ padding: "8px 20px" }}
+          >
+            {loading ? "Searching…" : "Search"}
+          </button>
         </div>
 
-        {/* Quick Search Preset Badges */}
-        <div className="row gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-          <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-3)" }}>
-            QUICK FILTERS:
+        {/* Search Operators Suggestions */}
+        <div className="row gap-2 mt-2" style={{ flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: "var(--text-3)", fontWeight: 600 }}>
+            QUICK OPERATORS:
           </span>
-          {quickPresets.map((preset) => (
+          {SEARCH_OPERATORS.map((op) => (
             <button
-              key={preset.label}
+              key={op.op}
               className="btn btn-ghost btn-sm"
               style={{
                 fontSize: 11,
-                padding: "3px 9px",
-                background: query === preset.query ? "var(--accent-subtle)" : "var(--bg-3)",
-                border: query === preset.query ? "1px solid var(--accent)" : "1px solid transparent",
+                padding: "2px 8px",
+                fontFamily: "var(--mono)",
+                background: "var(--bg-2)",
+                border: "1px solid var(--border)",
               }}
-              onClick={() => handleQuickSearch(preset.query)}
+              onClick={() => handleAddOperator(op.op)}
+              title={op.desc}
             >
-              {preset.label}
-            </button>
-          ))}
-        </div>
-
-        {/* Search Operator Helper Chips */}
-        <div>
-          <details style={{ fontSize: 11, color: "var(--text-3)" }}>
-            <summary style={{ cursor: "pointer", fontWeight: 600, userSelect: "none" }}>
-              💡 Search Operators & Syntax Guide (Click to expand)
-            </summary>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
-                gap: 6,
-                marginTop: 10,
-              }}
-            >
-              {operatorChips.map((chip) => (
-                <div
-                  key={chip.op}
-                  className="tr-click"
-                  style={{
-                    padding: "6px 10px",
-                    background: "var(--bg-3)",
-                    borderRadius: "var(--r-sm)",
-                    fontSize: 11,
-                  }}
-                  onClick={() => handleAddOperator(chip.op)}
-                >
-                  <code style={{ color: "var(--accent)", fontWeight: 600 }}>{chip.op}</code>
-                  <span style={{ color: "var(--text-3)", marginLeft: 6 }}>{chip.desc}</span>
-                </div>
-              ))}
-            </div>
-          </details>
-        </div>
-      </div>
-
-      {/* Results Header */}
-      <div className="row between mb-2">
-        <span className="muted" style={{ fontSize: 12 }}>
-          Found <strong>{results.length}</strong> matching message{results.length !== 1 ? "s" : ""}
-        </span>
-
-        {/* Sort Controls */}
-        <div className="row gap-2">
-          <span className="muted" style={{ fontSize: 11 }}>Sort:</span>
-          {(
-            [
-              ["date", "Date"],
-              ["from", "Sender"],
-              ["subject", "Subject"],
-              ["risk", "Risk Score"],
-            ] as const
-          ).map(([field, label]) => (
-            <button
-              key={field}
-              className={`btn btn-sm ${sortField === field ? "btn-primary" : "btn-ghost"}`}
-              style={{ fontSize: 11, padding: "2px 8px" }}
-              onClick={() => handleSort(field as SortField)}
-            >
-              {label} {sortField === field ? (sortDir === "asc" ? "▲" : "▼") : ""}
+              {op.op}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Results Area */}
-      {loading ? (
-        <div className="card empty">Searching database...</div>
-      ) : searched && results.length === 0 ? (
-        <div className="card empty">No emails match the query "{query}"</div>
-      ) : (
+      {/* Results Section */}
+      {searched && (
         <div
           style={{
+            flex: 1,
             display: "grid",
-            gridTemplateColumns: selectedEmail ? "1fr 420px" : "1fr",
+            gridTemplateColumns: selectedEmail ? "1fr 500px" : "1fr",
             gap: 16,
-            alignItems: "start",
+            minHeight: 0,
           }}
         >
-          {/* Results Table */}
-          <div
-            className="card mb-0"
-            style={{
-              padding: 0,
-              overflow: "hidden",
-              borderRadius: "var(--r-md)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            {/* Table Header */}
+          {/* Results List Card */}
+          <div className="card" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            {/* Results Table Header */}
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: "170px 200px 1fr 100px 65px",
-                padding: "10px 14px",
-                background: "var(--bg-1)",
+                gridTemplateColumns: "160px 180px 1fr 95px 60px 65px",
+                alignItems: "center",
+                padding: "8px 14px",
+                background: "var(--bg-2)",
                 borderBottom: "1px solid var(--border)",
                 fontSize: 10,
                 fontWeight: 700,
                 textTransform: "uppercase",
                 letterSpacing: "0.06em",
                 color: "var(--text-3)",
+                gap: 6,
               }}
             >
-              <div>Sender</div>
+              <div style={{ cursor: "pointer" }} onClick={() => toggleSort("from")}>
+                Sender {sortField === "from" && (sortDir === "asc" ? "▲" : "▼")}
+              </div>
               <div>Recipient(s)</div>
-              <div>Subject & Flags</div>
-              <div style={{ textAlign: "right" }}>Date</div>
-              <div style={{ textAlign: "center" }}>Risk</div>
+              <div style={{ cursor: "pointer" }} onClick={() => toggleSort("subject")}>
+                Subject {sortField === "subject" && (sortDir === "asc" ? "▲" : "▼")}
+              </div>
+              <div style={{ textAlign: "right", cursor: "pointer" }} onClick={() => toggleSort("date")}>
+                Date {sortField === "date" && (sortDir === "asc" ? "▲" : "▼")}
+              </div>
+              <div style={{ textAlign: "center", cursor: "pointer" }} onClick={() => toggleSort("risk")}>
+                Risk {sortField === "risk" && (sortDir === "asc" ? "▲" : "▼")}
+              </div>
+              <div style={{ textAlign: "center" }}>Locker</div>
             </div>
 
             {/* Table Rows */}
-            <div style={{ maxHeight: "68vh", overflowY: "auto" }}>
-              {sortedResults.map((em) => {
-                const isSelected = selectedEmail?.id === em.id;
-                let toList: string[] = [];
-                try {
-                  toList = em.to_addrs.startsWith("[")
-                    ? JSON.parse(em.to_addrs)
-                    : [em.to_addrs];
-                } catch {
-                  toList = [em.to_addrs];
-                }
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {sortedResults.length === 0 ? (
+                <div style={{ padding: 40, textAlign: "center", color: "var(--text-2)" }}>
+                  <span style={{ fontSize: 24 }}>🔍</span>
+                  <div style={{ marginTop: 8, fontSize: 13 }}>No emails matched your query.</div>
+                </div>
+              ) : (
+                sortedResults.map((em) => {
+                  const isSelected = selectedEmail?.id === em.id;
+                  let toList: string[] = [];
+                  try {
+                    toList = em.to_addrs.startsWith("[")
+                      ? JSON.parse(em.to_addrs)
+                      : [em.to_addrs];
+                  } catch {
+                    toList = [em.to_addrs];
+                  }
 
-                return (
-                  <div
-                    key={em.id}
-                    className="tr-click"
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "170px 200px 1fr 100px 65px",
-                      alignItems: "center",
-                      padding: "9px 14px",
-                      borderBottom: "1px solid var(--border)",
-                      background: isSelected ? "var(--accent-subtle)" : "transparent",
-                      fontSize: 12,
-                    }}
-                    onClick={() => setSelectedEmail(isSelected ? null : em)}
-                  >
-                    {/* Sender */}
+                  return (
                     <div
+                      key={em.id}
+                      className="tr-click"
                       style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "var(--text-0)",
-                        fontWeight: 500,
+                        display: "grid",
+                        gridTemplateColumns: "160px 180px 1fr 95px 60px 65px",
+                        alignItems: "center",
+                        padding: "9px 14px",
+                        borderBottom: "1px solid var(--border)",
+                        background: isSelected ? "var(--accent-subtle)" : "transparent",
+                        fontSize: 12,
+                        gap: 6,
                       }}
-                      title={em.from_addr}
+                      onClick={() => setSelectedEmail(isSelected ? null : em)}
                     >
-                      <span
-                        style={{ cursor: "pointer" }}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onViewEntity?.(em.from_addr);
+                      {/* Sender */}
+                      <div
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: "var(--text-0)",
+                          fontWeight: 500,
+                        }}
+                        title={em.from_addr}
+                      >
+                        <span
+                          style={{ cursor: "pointer" }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onViewEntity?.(em.from_addr);
+                          }}
+                        >
+                          {cleanDisplayName(em.from_display) || em.from_addr}
+                        </span>
+                      </div>
+
+                      {/* Recipient */}
+                      <div
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: "var(--text-2)",
+                          fontFamily: "var(--mono)",
+                          fontSize: 11,
+                        }}
+                        title={toList.join(", ")}
+                      >
+                        {toList.slice(0, 2).map(cleanDisplayName).join(", ")}
+                        {toList.length > 2 && <span className="muted"> +{toList.length - 2}</span>}
+                      </div>
+
+                      {/* Subject */}
+                      <div
+                        style={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          color: "var(--text-0)",
+                        }}
+                        title={em.subject || ""}
+                      >
+                        {em.subject || <span className="muted">(no subject)</span>}
+                        {em.deleted_recovered && (
+                          <span className="badge badge-red" style={{ fontSize: 9, marginLeft: 6 }}>
+                            DELETED
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Date */}
+                      <div
+                        style={{
+                          textAlign: "right",
+                          fontSize: 11,
+                          color: "var(--text-3)",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        {cleanDisplayName(em.from_display) || em.from_addr}
-                      </span>
-                    </div>
+                        {em.date_sent_utc ? new Date(em.date_sent_utc).toLocaleDateString() : "—"}
+                      </div>
 
-                    {/* Recipient */}
-                    <div
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "var(--text-2)",
-                        fontFamily: "var(--mono)",
-                        fontSize: 11,
-                      }}
-                      title={toList.join(", ")}
-                    >
-                      {toList.slice(0, 2).map(cleanDisplayName).join(", ")}
-                      {toList.length > 2 && <span className="muted"> +{toList.length - 2}</span>}
-                    </div>
-
-                    {/* Subject */}
-                    <div
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        color: "var(--text-0)",
-                      }}
-                      title={em.subject || ""}
-                    >
-                      {em.subject || <span className="muted">(no subject)</span>}
-                      {em.deleted_recovered && (
-                        <span className="badge badge-red" style={{ fontSize: 9, marginLeft: 6 }}>
-                          DELETED
+                      {/* Risk Score */}
+                      <div style={{ textAlign: "center" }}>
+                        <span
+                          className={`badge ${
+                            em.risk_score >= 50
+                              ? "badge-red"
+                              : em.risk_score >= 25
+                              ? "badge-orange"
+                              : "badge-green"
+                          }`}
+                          style={{ fontSize: 9, fontWeight: 700 }}
+                        >
+                          {em.risk_score}
                         </span>
-                      )}
-                    </div>
+                      </div>
 
-                    {/* Date */}
-                    <div
-                      style={{
-                        textAlign: "right",
-                        fontSize: 11,
-                        color: "var(--text-3)",
-                      }}
-                    >
-                      {em.date_sent_utc ? new Date(em.date_sent_utc).toLocaleDateString() : "—"}
-                    </div>
-
-                    {/* Risk Score */}
-                    <div style={{ textAlign: "center" }}>
-                      <span
-                        className={`badge ${
-                          em.risk_score >= 50
-                            ? "badge-red"
-                            : em.risk_score >= 25
-                            ? "badge-orange"
-                            : "badge-green"
-                        }`}
-                        style={{ fontSize: 9 }}
+                      {/* Tag / Locker Bookmark Button */}
+                      <div
+                        style={{ display: "flex", justifyContent: "center" }}
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        {em.risk_score}
-                      </span>
+                        <BookmarkButton
+                          caseId={caseId}
+                          itemId={em.id}
+                          itemType="email"
+                          compact={true}
+                        />
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
 
-          {/* Split-Pane Message Inspector */}
+          {/* Split-Pane Message Inspector with Rich HTML & Photo Viewer */}
           {selectedEmail && (
             <div
               className="card mb-0"
@@ -453,22 +433,44 @@ export function SearchView({ caseId, onViewEntity }: Props) {
                 maxHeight: "72vh",
                 overflowY: "auto",
                 borderLeft: "4px solid var(--accent)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
               }}
             >
-              <div className="row between mb-3">
-                <strong style={{ fontSize: 15, color: "var(--text-0)" }}>
+              {/* Top Controls Header */}
+              <div className="row between" style={{ alignItems: "center" }}>
+                <strong style={{ fontSize: 15, color: "var(--text-0)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, paddingRight: 8 }}>
                   {selectedEmail.subject || "(no subject)"}
                 </strong>
-                <button
-                  className="btn btn-ghost btn-sm"
-                  style={{ padding: "2px 6px", fontSize: 11 }}
-                  onClick={() => setSelectedEmail(null)}
-                >
-                  ✕ Close
-                </button>
+                <div className="row gap-1" style={{ alignItems: "center", flexShrink: 0 }}>
+                  <BookmarkButton
+                    caseId={caseId}
+                    itemId={selectedEmail.id}
+                    itemType="email"
+                    compact={false}
+                  />
+                  {fullEmailData && (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: 11, padding: "3px 8px" }}
+                      onClick={() => setShowFullModal(true)}
+                      title="Open full expanded modal viewer"
+                    >
+                      ⛶ Expand
+                    </button>
+                  )}
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    style={{ padding: "3px 8px", fontSize: 11 }}
+                    onClick={() => setSelectedEmail(null)}
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
 
-              {/* Metadata Grid */}
+              {/* Metadata Box */}
               <div
                 style={{
                   background: "var(--bg-3)",
@@ -478,7 +480,6 @@ export function SearchView({ caseId, onViewEntity }: Props) {
                   flexDirection: "column",
                   gap: 6,
                   fontSize: 12,
-                  marginBottom: 12,
                 }}
               >
                 <div>
@@ -530,32 +531,19 @@ export function SearchView({ caseId, onViewEntity }: Props) {
                 </div>
               </div>
 
-              {/* Email Body Content */}
+              {/* Rich Email Body Viewer (HTML, Clean Text, Raw MIME, Inline Photos) */}
               <div>
-                <span className="muted" style={{ fontSize: 11, fontWeight: 600 }}>
-                  MESSAGE BODY:
-                </span>
-                <pre
-                  style={{
-                    background: "var(--bg-1)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    padding: 12,
-                    fontSize: 12,
-                    maxHeight: 250,
-                    overflow: "auto",
-                    whiteSpace: "pre-wrap",
-                    marginTop: 6,
-                    color: "var(--text-1)",
-                  }}
-                >
-                  {selectedEmail.body_text || "(No message body)"}
-                </pre>
+                <RichEmailBodyViewer
+                  bodyText={fullEmailData?.body_text ?? selectedEmail.body_text}
+                  bodyHtml={fullEmailData?.body_html ?? selectedEmail.body_html}
+                  emailId={selectedEmail.id}
+                  defaultMode="rendered"
+                />
               </div>
 
               {/* Collapsible Transport Headers */}
-              {selectedEmail.headers_raw && (
-                <details style={{ marginTop: 12 }}>
+              {(fullEmailData?.headers_raw || selectedEmail.headers_raw) && (
+                <details style={{ marginTop: 8 }}>
                   <summary
                     style={{
                       cursor: "pointer",
@@ -581,13 +569,22 @@ export function SearchView({ caseId, onViewEntity }: Props) {
                       color: "var(--text-2)",
                     }}
                   >
-                    {selectedEmail.headers_raw.slice(0, 3000)}
+                    {(fullEmailData?.headers_raw || selectedEmail.headers_raw || "").slice(0, 3000)}
                   </pre>
                 </details>
               )}
             </div>
           )}
         </div>
+      )}
+
+      {/* Full Modal Viewer */}
+      {showFullModal && fullEmailData && (
+        <EmailDetailModal
+          email={fullEmailData}
+          onClose={() => setShowFullModal(false)}
+          titleSuffix="Back to Search Results"
+        />
       )}
     </div>
   );

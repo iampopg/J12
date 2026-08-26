@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
+import { BookmarkButton } from "../components/BookmarkButton";
+import { EmailDetailModal, EmailModalData } from "../components/EmailDetailModal";
 
 function cleanDisplayName(name: string | null): string {
   if (!name) return "";
@@ -64,21 +66,80 @@ interface EntityEmail {
   headers_raw: string | null;
 }
 
+export function isOrganizationOrService(email: string, displayName?: string | null, role?: string): boolean {
+  if (role === "organization" || role === "automated") return true;
+  if (role === "person") return false;
+
+  const local = (email.split("@")[0] || "").toLowerCase();
+  const domain = (email.split("@")[1] || "").toLowerCase();
+  const dname = (displayName || "").toLowerCase();
+
+  const orgPrefixes = [
+    "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
+    "support", "help", "helpdesk", "info", "contact", "marketing", "sales",
+    "billing", "news", "newsletter", "newsdigest", "shop", "store", "orders",
+    "updates", "team", "hello", "hi", "admin", "system", "mailer-daemon",
+    "daemon", "postmaster", "bounce", "security", "notification", "notifications",
+    "alert", "alerts", "alertsp", "pncalerts", "confirm", "confirmation",
+    "receipt", "receipts", "promo", "promotions", "reply", "feedback",
+    "accounts", "auth", "autonotify", "automated", "service", "services",
+    "welcome", "engage", "member", "membership", "digest", "daily", "weekly",
+    "investor", "press", "careers", "jobs", "privacy", "legal", "invoice",
+    "customer", "reps", "xboxreps", "huntingtononline", "online", "premium",
+    "informational", "extravaluechecks", "chase", "bounce-", "bounces", "aws-"
+  ];
+
+  for (const p of orgPrefixes) {
+    if (local === p || local.startsWith(p + "-") || local.startsWith(p + ".") || local.startsWith(p + "_") || local.includes(p)) {
+      return true;
+    }
+  }
+
+  if (
+    domain.includes(".mail.") ||
+    domain.includes(".emails.") ||
+    domain.includes(".e.") ||
+    domain.includes(".engage.") ||
+    domain.includes(".insideapple.") ||
+    domain.includes(".alertsp.") ||
+    domain.includes(".m.") ||
+    domain.endsWith("redditmail.com") ||
+    domain.endsWith("academia-mail.com") ||
+    domain.includes("e-mail.")
+  ) {
+    return true;
+  }
+
+  const orgDnameKeywords = [
+    "team", "support", "updates", "alerts", "notifications", "news", "customer", "security",
+    "renewals", "marketing", "department", "llc", "inc", "corp", "bank", "service", "store",
+    "digest", "accounts", "official", "mailer", "daemon"
+  ];
+  for (const kw of orgDnameKeywords) {
+    if (dname.includes(kw)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 type TabType = "all" | "sent" | "received" | "deleted" | "flagged" | "partners";
-type EntityTier = "key" | "internal" | "all";
+type EntityTier = "people" | "organizations" | "all";
 
 interface Props {
   caseId: string;
+  evidenceFilter?: string | null;
   onSelectEmail?: (id: string) => void;
 }
 
-export function EntityDiveView({ caseId }: Props) {
+export function EntityDiveView({ caseId, evidenceFilter }: Props) {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<EntityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [diveLoading, setDiveLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [entityTier, setEntityTier] = useState<EntityTier>("key");
+  const [entityTier, setEntityTier] = useState<EntityTier>("people");
   const [sortOption, setSortOption] = useState<"total" | "sent" | "received" | "name">("total");
 
   // Tab & Filter states
@@ -88,23 +149,43 @@ export function EntityDiveView({ caseId }: Props) {
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [hasAttachment, setHasAttachment] = useState(false);
+  const [humanOnly, setHumanOnly] = useState(false);
 
-  // Email messages state
+  // Email messages & Modal state
   const [emails, setEmails] = useState<EntityEmail[]>([]);
   const [emailsLoading, setEmailsLoading] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState<EntityEmail | null>(null);
+  const [fullEmailData, setFullEmailData] = useState<EmailModalData | null>(null);
+  const [showFullModal, setShowFullModal] = useState(false);
   const [settingTarget, setSettingTarget] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!selectedEmail) {
+      setFullEmailData(null);
+      return;
+    }
+    invoke<EmailModalData | null>("email_get", { input: { id: selectedEmail.id } })
+      .then((data) => {
+        if (data) setFullEmailData(data);
+      })
+      .catch((e) => console.error("Failed to load full email details:", e));
+  }, [selectedEmail]);
+
+  useEffect(() => {
     loadEntities();
-  }, [caseId]);
+  }, [caseId, evidenceFilter]);
 
   const loadEntities = async () => {
     setLoading(true);
     try {
-      let data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
-      if (data.length === 0) {
+      let data = await invoke<Entity[]>("entity_list", { 
+        input: { 
+          case_id: caseId,
+          evidence_id: evidenceFilter || undefined
+        } 
+      });
+      if (data.length === 0 && !evidenceFilter) {
         await invoke<number>("extract_entities", { input: { case_id: caseId } });
         data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
       }
@@ -115,6 +196,14 @@ export function EntityDiveView({ caseId }: Props) {
       setLoading(false);
     }
   };
+
+  const peopleCount = useMemo(() => {
+    return entities.filter((e) => !isOrganizationOrService(e.email_address, e.display_name, e.role)).length;
+  }, [entities]);
+
+  const orgCount = useMemo(() => {
+    return entities.filter((e) => isOrganizationOrService(e.email_address, e.display_name, e.role)).length;
+  }, [entities]);
 
   const loadEntityDive = async (email: string) => {
     setDiveLoading(true);
@@ -130,8 +219,7 @@ export function EntityDiveView({ caseId }: Props) {
         input: { case_id: caseId, email_address: email },
       });
       setSelectedEntity(data);
-      // Load initial emails for this entity
-      loadEmailsForEntity(email, "all", "", "", "", false, "");
+      loadEmailsForEntity(email, "all", "", "", "", false, "", humanOnly);
     } catch (e) {
       console.error(e);
     } finally {
@@ -146,7 +234,8 @@ export function EntityDiveView({ caseId }: Props) {
     from: string,
     to: string,
     hasAtt: boolean,
-    query: string
+    query: string,
+    isHumanOnly: boolean = humanOnly
   ) => {
     setEmailsLoading(true);
     try {
@@ -160,9 +249,10 @@ export function EntityDiveView({ caseId }: Props) {
           date_from: from,
           date_to: to,
           has_attachment: hasAtt,
+          human_only: isHumanOnly,
         },
       });
-      setEmails(data);
+      setEmails(data || []);
     } catch (e) {
       console.error(e);
       setEmails([]);
@@ -177,24 +267,25 @@ export function EntityDiveView({ caseId }: Props) {
     from: string,
     to: string,
     hasAtt: boolean,
-    query: string
+    query: string,
+    isHumanOnly: boolean = humanOnly
   ) => {
     if (!selectedEntity) return;
-    loadEmailsForEntity(selectedEntity.email, tab, partner, from, to, hasAtt, query);
+    loadEmailsForEntity(selectedEntity.email, tab, partner, from, to, hasAtt, query, isHumanOnly);
   };
 
   const handleTabSelect = (tab: TabType) => {
     setActiveTab(tab);
-    handleFilterChange(tab, partnerFilter, dateFrom, dateTo, hasAttachment, emailSearch);
+    handleFilterChange(tab, partnerFilter, dateFrom, dateTo, hasAttachment, emailSearch, humanOnly);
   };
 
   const handlePartnerSelect = (partnerEmail: string) => {
     if (partnerFilter === partnerEmail) {
       setPartnerFilter("");
-      handleFilterChange(activeTab, "", dateFrom, dateTo, hasAttachment, emailSearch);
+      handleFilterChange(activeTab, "", dateFrom, dateTo, hasAttachment, emailSearch, humanOnly);
     } else {
       setPartnerFilter(partnerEmail);
-      handleFilterChange(activeTab, partnerEmail, dateFrom, dateTo, hasAttachment, emailSearch);
+      handleFilterChange(activeTab, partnerEmail, dateFrom, dateTo, hasAttachment, emailSearch, humanOnly);
     }
   };
 
@@ -230,7 +321,6 @@ export function EntityDiveView({ caseId }: Props) {
     }
   };
 
-  // Filter and sort entities list
   const filteredEntities = useMemo(() => {
     let result = entities.filter((e) => {
       const matchSearch =
@@ -239,12 +329,11 @@ export function EntityDiveView({ caseId }: Props) {
         (e.aliases || "").toLowerCase().includes(searchTerm.toLowerCase());
       if (!matchSearch) return false;
 
-      const total = e.sent_count + e.received_count;
-      if (entityTier === "key") {
-        // Key people: either >= 5 communications or has known full human name with space
-        return total >= 5 || (e.display_name && e.display_name.includes(" "));
-      } else if (entityTier === "internal") {
-        return e.email_address.endsWith("@enron.com");
+      const isOrg = isOrganizationOrService(e.email_address, e.display_name, e.role);
+      if (entityTier === "people") {
+        return !isOrg;
+      } else if (entityTier === "organizations") {
+        return isOrg;
       }
       return true;
     });
@@ -282,21 +371,20 @@ export function EntityDiveView({ caseId }: Props) {
 
   return (
     <div>
-      {/* Top Header */}
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
             Entity Profiles & Person Resolution
           </h2>
           <p className="muted" style={{ fontSize: 12 }}>
-            Unified person profiles merging Exchange accounts, aliases, and corporate addresses into single individuals.
+            Unified correspondents categorized into Individual People vs. Organizations & Automated Services.
           </p>
         </div>
         <div className="row gap-2">
           <button
             className="btn btn-primary btn-sm"
             onClick={handleReExtract}
-            title="Re-extract, resolve, and unify all entities and aliases"
+            title="Re-extract, resolve, and classify all entities into people vs organizations"
           >
             ⚡ Re-Extract & Unify
           </button>
@@ -309,12 +397,11 @@ export function EntityDiveView({ caseId }: Props) {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "350px 1fr",
+          gridTemplateColumns: "360px 1fr",
           gap: 16,
           alignItems: "start",
         }}
       >
-        {/* Left Column: Entity Directory */}
         <div
           className="card"
           style={{
@@ -325,11 +412,10 @@ export function EntityDiveView({ caseId }: Props) {
             marginBottom: 0,
           }}
         >
-          {/* Entity Tier Tabs */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "1fr 1fr 1fr",
+              gridTemplateColumns: "1fr 1.2fr 0.8fr",
               gap: 4,
               background: "var(--bg-3)",
               padding: 3,
@@ -340,39 +426,51 @@ export function EntityDiveView({ caseId }: Props) {
             <button
               type="button"
               style={{
-                padding: "4px 6px",
+                padding: "5px 6px",
                 fontSize: 11,
                 fontWeight: 600,
                 border: "none",
                 borderRadius: "var(--r-xs)",
-                background: entityTier === "key" ? "var(--accent)" : "transparent",
-                color: entityTier === "key" ? "#fff" : "var(--text-2)",
+                background: entityTier === "people" ? "var(--accent)" : "transparent",
+                color: entityTier === "people" ? "#fff" : "var(--text-2)",
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
               }}
-              onClick={() => setEntityTier("key")}
+              onClick={() => setEntityTier("people")}
+              title="Individual human persons, personal emails, and direct contacts"
             >
-              Key People
+              <span>👤 People</span>
+              <span style={{ opacity: 0.8, fontSize: 10 }}>({peopleCount})</span>
             </button>
             <button
               type="button"
               style={{
-                padding: "4px 6px",
+                padding: "5px 6px",
                 fontSize: 11,
                 fontWeight: 600,
                 border: "none",
                 borderRadius: "var(--r-xs)",
-                background: entityTier === "internal" ? "var(--accent)" : "transparent",
-                color: entityTier === "internal" ? "#fff" : "var(--text-2)",
+                background: entityTier === "organizations" ? "var(--accent)" : "transparent",
+                color: entityTier === "organizations" ? "#fff" : "var(--text-2)",
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
               }}
-              onClick={() => setEntityTier("internal")}
+              onClick={() => setEntityTier("organizations")}
+              title="Organizations, services, newsletters, and automated bot accounts"
             >
-              Internal Org
+              <span>🏢 Org / Services</span>
+              <span style={{ opacity: 0.8, fontSize: 10 }}>({orgCount})</span>
             </button>
             <button
               type="button"
               style={{
-                padding: "4px 6px",
+                padding: "5px 6px",
                 fontSize: 11,
                 fontWeight: 600,
                 border: "none",
@@ -380,19 +478,23 @@ export function EntityDiveView({ caseId }: Props) {
                 background: entityTier === "all" ? "var(--accent)" : "transparent",
                 color: entityTier === "all" ? "#fff" : "var(--text-2)",
                 cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 4,
               }}
               onClick={() => setEntityTier("all")}
+              title="All entities without filtering"
             >
-              All ({entities.length})
+              <span>All ({entities.length})</span>
             </button>
           </div>
 
-          {/* Search and Sort */}
           <div className="mb-2">
             <input
               className="input mb-2"
               style={{ fontSize: 12, padding: "6px 10px" }}
-              placeholder="Search name, email, alias..."
+              placeholder="Search name, email, domain..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
@@ -410,10 +512,9 @@ export function EntityDiveView({ caseId }: Props) {
           </div>
 
           <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 8, paddingLeft: 4 }}>
-            Showing <strong>{filteredEntities.length}</strong> {entityTier === "key" ? "key participants" : "entities"}
+            Showing <strong>{filteredEntities.length}</strong> {entityTier === "people" ? "individual persons" : entityTier === "organizations" ? "organizations & services" : "entities"}
           </div>
 
-          {/* List */}
           <div
             style={{
               flex: 1,
@@ -426,6 +527,7 @@ export function EntityDiveView({ caseId }: Props) {
           >
             {filteredEntities.map((e) => {
               const isSelected = selectedEntity?.email === e.email_address;
+              const isOrg = isOrganizationOrService(e.email_address, e.display_name, e.role);
               const total = e.sent_count + e.received_count;
               const initial = (e.display_name || e.email_address).charAt(0).toUpperCase();
 
@@ -434,7 +536,7 @@ export function EntityDiveView({ caseId }: Props) {
                   key={e.id}
                   className="tr-click"
                   style={{
-                    padding: "9px 10px",
+                    padding: "8px 10px",
                     borderRadius: "var(--r-md)",
                     background: isSelected ? "var(--accent-subtle)" : "var(--bg-3)",
                     border: isSelected ? "1px solid var(--accent)" : "1px solid transparent",
@@ -450,19 +552,19 @@ export function EntityDiveView({ caseId }: Props) {
                       width: 32,
                       height: 32,
                       borderRadius: "50%",
-                      background: isSelected
-                        ? "var(--accent)"
+                      background: isOrg
+                        ? "linear-gradient(135deg, #64748b, #475569)"
                         : "linear-gradient(135deg, #3b82f6, #6366f1)",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      fontSize: 13,
+                      fontSize: isOrg ? 14 : 13,
                       color: "#fff",
                       fontWeight: 700,
                       flexShrink: 0,
                     }}
                   >
-                    {initial}
+                    {isOrg ? "🏢" : initial}
                   </div>
 
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -511,11 +613,10 @@ export function EntityDiveView({ caseId }: Props) {
           </div>
         </div>
 
-        {/* Right Column: Selected Entity Investigation Hub */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {diveLoading ? (
             <div className="card" style={{ padding: 48, textAlign: "center" }}>
-              <div className="empty">Loading unified person profile...</div>
+              <div className="empty">Loading entity profile...</div>
             </div>
           ) : selectedEntity ? (
             <>
@@ -534,12 +635,13 @@ export function EntityDiveView({ caseId }: Props) {
                   {notification}
                 </div>
               )}
-              {/* Profile Card */}
               <div
                 className="card mb-0"
                 style={{
                   padding: 20,
-                  borderLeft: "4px solid var(--accent)",
+                  borderLeft: isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
+                    ? "4px solid #94a3b8"
+                    : "4px solid var(--accent)",
                   background: "var(--bg-2)",
                 }}
               >
@@ -550,36 +652,51 @@ export function EntityDiveView({ caseId }: Props) {
                         width: 56,
                         height: 56,
                         borderRadius: "50%",
-                        background: "linear-gradient(135deg, #3b82f6, #6366f1)",
+                        background: isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
+                          ? "linear-gradient(135deg, #64748b, #475569)"
+                          : "linear-gradient(135deg, #3b82f6, #6366f1)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: 24,
+                        fontSize: isOrganizationOrService(selectedEntity.email, selectedEntity.display_name) ? 26 : 22,
                         color: "#fff",
                         fontWeight: 700,
-                        boxShadow: "0 4px 12px rgba(59,130,246,0.3)",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
                       }}
                     >
-                      {(selectedEntity.display_name || selectedEntity.email)
-                        .charAt(0)
-                        .toUpperCase()}
+                      {isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
+                        ? "🏢"
+                        : ((selectedEntity.display_name || selectedEntity.email || "P").charAt(0) || "P").toUpperCase()}
                     </div>
                     <div>
-                      <h3 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)" }}>
-                        {cleanDisplayName(selectedEntity.display_name) || selectedEntity.email}
-                      </h3>
+                      <div className="row gap-2" style={{ alignItems: "center" }}>
+                        <h3 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
+                          {cleanDisplayName(selectedEntity.display_name) || selectedEntity.email || "Unknown Entity"}
+                        </h3>
+                        <span
+                          className={`badge ${
+                            isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
+                              ? "badge-gray"
+                              : "badge-blue"
+                          }`}
+                          style={{ fontSize: 10 }}
+                        >
+                          {isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
+                            ? "🏢 ORGANIZATION / SERVICE"
+                            : "👤 INDIVIDUAL PERSON"}
+                        </span>
+                      </div>
                       <p
                         style={{
                           fontSize: 13,
                           color: "var(--accent)",
                           fontFamily: "var(--mono)",
-                          marginBottom: 4,
+                          margin: "4px 0 0 0",
                         }}
                       >
                         {selectedEntity.email}
                       </p>
 
-                      {/* Merged Aliases List */}
                       {selectedEntity.aliases && selectedEntity.aliases.length > 0 && (
                         <div className="row gap-1 mb-2" style={{ flexWrap: "wrap" }}>
                           <span style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600 }}>
@@ -871,7 +988,38 @@ export function EntityDiveView({ caseId }: Props) {
                     )}
                   </div>
 
-                  <div className="row gap-2">
+                  <div className="row gap-2" style={{ alignItems: "center" }}>
+                    <button
+                      className={`btn btn-sm ${humanOnly ? "btn-primary" : "btn-ghost"}`}
+                      style={{
+                        fontSize: 11,
+                        padding: "3px 10px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        border: humanOnly ? "1px solid var(--accent)" : "1px solid var(--border)",
+                        background: humanOnly ? "var(--accent)" : "var(--bg-3)",
+                        color: humanOnly ? "#fff" : "var(--text-1)",
+                      }}
+                      onClick={() => {
+                        const nextVal = !humanOnly;
+                        setHumanOnly(nextVal);
+                        handleFilterChange(
+                          activeTab,
+                          partnerFilter,
+                          dateFrom,
+                          dateTo,
+                          hasAttachment,
+                          emailSearch,
+                          nextVal
+                        );
+                      }}
+                      title="Filter out automated notifications, no-reply mailers, OTP codes, and newsletters"
+                    >
+                      <span>👤</span>
+                      <span>{humanOnly ? "Human Only (Active)" : "Filter Automated / No-Reply"}</span>
+                    </button>
+
                     <label className="row gap-1" style={{ fontSize: 11, color: "var(--text-2)", cursor: "pointer" }}>
                       <input
                         type="checkbox"
@@ -884,7 +1032,8 @@ export function EntityDiveView({ caseId }: Props) {
                             dateFrom,
                             dateTo,
                             e.target.checked,
-                            emailSearch
+                            emailSearch,
+                            humanOnly
                           );
                         }}
                       />
@@ -962,7 +1111,7 @@ export function EntityDiveView({ caseId }: Props) {
                     <div
                       style={{
                         display: "grid",
-                        gridTemplateColumns: "160px 1fr 100px 70px",
+                        gridTemplateColumns: "160px 1fr 100px 50px 60px 50px",
                         padding: "8px 12px",
                         background: "var(--bg-1)",
                         borderBottom: "1px solid var(--border)",
@@ -971,12 +1120,16 @@ export function EntityDiveView({ caseId }: Props) {
                         textTransform: "uppercase",
                         letterSpacing: "0.06em",
                         color: "var(--text-3)",
+                        gap: 6,
+                        alignItems: "center",
                       }}
                     >
                       <div>From</div>
                       <div>Subject</div>
                       <div style={{ textAlign: "right" }}>Date</div>
                       <div style={{ textAlign: "center" }}>Risk</div>
+                      <div style={{ textAlign: "center" }}>Locker</div>
+                      <div style={{ textAlign: "center" }}>View</div>
                     </div>
 
                     {emails.map((em) => {
@@ -987,14 +1140,20 @@ export function EntityDiveView({ caseId }: Props) {
                           className="tr-click"
                           style={{
                             display: "grid",
-                            gridTemplateColumns: "160px 1fr 100px 70px",
+                            gridTemplateColumns: "160px 1fr 100px 50px 60px 50px",
                             alignItems: "center",
                             padding: "8px 12px",
                             borderBottom: "1px solid var(--border)",
                             background: isEmailActive ? "var(--accent-subtle)" : "transparent",
                             fontSize: 12,
+                            gap: 6,
                           }}
                           onClick={() => setSelectedEmail(isEmailActive ? null : em)}
+                          onDoubleClick={() => {
+                            setSelectedEmail(em);
+                            setShowFullModal(true);
+                          }}
+                          title="Click to preview below, double-click to open full forensic pop-up"
                         >
                           <div
                             style={{
@@ -1045,6 +1204,33 @@ export function EntityDiveView({ caseId }: Props) {
                               {em.risk_score}
                             </span>
                           </div>
+                          <div
+                            style={{ display: "flex", justifyContent: "center" }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <BookmarkButton
+                              caseId={caseId}
+                              itemId={em.id}
+                              itemType="email"
+                              compact={true}
+                            />
+                          </div>
+                          <div
+                            style={{ display: "flex", justifyContent: "center" }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedEmail(em);
+                              setShowFullModal(true);
+                            }}
+                          >
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ padding: "2px 5px", fontSize: 11 }}
+                              title="Open full forensic message pop-up"
+                            >
+                              👁️
+                            </button>
+                          </div>
                         </div>
                       );
                     })}
@@ -1062,19 +1248,35 @@ export function EntityDiveView({ caseId }: Props) {
                       borderRadius: "var(--r-md)",
                     }}
                   >
-                    <div className="row between mb-2">
-                      <strong style={{ fontSize: 14, color: "var(--text-0)" }}>
+                    <div className="row between mb-2" style={{ alignItems: "center" }}>
+                      <strong style={{ fontSize: 14, color: "var(--text-0)", flex: 1, paddingRight: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {selectedEmail.subject || "(no subject)"}
                       </strong>
-                      <button
-                        className="btn btn-ghost btn-sm"
-                        style={{ padding: "2px 6px", fontSize: 11 }}
-                        onClick={() => setSelectedEmail(null)}
-                      >
-                        ✕ Close Preview
-                      </button>
+                      <div className="row gap-2" style={{ alignItems: "center", flexShrink: 0 }}>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          style={{ padding: "3px 10px", fontSize: 11, display: "flex", alignItems: "center", gap: 5 }}
+                          onClick={() => setShowFullModal(true)}
+                          title="Open full forensic modal with HTML/Text/Headers tabs and extracted attachments"
+                        >
+                          <span>👁️ Full Pop-up Viewer</span>
+                        </button>
+                        <BookmarkButton
+                          caseId={caseId}
+                          itemId={selectedEmail.id}
+                          itemType="email"
+                          compact={false}
+                        />
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ padding: "2px 6px", fontSize: 11 }}
+                          onClick={() => setSelectedEmail(null)}
+                        >
+                          ✕ Close
+                        </button>
+                      </div>
                     </div>
-                    <div className="grid-2 mb-3" style={{ fontSize: 12 }}>
+                    <div className="grid-2 mb-2" style={{ fontSize: 12 }}>
                       <div>
                         <span className="muted">From: </span>
                         <strong>{selectedEmail.from_addr}</strong>
@@ -1086,16 +1288,24 @@ export function EntityDiveView({ caseId }: Props) {
                           : "—"}
                       </div>
                     </div>
-                    <div style={{ fontSize: 12, marginBottom: 8 }}>
+                    <div style={{ fontSize: 12, marginBottom: 12 }}>
                       <span className="muted">To: </span>
                       <span className="mono">{selectedEmail.to_addrs}</span>
                     </div>
-                    {selectedEmail.body_text && (
-                      <RichEmailBodyViewer
-                        bodyText={selectedEmail.body_text}
-                        bodyHtml={selectedEmail.body_html}
-                      />
-                    )}
+
+                    {/* Rich Body Viewer (renders HTML or Plain Text or fallback) */}
+                    <div style={{ background: "var(--bg-0)", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                      {((fullEmailData?.body_html || selectedEmail.body_html) || (fullEmailData?.body_text || selectedEmail.body_text)) ? (
+                        <RichEmailBodyViewer
+                          bodyText={fullEmailData?.body_text || selectedEmail.body_text || ""}
+                          bodyHtml={fullEmailData?.body_html || selectedEmail.body_html || null}
+                        />
+                      ) : (
+                        <div className="empty" style={{ padding: "20px 14px", fontSize: 12 }}>
+                          No message body text or HTML payload available in this container.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1105,6 +1315,15 @@ export function EntityDiveView({ caseId }: Props) {
           )}
         </div>
       </div>
+
+      {/* Full Forensic Email Modal Popup */}
+      {showFullModal && (fullEmailData || selectedEmail) && (
+        <EmailDetailModal
+          email={fullEmailData || (selectedEmail as any)}
+          onClose={() => setShowFullModal(false)}
+          titleSuffix="Entity Investigation"
+        />
+      )}
     </div>
   );
 }

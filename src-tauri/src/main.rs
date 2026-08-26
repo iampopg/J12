@@ -9,10 +9,12 @@ mod parser;
 mod pst;
 mod analysis;
 mod imap_acquisition;
+mod ai;
 
 use db::Database;
 use models::*;
 use analysis::{AnalysisResult, analyze_headers, analyze_authentication, detect_spoofing, generate_findings, calculate_risk_score};
+use ai::*;
 
 pub struct AppState {
     pub db: Mutex<Database>,
@@ -80,6 +82,7 @@ fn main() {
             commands::email_notes_list,
             commands::email_note_add,
             commands::email_note_delete,
+            commands::get_case_email_count,
             commands::generate_report_data,
             commands::export_report_pdf,
             commands::verify_evidence_hashes,
@@ -88,16 +91,49 @@ fn main() {
             commands::imap_list_mailboxes,
             commands::imap_fetch_emails,
             commands::imap_cancel_acquisition,
+            commands::pop3_test_connection,
+            commands::pop3_fetch_emails,
             commands::case_attachments_summary,
             commands::case_attachments_list,
             commands::export_attachment,
             commands::get_attachment_preview,
             commands::open_attachment_in_system,
             commands::reveal_in_finder,
+            commands::get_email_inline_images,
+            commands::bookmark_add,
+            commands::bookmark_remove,
+            commands::bookmarks_list,
+            commands::bookmark_check,
             commands::case_artifacts_summary,
             commands::case_artifacts_list,
             commands::rescan_case_artifacts,
             commands::open_external_url,
+            // AI Commands (Phase 0 + Phase 1)
+            ai_get_case_statistics,
+            ai_search_emails,
+            ai_get_email,
+            ai_get_authentication_results,
+            ai_get_entity,
+            ai_get_timeline,
+            ai_get_findings,
+            ai_get_case_context,
+            ai_create_session,
+            ai_get_session_history,
+            ai_clear_session,
+            ai_natural_language_search,
+            ai_explain_evidence,
+            ai_create_investigation_plan,
+            ai_execute_investigation_plan,
+            ai_analyze_timeline,
+            ai_analyze_spoofing,
+            ai_triage_attachments,
+            ai_analyze_graph,
+            fetch_kiloai_models,
+            fetch_openrouter_models,
+            ai_chat,
+            ai_resolve_entities,
+            ai_detect_anomalies,
+            ai_generate_report,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

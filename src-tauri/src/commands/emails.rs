@@ -35,8 +35,10 @@ pub async fn email_list(state: State<'_, AppState>, input: EmailListInput) -> Re
     }
 
     let sql = format!(
-        "SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags 
-         FROM emails WHERE {} ORDER BY date_sent_utc DESC LIMIT {} OFFSET {}",
+        "SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags,
+                (SELECT COUNT(*) FROM attachments WHERE email_id = e.id) as attachment_count,
+                (SELECT COUNT(*) FROM attachments WHERE email_id = e.id AND (mime_type LIKE 'image/%' OR filename LIKE '%.jpg' OR filename LIKE '%.jpeg' OR filename LIKE '%.png' OR filename LIKE '%.gif' OR filename LIKE '%.webp')) as image_count
+         FROM emails e WHERE {} ORDER BY date_sent_utc DESC LIMIT {} OFFSET {}",
         conditions.join(" AND "), limit, offset
     );
 
@@ -52,7 +54,9 @@ pub async fn email_list(state: State<'_, AppState>, input: EmailListInput) -> Re
             body_text: None,
             body_html: None,
             folder_name: row.get(11)?, folder_category: row.get(12)?,
-            is_deleted: boolv(row,13), deleted_recovered: boolv(row,14), risk_score: u8v(row,15), flags: row.get(16)?
+            is_deleted: boolv(row,13), deleted_recovered: boolv(row,14), risk_score: u8v(row,15), flags: row.get(16)?,
+            attachment_count: row.get::<_, Option<i64>>(17)?.unwrap_or(0) as u32,
+            image_count: row.get::<_, Option<i64>>(18)?.unwrap_or(0) as u32,
         })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
 
@@ -97,7 +101,9 @@ pub async fn email_get(state: State<'_, AppState>, input: Value) -> Result<Optio
             is_deleted: boolv(row,16), 
             deleted_recovered: boolv(row,17), 
             risk_score: u8v(row,18), 
-            flags: row.get(19)? 
+            flags: row.get(19)?,
+            attachment_count: 0,
+            image_count: 0,
         })
     );
     match r { 
@@ -110,12 +116,89 @@ pub async fn email_get(state: State<'_, AppState>, input: Value) -> Result<Optio
 #[tauri::command]
 pub async fn search(state: State<'_, AppState>, input: SearchInput) -> Result<Vec<EmailMessage>, String> {
     let db = state.db.lock().await;
-    let limit = input.limit.unwrap_or(100) as i64;
-    let q = format!("%{}%", input.query);
-    let mut stmt = db.conn.prepare("SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,headers_raw,body_text,body_html,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags FROM emails WHERE case_id=?1 AND (from_addr LIKE ?2 OR to_addrs LIKE ?2 OR subject LIKE ?2 OR body_text LIKE ?2) ORDER BY date_sent DESC LIMIT ?3").map_err(|e| e.to_string())?;
-    let emails = stmt.query_map(rusqlite::params![&input.case_id, &q, limit], |row| {
-        Ok(EmailMessage { id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?, from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?, subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?, headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?, folder_name: row.get(14)?, folder_category: row.get(15)?, is_deleted: boolv(row,16), deleted_recovered: boolv(row,17), risk_score: u8v(row,18), flags: row.get(19)? })
+    let limit = input.limit.unwrap_or(200) as i64;
+    
+    let mut conditions = vec!["case_id = ?".to_string()];
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(input.case_id.clone())];
+
+    if let Some(ref ev_id) = input.evidence_id {
+        if !ev_id.trim().is_empty() && ev_id != "all" {
+            conditions.push("evidence_id = ?".to_string());
+            params.push(Box::new(ev_id.clone()));
+        }
+    }
+
+    let tokens = input.query.split_whitespace().collect::<Vec<_>>();
+    let mut free_text = Vec::new();
+
+    for token in tokens {
+        if let Some(val) = token.strip_prefix("from:") {
+            conditions.push("from_addr LIKE ?".to_string());
+            params.push(Box::new(format!("%{}%", val)));
+        } else if let Some(val) = token.strip_prefix("to:") {
+            conditions.push("(to_addrs LIKE ? OR cc_addrs LIKE ?)".to_string());
+            params.push(Box::new(format!("%{}%", val)));
+            params.push(Box::new(format!("%{}%", val)));
+        } else if let Some(val) = token.strip_prefix("subject:") {
+            conditions.push("subject LIKE ?".to_string());
+            params.push(Box::new(format!("%{}%", val)));
+        } else if let Some(val) = token.strip_prefix("body:") {
+            conditions.push("body_text LIKE ?".to_string());
+            params.push(Box::new(format!("%{}%", val)));
+        } else if token == "has:attachment" {
+            conditions.push("(SELECT COUNT(*) FROM attachments WHERE email_id = e.id) > 0".to_string());
+        } else if token == "is:deleted" {
+            conditions.push("(is_deleted = 1 OR deleted_recovered = 1)".to_string());
+        } else if let Some(val) = token.strip_prefix("risk:>") {
+            if let Ok(r) = val.parse::<u8>() {
+                conditions.push("risk_score > ?".to_string());
+                params.push(Box::new(r));
+            }
+        } else if let Some(val) = token.strip_prefix("after:") {
+            conditions.push("date_sent_utc >= ?".to_string());
+            params.push(Box::new(format!("{}T00:00:00Z", val)));
+        } else if let Some(val) = token.strip_prefix("before:") {
+            conditions.push("date_sent_utc <= ?".to_string());
+            params.push(Box::new(format!("{}T23:59:59Z", val)));
+        } else {
+            free_text.push(token);
+        }
+    }
+
+    if !free_text.is_empty() {
+        let q = format!("%{}%", free_text.join(" "));
+        conditions.push("(from_addr LIKE ? OR to_addrs LIKE ? OR cc_addrs LIKE ? OR subject LIKE ? OR body_text LIKE ?)".to_string());
+        params.push(Box::new(q.clone()));
+        params.push(Box::new(q.clone()));
+        params.push(Box::new(q.clone()));
+        params.push(Box::new(q.clone()));
+        params.push(Box::new(q));
+    }
+
+    let sql = format!(
+        "SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,headers_raw,body_text,body_html,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags,
+                (SELECT COUNT(*) FROM attachments WHERE email_id = e.id) as attachment_count,
+                (SELECT COUNT(*) FROM attachments WHERE email_id = e.id AND (mime_type LIKE 'image/%' OR filename LIKE '%.jpg' OR filename LIKE '%.jpeg' OR filename LIKE '%.png' OR filename LIKE '%.gif' OR filename LIKE '%.webp')) as image_count
+         FROM emails e WHERE {} ORDER BY date_sent_utc DESC LIMIT {}",
+        conditions.join(" AND "), limit
+    );
+
+    let mut stmt = db.conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    let emails = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok(EmailMessage {
+            id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?,
+            from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?,
+            subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?,
+            headers_raw: row.get(11)?, body_text: row.get(12)?, body_html: row.get(13)?,
+            folder_name: row.get(14)?, folder_category: row.get(15)?,
+            is_deleted: boolv(row, 16), deleted_recovered: boolv(row, 17), risk_score: u8v(row, 18), flags: row.get(19)?,
+            attachment_count: row.get::<_, Option<i64>>(20)?.unwrap_or(0) as u32,
+            image_count: row.get::<_, Option<i64>>(21)?.unwrap_or(0) as u32,
+        })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+
     Ok(emails)
 }
 
@@ -155,26 +238,54 @@ pub async fn email_headers(state: State<'_, AppState>, email_id: String) -> Resu
 pub async fn emails_by_date(state: State<'_, AppState>, input: Value) -> Result<Vec<EmailMessage>, String> {
     let case_id = input["case_id"].as_str().or_else(|| input["caseId"].as_str()).unwrap_or("");
     let date = input["date"].as_str().unwrap_or("");
+    let evidence_id = input["evidence_id"].as_str()
+        .or_else(|| input["evidenceId"].as_str())
+        .or_else(|| input["input"]["evidence_id"].as_str())
+        .or_else(|| input["input"]["evidenceId"].as_str())
+        .filter(|s| !s.trim().is_empty() && *s != "all");
+
     let db = state.db.lock().await;
 
     let d_pattern = format!("{}%", date);
-    let mut stmt = db.conn.prepare(
-        "SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags
-         FROM emails WHERE case_id=?1 AND (date_sent_utc LIKE ?2 OR date_sent LIKE ?2) ORDER BY date_sent_utc ASC LIMIT 1000"
-    ).map_err(|e| e.to_string())?;
+    let emails = if let Some(ev_id) = evidence_id {
+        let mut stmt = db.conn.prepare(
+            "SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags
+             FROM emails WHERE case_id=?1 AND evidence_id=?2 AND (date_sent_utc LIKE ?3 OR date_sent LIKE ?3) ORDER BY date_sent_utc ASC LIMIT 1000"
+        ).map_err(|e| e.to_string())?;
 
-    let emails = stmt.query_map(rusqlite::params![case_id, d_pattern], |row| {
-        Ok(EmailMessage {
-            id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?,
-            from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?,
-            subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?,
-            headers_raw: None,
-            body_text: None,
-            body_html: None,
-            folder_name: row.get(11)?, folder_category: row.get(12)?,
-            is_deleted: boolv(row, 13), deleted_recovered: boolv(row, 14), risk_score: u8v(row, 15), flags: row.get(16)?
-        })
-    }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
+        let r = stmt.query_map(rusqlite::params![case_id, ev_id, d_pattern], |row| {
+            Ok(EmailMessage {
+                id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?,
+                from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?,
+                subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?,
+                headers_raw: None,
+                body_text: None,
+                body_html: None,
+                folder_name: row.get(11)?, folder_category: row.get(12)?,
+                is_deleted: boolv(row, 13), deleted_recovered: boolv(row, 14), risk_score: u8v(row, 15), flags: row.get(16)?, attachment_count: 0, image_count: 0
+            })
+        }).map_err(|e| e.to_string())?;
+        r.filter_map(|r| r.ok()).collect::<Vec<_>>()
+    } else {
+        let mut stmt = db.conn.prepare(
+            "SELECT id,evidence_id,case_id,message_id,from_addr,from_display,to_addrs,cc_addrs,subject,date_sent,date_sent_utc,folder_name,folder_category,is_deleted,deleted_recovered,risk_score,flags
+             FROM emails WHERE case_id=?1 AND (date_sent_utc LIKE ?2 OR date_sent LIKE ?2) ORDER BY date_sent_utc ASC LIMIT 1000"
+        ).map_err(|e| e.to_string())?;
+
+        let r = stmt.query_map(rusqlite::params![case_id, d_pattern], |row| {
+            Ok(EmailMessage {
+                id: row.get(0)?, evidence_id: row.get(1)?, case_id: row.get(2)?, message_id: row.get(3)?,
+                from_addr: row.get(4)?, from_display: row.get(5)?, to_addrs: row.get(6)?, cc_addrs: row.get(7)?,
+                subject: row.get(8)?, date_sent: row.get(9)?, date_sent_utc: row.get(10)?,
+                headers_raw: None,
+                body_text: None,
+                body_html: None,
+                folder_name: row.get(11)?, folder_category: row.get(12)?,
+                is_deleted: boolv(row, 13), deleted_recovered: boolv(row, 14), risk_score: u8v(row, 15), flags: row.get(16)?, attachment_count: 0, image_count: 0
+            })
+        }).map_err(|e| e.to_string())?;
+        r.filter_map(|r| r.ok()).collect::<Vec<_>>()
+    };
 
     Ok(emails)
 }
@@ -209,7 +320,7 @@ pub async fn emails_between(state: State<'_, AppState>, input: Value) -> Result<
             body_text: None,
             body_html: None,
             folder_name: row.get(11)?, folder_category: row.get(12)?,
-            is_deleted: boolv(row, 13), deleted_recovered: boolv(row, 14), risk_score: u8v(row, 15), flags: row.get(16)?
+            is_deleted: boolv(row, 13), deleted_recovered: boolv(row, 14), risk_score: u8v(row, 15), flags: row.get(16)?, attachment_count: 0, image_count: 0
         })
     }).map_err(|e| e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e| e.to_string())?;
 
@@ -218,7 +329,19 @@ pub async fn emails_between(state: State<'_, AppState>, input: Value) -> Result<
 
 // Tags & Notes
 #[tauri::command]
-pub async fn email_tags_list(state: State<'_, AppState>, case_id: String) -> Result<Vec<EmailTag>, String> {
+pub async fn email_tags_list(state: State<'_, AppState>, input: Value) -> Result<Vec<EmailTag>, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if case_id.is_empty() {
+        return Ok(Vec::new());
+    }
+
     let db = state.db.lock().await;
     let mut stmt = db.conn.prepare(
         "SELECT id, case_id, email_id, tag, color, created_at
@@ -331,4 +454,24 @@ pub async fn email_note_delete(state: State<'_, AppState>, note_id: String) -> R
     let db = state.db.lock().await;
     db.conn.execute("DELETE FROM email_notes WHERE id = ?1", [&note_id]).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub async fn get_case_email_count(state: State<'_, AppState>, input: Value) -> Result<i64, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input["input"]["case_id"].as_str())
+        .or_else(|| input["input"]["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let db = state.db.lock().await;
+    let count: i64 = db.conn.query_row(
+        "SELECT COUNT(*) FROM emails WHERE case_id = ?1",
+        [&case_id],
+        |r| r.get(0)
+    ).unwrap_or(0);
+
+    Ok(count)
 }

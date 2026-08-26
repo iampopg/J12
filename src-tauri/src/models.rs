@@ -62,6 +62,10 @@ pub struct EmailMessage {
     pub deleted_recovered: bool,
     pub risk_score: u8,
     pub flags: String,
+    #[serde(default)]
+    pub attachment_count: u32,
+    #[serde(default)]
+    pub image_count: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -180,6 +184,7 @@ pub struct SearchInput {
     pub case_id: String,
     pub query: String,
     pub limit: Option<u32>,
+    pub evidence_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

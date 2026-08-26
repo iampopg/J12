@@ -29,37 +29,148 @@ pub fn classify_attachment_category(filename: &str, mime: &str, _entropy: Option
     let lower_mime = mime.to_lowercase();
     let has_exec_risk = risk_flags.map(|r| r.contains("executable") || r.contains("macro")).unwrap_or(false);
 
-    if lower_name.ends_with(".exe") || lower_name.ends_with(".scr") || lower_name.ends_with(".bat") 
-       || lower_name.ends_with(".vbs") || lower_name.ends_with(".js") || lower_name.ends_with(".ps1")
-       || lower_name.ends_with(".hta") || lower_name.ends_with(".iso") || lower_name.ends_with(".img")
-       || lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm") || lower_name.ends_with(".pptm")
-       || has_exec_risk {
-        return "dangerous".to_string();
-    }
-    if lower_name.ends_with(".jpg") || lower_name.ends_with(".jpeg") || lower_name.ends_with(".png")
-       || lower_name.ends_with(".gif") || lower_name.ends_with(".bmp") || lower_name.ends_with(".webp")
-       || lower_name.ends_with(".tif") || lower_name.ends_with(".tiff") || lower_name.ends_with(".heic")
-       || lower_name.ends_with(".svg") || lower_mime.starts_with("image/") {
-        return "images".to_string();
-    }
-    if lower_name.ends_with(".pdf") || lower_name.ends_with(".doc") || lower_name.ends_with(".docx")
-       || lower_name.ends_with(".xls") || lower_name.ends_with(".xlsx") || lower_name.ends_with(".ppt")
-       || lower_name.ends_with(".pptx") || lower_name.ends_with(".txt") || lower_name.ends_with(".csv")
-       || lower_name.ends_with(".rtf") || lower_name.ends_with(".html") || lower_name.ends_with(".htm")
-       || lower_mime.contains("pdf") || lower_mime.contains("officedocument") || lower_mime.contains("msword") {
-        return "documents".to_string();
-    }
-    if lower_name.ends_with(".zip") || lower_name.ends_with(".rar") || lower_name.ends_with(".7z")
-       || lower_name.ends_with(".tar") || lower_name.ends_with(".gz") || lower_name.ends_with(".bz2") {
-        return "archives".to_string();
-    }
-    if lower_name.ends_with(".mp3") || lower_name.ends_with(".wav") || lower_name.ends_with(".mp4")
-       || lower_name.ends_with(".mov") || lower_name.ends_with(".m4a") || lower_mime.starts_with("audio/")
-       || lower_mime.starts_with("video/") {
-        return "media".to_string();
-    }
+    // ── DANGEROUS / EXECUTABLE ────────────────────────────────────────────────
+    let is_dangerous = has_exec_risk
+        || matches_any_ext(&lower_name, &[
+            ".exe", ".scr", ".bat", ".cmd", ".com", ".pif", ".cpl", ".msi", ".dll", ".sys",
+            ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".hta",
+            ".ps1", ".ps2", ".psm1", ".psd1",
+            ".reg", ".lnk", ".url",
+            ".docm", ".xlsm", ".pptm", ".xlsb", ".accdb", ".mdb",
+            ".jar", ".class",
+            ".sh", ".bash", ".zsh", ".fish", ".command",
+            ".py",  // as attachment (not source) can be dangerous
+            ".rb", ".pl", ".php",
+            ".iso", ".img", ".vhd", ".vmdk",
+        ])
+        || lower_mime.contains("application/x-msdownload")
+        || lower_mime.contains("application/x-executable")
+        || lower_mime.contains("application/x-dosexec");
+    if is_dangerous { return "dangerous".to_string(); }
+
+    // ── IMAGES ────────────────────────────────────────────────────────────────
+    let is_image = lower_mime.starts_with("image/")
+        || matches_any_ext(&lower_name, &[
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+            ".tif", ".tiff", ".heic", ".heif",
+            ".svg", ".ico", ".cur",
+            ".raw", ".cr2", ".cr3", ".nef", ".nrw", ".arw", ".orf", ".rw2", ".dng",
+            ".psd", ".psb", ".ai", ".eps",
+            ".avif", ".jxl", ".apng",
+        ]);
+    if is_image { return "images".to_string(); }
+
+    // ── ARCHIVES ─────────────────────────────────────────────────────────────
+    let is_archive = lower_mime.contains("zip")
+        || lower_mime.contains("x-tar")
+        || lower_mime.contains("x-rar")
+        || lower_mime.contains("x-7z")
+        || lower_mime.contains("x-gzip")
+        || lower_mime.contains("x-bzip")
+        || matches_any_ext(&lower_name, &[
+            ".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".tbz2",
+            ".xz", ".txz", ".lz", ".lzma", ".zst",
+            ".cab", ".arj", ".ace", ".lha", ".lzh",
+            ".iso", ".dmg", ".pkg", ".deb", ".rpm",
+            ".war", ".ear", ".apk", ".ipa", ".appx",
+        ]);
+    if is_archive { return "archives".to_string(); }
+
+    // ── MEDIA (audio / video) ─────────────────────────────────────────────────
+    let is_media = lower_mime.starts_with("audio/")
+        || lower_mime.starts_with("video/")
+        || matches_any_ext(&lower_name, &[
+            ".mp3", ".wav", ".flac", ".aac", ".ogg", ".oga", ".m4a", ".wma", ".aiff", ".aif",
+            ".opus", ".mid", ".midi", ".amr", ".ra", ".rm",
+            ".mp4", ".avi", ".mov", ".mkv", ".wmv", ".flv", ".webm",
+            ".m4v", ".3gp", ".3g2", ".ts", ".mts", ".m2ts", ".vob",
+            ".ogv", ".f4v", ".asf",
+        ]);
+    if is_media { return "media".to_string(); }
+
+    // ── DOCUMENTS ────────────────────────────────────────────────────────────
+    let is_document = lower_mime.contains("pdf")
+        || lower_mime.contains("officedocument")
+        || lower_mime.contains("msword")
+        || lower_mime.contains("ms-excel")
+        || lower_mime.contains("ms-powerpoint")
+        || lower_mime.contains("opendocument")
+        || lower_mime.starts_with("text/")
+        || matches_any_ext(&lower_name, &[
+            // PDF
+            ".pdf",
+            // Microsoft Office
+            ".doc", ".docx", ".dot", ".dotx", ".dotm",
+            ".xls", ".xlsx", ".xlt", ".xltx", ".xlam",
+            ".ppt", ".pptx", ".pot", ".potx", ".ppsx", ".pps",
+            // OpenDocument
+            ".odt", ".ods", ".odp", ".odg", ".odf",
+            // Apple iWork
+            ".pages", ".numbers", ".key",
+            // Text / markup
+            ".txt", ".rtf", ".md", ".markdown", ".rst",
+            ".csv", ".tsv",
+            ".html", ".htm", ".xhtml", ".mhtml", ".mht",
+            ".xml", ".xsl", ".xslt",
+            ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+            ".log", ".nfo", ".diz",
+            // eBook
+            ".epub", ".mobi", ".azw", ".azw3",
+            // Email (as attachment)
+            ".eml", ".msg", ".mbox",
+        ]);
+    if is_document { return "documents".to_string(); }
+
+    // Default fallback — still show as documents rather than silent "other"
     "documents".to_string()
 }
+
+/// Check if filename ends with any of the given extensions
+fn matches_any_ext(lower_name: &str, exts: &[&str]) -> bool {
+    exts.iter().any(|e| lower_name.ends_with(e))
+}
+
+/// Classify using magic bytes when file data is available (more reliable than extension)
+pub fn classify_by_magic(data: &[u8], filename: &str, mime: &str) -> String {
+    if data.len() >= 4 {
+        // JPEG: FF D8 FF
+        if data.starts_with(&[0xFF, 0xD8, 0xFF]) { return "images".to_string(); }
+        // PNG: 89 50 4E 47
+        if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) { return "images".to_string(); }
+        // GIF: GIF8
+        if data.starts_with(b"GIF8") { return "images".to_string(); }
+        // BMP: BM
+        if data.starts_with(b"BM") { return "images".to_string(); }
+        // WEBP: RIFF....WEBP
+        if data.starts_with(b"RIFF") && data.len() >= 12 && &data[8..12] == b"WEBP" { return "images".to_string(); }
+        // PDF: %PDF-
+        if data.starts_with(b"%PDF-") { return "documents".to_string(); }
+        // ZIP / Office Open XML: PK\x03\x04
+        if data.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+            // Office Open XML is a ZIP — check filename for specifics
+            let ln = filename.to_lowercase();
+            if ln.ends_with(".docx") || ln.ends_with(".xlsx") || ln.ends_with(".pptx") {
+                return "documents".to_string();
+            }
+            return "archives".to_string();
+        }
+        // RAR: Rar!
+        if data.starts_with(b"Rar!") { return "archives".to_string(); }
+        // 7z: 37 7A BC AF
+        if data.starts_with(&[0x37, 0x7A, 0xBC, 0xAF]) { return "archives".to_string(); }
+        // gzip: 1F 8B
+        if data.starts_with(&[0x1F, 0x8B]) { return "archives".to_string(); }
+        // bzip2: BZh
+        if data.starts_with(b"BZh") { return "archives".to_string(); }
+        // Windows PE (exe/dll): MZ
+        if data.starts_with(b"MZ") { return "dangerous".to_string(); }
+        // ELF (Linux executable)
+        if data.starts_with(&[0x7F, 0x45, 0x4C, 0x46]) { return "dangerous".to_string(); }
+    }
+    // Fall back to extension+mime based classification
+    classify_attachment_category(filename, mime, None, None)
+}
+
 
 #[tauri::command]
 pub async fn email_attachments(state: State<'_, AppState>, input: Value) -> Result<Vec<Attachment>, String> {
@@ -116,14 +227,14 @@ pub async fn case_attachments_summary(state: State<'_, AppState>, input: Value) 
         .unwrap_or("")
         .to_string();
 
-    let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare(
-        "SELECT a.filename, a.mime_type, a.entropy, a.risk_flags
-         FROM attachments a
-         JOIN emails e ON a.email_id = e.id
-         WHERE e.case_id = ?1"
-    ).map_err(|e| e.to_string())?;
+    let evidence_id = input["evidence_id"].as_str()
+        .or_else(|| input["evidenceId"].as_str())
+        .or_else(|| input["input"]["evidence_id"].as_str())
+        .or_else(|| input["input"]["evidenceId"].as_str())
+        .filter(|s| !s.trim().is_empty() && *s != "all");
 
+    let db = state.db.lock().await;
+    
     let mut counts = AttachmentCategoryCounts {
         all: 0,
         dangerous: 0,
@@ -133,23 +244,59 @@ pub async fn case_attachments_summary(state: State<'_, AppState>, input: Value) 
         media: 0,
     };
 
-    let rows = stmt.query_map([&case_id], |row| {
-        let filename: String = row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "attachment.bin".to_string());
-        let mime: String = row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "application/octet-stream".to_string());
-        let entropy: Option<f64> = row.get(2)?;
-        let risk_flags: Option<String> = row.get(3)?;
-        Ok(classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref()))
-    }).map_err(|e| e.to_string())?;
+    if let Some(ev_id) = evidence_id {
+        let mut stmt = db.conn.prepare(
+            "SELECT a.filename, a.mime_type, a.entropy, a.risk_flags
+             FROM attachments a
+             JOIN emails e ON a.email_id = e.id
+             WHERE e.case_id = ?1 AND e.evidence_id = ?2"
+        ).map_err(|e| e.to_string())?;
 
-    for r in rows.flatten() {
-        counts.all += 1;
-        match r.as_str() {
-            "dangerous" => counts.dangerous += 1,
-            "images" => counts.images += 1,
-            "documents" => counts.documents += 1,
-            "archives" => counts.archives += 1,
-            "media" => counts.media += 1,
-            _ => counts.documents += 1,
+        let rows = stmt.query_map([&case_id, ev_id], |row| {
+            let filename: String = row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "attachment.bin".to_string());
+            let mime: String = row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "application/octet-stream".to_string());
+            let entropy: Option<f64> = row.get(2)?;
+            let risk_flags: Option<String> = row.get(3)?;
+            Ok(classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref()))
+        }).map_err(|e| e.to_string())?;
+
+        for r in rows.flatten() {
+            counts.all += 1;
+            match r.as_str() {
+                "dangerous" => counts.dangerous += 1,
+                "images" => counts.images += 1,
+                "documents" => counts.documents += 1,
+                "archives" => counts.archives += 1,
+                "media" => counts.media += 1,
+                _ => counts.documents += 1,
+            }
+        }
+    } else {
+        let mut stmt = db.conn.prepare(
+            "SELECT a.filename, a.mime_type, a.entropy, a.risk_flags
+             FROM attachments a
+             JOIN emails e ON a.email_id = e.id
+             WHERE e.case_id = ?1"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([&case_id], |row| {
+            let filename: String = row.get::<_, Option<String>>(0)?.unwrap_or_else(|| "attachment.bin".to_string());
+            let mime: String = row.get::<_, Option<String>>(1)?.unwrap_or_else(|| "application/octet-stream".to_string());
+            let entropy: Option<f64> = row.get(2)?;
+            let risk_flags: Option<String> = row.get(3)?;
+            Ok(classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref()))
+        }).map_err(|e| e.to_string())?;
+
+        for r in rows.flatten() {
+            counts.all += 1;
+            match r.as_str() {
+                "dangerous" => counts.dangerous += 1,
+                "images" => counts.images += 1,
+                "documents" => counts.documents += 1,
+                "archives" => counts.archives += 1,
+                "media" => counts.media += 1,
+                _ => counts.documents += 1,
+            }
         }
     }
 
@@ -166,6 +313,12 @@ pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> 
         .unwrap_or("")
         .to_string();
 
+    let evidence_id = input["evidence_id"].as_str()
+        .or_else(|| input["evidenceId"].as_str())
+        .or_else(|| input["input"]["evidence_id"].as_str())
+        .or_else(|| input["input"]["evidenceId"].as_str())
+        .filter(|s| !s.trim().is_empty() && *s != "all");
+
     let category = input["category"].as_str()
         .or_else(|| input["input"]["category"].as_str())
         .unwrap_or("all");
@@ -176,41 +329,82 @@ pub async fn case_attachments_list(state: State<'_, AppState>, input: Value) -> 
         .to_lowercase();
 
     let db = state.db.lock().await;
-    let mut stmt = db.conn.prepare(
-        "SELECT a.id, a.email_id, a.filename, a.sha256, a.mime_type, a.size_bytes, 
-                a.stored_path, a.entropy, a.risk_flags,
-                e.subject, e.from_addr, e.date_sent_utc, e.risk_score
-         FROM attachments a
-         JOIN emails e ON a.email_id = e.id
-         WHERE e.case_id = ?1
-         ORDER BY a.size_bytes DESC"
-    ).map_err(|e| e.to_string())?;
 
-    let items = stmt.query_map([&case_id], |row| {
-        let filename: String = row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "attachment.bin".to_string());
-        let mime: String = row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "application/octet-stream".to_string());
-        let entropy: Option<f64> = row.get(7)?;
-        let risk_flags: Option<String> = row.get(8)?;
+    let items = if let Some(ev_id) = evidence_id {
+        let mut stmt = db.conn.prepare(
+            "SELECT a.id, a.email_id, a.filename, a.sha256, a.mime_type, a.size_bytes, 
+                    a.stored_path, a.entropy, a.risk_flags,
+                    e.subject, e.from_addr, e.date_sent_utc, e.risk_score
+             FROM attachments a
+             JOIN emails e ON a.email_id = e.id
+             WHERE e.case_id = ?1 AND e.evidence_id = ?2
+             ORDER BY a.size_bytes DESC"
+        ).map_err(|e| e.to_string())?;
 
-        let cat = classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref());
+        let rows = stmt.query_map([&case_id, ev_id], |row| {
+            let filename: String = row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "attachment.bin".to_string());
+            let mime: String = row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "application/octet-stream".to_string());
+            let entropy: Option<f64> = row.get(7)?;
+            let risk_flags: Option<String> = row.get(8)?;
 
-        Ok(CaseAttachmentItem {
-            id: row.get(0)?,
-            email_id: row.get(1)?,
-            filename,
-            sha256: row.get(3)?,
-            mime_type: mime,
-            size_bytes: row.get::<_, i64>(5)? as u64,
-            stored_path: row.get(6)?,
-            entropy,
-            risk_flags,
-            email_subject: row.get(9)?,
-            email_from: row.get::<_, Option<String>>(10)?.unwrap_or_default(),
-            email_date: row.get(11)?,
-            email_risk_score: row.get::<_, Option<i64>>(12)?.unwrap_or(0) as u8,
-            category: cat,
-        })
-    }).map_err(|e| e.to_string())?.filter_map(|r| r.ok()).collect::<Vec<_>>();
+            let cat = classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref());
+
+            Ok(CaseAttachmentItem {
+                id: row.get(0)?,
+                email_id: row.get(1)?,
+                filename,
+                sha256: row.get(3)?,
+                mime_type: mime,
+                size_bytes: row.get::<_, i64>(5)? as u64,
+                stored_path: row.get(6)?,
+                entropy,
+                risk_flags,
+                email_subject: row.get(9)?,
+                email_from: row.get::<_, Option<String>>(10)?.unwrap_or_default(),
+                email_date: row.get(11)?,
+                email_risk_score: row.get::<_, Option<u8>>(12)?.unwrap_or(0),
+                category: cat,
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
+    } else {
+        let mut stmt = db.conn.prepare(
+            "SELECT a.id, a.email_id, a.filename, a.sha256, a.mime_type, a.size_bytes, 
+                    a.stored_path, a.entropy, a.risk_flags,
+                    e.subject, e.from_addr, e.date_sent_utc, e.risk_score
+             FROM attachments a
+             JOIN emails e ON a.email_id = e.id
+             WHERE e.case_id = ?1
+             ORDER BY a.size_bytes DESC"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map([&case_id], |row| {
+            let filename: String = row.get::<_, Option<String>>(2)?.unwrap_or_else(|| "attachment.bin".to_string());
+            let mime: String = row.get::<_, Option<String>>(4)?.unwrap_or_else(|| "application/octet-stream".to_string());
+            let entropy: Option<f64> = row.get(7)?;
+            let risk_flags: Option<String> = row.get(8)?;
+
+            let cat = classify_attachment_category(&filename, &mime, entropy, risk_flags.as_deref());
+
+            Ok(CaseAttachmentItem {
+                id: row.get(0)?,
+                email_id: row.get(1)?,
+                filename,
+                sha256: row.get(3)?,
+                mime_type: mime,
+                size_bytes: row.get::<_, i64>(5)? as u64,
+                stored_path: row.get(6)?,
+                entropy,
+                risk_flags,
+                email_subject: row.get(9)?,
+                email_from: row.get::<_, Option<String>>(10)?.unwrap_or_default(),
+                email_date: row.get(11)?,
+                email_risk_score: row.get::<_, Option<u8>>(12)?.unwrap_or(0),
+                category: cat,
+            })
+        }).map_err(|e| e.to_string())?;
+        rows.filter_map(|r| r.ok()).collect::<Vec<_>>()
+    };
 
     let filtered = items.into_iter().filter(|item| {
         if category != "all" && item.category != category {
@@ -315,18 +509,55 @@ pub async fn get_attachment_preview(
         if !path_str.is_empty() {
             let path = std::path::Path::new(&path_str);
             if path.exists() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+
+                // ── PDF thumbnail via macOS Quick Look ──────────────────────────────
+                if ext == "pdf" {
+                    let tmp_dir = std::env::temp_dir().join(format!("j12_ql_{}", attachment_id));
+                    let _ = std::fs::create_dir_all(&tmp_dir);
+
+                    let output = std::process::Command::new("qlmanage")
+                        .args(["-t", "-s", "300", "-o"])
+                        .arg(&tmp_dir)
+                        .arg(path)
+                        .output();
+
+                    if let Ok(out) = output {
+                        if out.status.success() {
+                            // qlmanage writes <filename>.png inside tmp_dir
+                            if let Ok(entries) = std::fs::read_dir(&tmp_dir) {
+                                for entry in entries.flatten() {
+                                    let ep = entry.path();
+                                    if ep.extension().map(|e| e == "png").unwrap_or(false) {
+                                        if let Ok(data) = std::fs::read(&ep) {
+                                            use base64::Engine;
+                                            let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                                            let _ = std::fs::remove_dir_all(&tmp_dir);
+                                            return Ok(Some(format!("data:image/png;base64,{}", b64)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let _ = std::fs::remove_dir_all(&tmp_dir);
+                    }
+                    return Ok(None);
+                }
+
+                // ── Image types: read and base64 encode directly ────────────────────
+                let mime = match ext.as_str() {
+                    "jpg" | "jpeg" => "image/jpeg",
+                    "png"  => "image/png",
+                    "gif"  => "image/gif",
+                    "webp" => "image/webp",
+                    "svg"  => "image/svg+xml",
+                    "bmp"  => "image/bmp",
+                    "ico"  => "image/x-icon",
+                    "tif" | "tiff" => "image/tiff",
+                    _ => return Ok(None), // non-image, non-pdf — no preview
+                };
+
                 if let Ok(data) = std::fs::read(path) {
-                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-                    let mime = match ext.as_str() {
-                        "jpg" | "jpeg" => "image/jpeg",
-                        "png" => "image/png",
-                        "gif" => "image/gif",
-                        "webp" => "image/webp",
-                        "svg" => "image/svg+xml",
-                        "bmp" => "image/bmp",
-                        "ico" => "image/x-icon",
-                        _ => "application/octet-stream",
-                    };
                     use base64::Engine;
                     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
                     return Ok(Some(format!("data:{};base64,{}", mime, b64)));
@@ -415,4 +646,96 @@ pub async fn reveal_in_finder(
         }
     }
     Err("Attachment file path not found on disk".to_string())
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+pub struct InlineImageData {
+    pub attachment_id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub data_url: String,
+}
+
+/// Returns all image attachments for an email as base64 data URLs
+/// so the frontend can resolve cid: references in the HTML body.
+#[tauri::command]
+pub async fn get_email_inline_images(
+    state: tauri::State<'_, crate::AppState>,
+    input: serde_json::Value,
+) -> Result<Vec<InlineImageData>, String> {
+    let email_id: String = match input["email_id"].as_str()
+        .or_else(|| input["emailId"].as_str())
+        .or_else(|| input["id"].as_str())
+        .or_else(|| input["input"]["email_id"].as_str())
+        .or_else(|| input["input"]["emailId"].as_str())
+        .or_else(|| input["input"]["id"].as_str())
+        .or_else(|| input.as_str())
+    {
+        Some(s) if !s.is_empty() => s.to_owned(),
+        _ => return Ok(vec![]),
+    };
+
+    let rows: Vec<(String, String, String, Option<String>)> = {
+        let db = state.db.lock().await;
+        let mut stmt = db.conn.prepare(
+            "SELECT id, filename, mime_type, stored_path FROM attachments
+             WHERE email_id = ?1
+               AND (mime_type LIKE 'image/%'
+                    OR filename LIKE '%.jpg' OR filename LIKE '%.jpeg'
+                    OR filename LIKE '%.png' OR filename LIKE '%.gif'
+                    OR filename LIKE '%.webp' OR filename LIKE '%.bmp'
+                    OR filename LIKE '%.tif' OR filename LIKE '%.tiff')"
+        ).map_err(|e| e.to_string())?;
+
+        let rows: Vec<_> = stmt.query_map([&email_id as &str], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+        rows
+    };
+
+    let mut results = Vec::new();
+    for (att_id, filename, mime_type, stored_path) in rows {
+        if let Some(path_str) = stored_path {
+            if !path_str.is_empty() {
+                let path = std::path::Path::new(&path_str);
+                if path.exists() {
+                    if let Ok(data) = std::fs::read(path) {
+                        use base64::Engine;
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+                        let ext = path.extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_lowercase();
+                        let resolved_mime = if mime_type.starts_with("image/") {
+                            mime_type.clone()
+                        } else {
+                            match ext.as_str() {
+                                "jpg" | "jpeg" => "image/jpeg".to_string(),
+                                "png"  => "image/png".to_string(),
+                                "gif"  => "image/gif".to_string(),
+                                "webp" => "image/webp".to_string(),
+                                "bmp"  => "image/bmp".to_string(),
+                                _ => "image/png".to_string(),
+                            }
+                        };
+                        results.push(InlineImageData {
+                            attachment_id: att_id,
+                            filename,
+                            mime_type: resolved_mime.clone(),
+                            data_url: format!("data:{};base64,{}", resolved_mime, b64),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(results)
 }

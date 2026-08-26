@@ -587,11 +587,28 @@ pub fn sha256_data(data: &[u8]) -> String {
 
 /// Extract boundary string from Content-Type header
 fn extract_boundary(content_type: &str) -> Option<String> {
-    if let Some(idx) = content_type.find("boundary=") {
-        let rest = &content_type[idx + 9..];
-        let boundary = rest.trim_matches('"').trim_matches('\'').trim();
-        if !boundary.is_empty() {
-            return Some(boundary.to_string());
+    let ct_lower = content_type.to_lowercase();
+    if let Some(idx) = ct_lower.find("boundary=") {
+        let rest = &content_type[idx + 9..].trim_start();
+        if rest.starts_with('"') {
+            if let Some(end_quote) = rest[1..].find('"') {
+                let b = &rest[1..=end_quote];
+                if !b.is_empty() {
+                    return Some(b.to_string());
+                }
+            }
+        } else if rest.starts_with('\'') {
+            if let Some(end_quote) = rest[1..].find('\'') {
+                let b = &rest[1..=end_quote];
+                if !b.is_empty() {
+                    return Some(b.to_string());
+                }
+            }
+        } else {
+            let b = rest.split(|c: char| c == ';' || c == ' ' || c == '\t' || c == '\r' || c == '\n').next().unwrap_or(rest).trim();
+            if !b.is_empty() {
+                return Some(b.to_string());
+            }
         }
     }
     None
@@ -723,25 +740,38 @@ fn base64_decode(input: &str) -> Vec<u8> {
     }
 }
 
-/// Simple quoted-printable decode
+/// Robust quoted-printable decode supporting CRLF, LF, and hex octets
 fn qp_decode(input: &str) -> Vec<u8> {
     let mut result = Vec::new();
-    let mut chars = input.chars().peekable();
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
     
-    while let Some(c) = chars.next() {
-        if c == '=' {
-            if let (Some(h), Some(l)) = (chars.next(), chars.next()) {
-                if h == '\r' || h == '\n' {
-                    // Soft line break, skip
+    while i < len {
+        if bytes[i] == b'=' {
+            if i + 2 < len && bytes[i + 1] == b'\r' && bytes[i + 2] == b'\n' {
+                // Soft line break CRLF
+                i += 3;
+                continue;
+            } else if i + 1 < len && (bytes[i + 1] == b'\n' || bytes[i + 1] == b'\r') {
+                // Soft line break LF or CR
+                i += 2;
+                continue;
+            } else if i + 2 < len {
+                let h1 = bytes[i + 1] as char;
+                let h2 = bytes[i + 2] as char;
+                if let Ok(byte) = u8::from_str_radix(&format!("{}{}", h1, h2), 16) {
+                    result.push(byte);
+                    i += 3;
                     continue;
                 }
-                let hex = format!("{}{}", h, l);
-                if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                    result.push(byte);
-                }
             }
+            // If invalid = escape, keep literal =
+            result.push(b'=');
+            i += 1;
         } else {
-            result.push(c as u8);
+            result.push(bytes[i]);
+            i += 1;
         }
     }
     

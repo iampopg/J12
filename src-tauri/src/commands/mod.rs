@@ -7,6 +7,8 @@ pub mod artifacts;
 pub mod analysis;
 pub mod reports;
 pub mod imap;
+pub mod pop3;
+pub mod bookmarks;
 
 // Re-export all commands for main.rs invoke handler
 pub use cases::*;
@@ -17,3 +19,5 @@ pub use artifacts::*;
 pub use analysis::*;
 pub use reports::*;
 pub use imap::*;
+pub use pop3::*;
+pub use bookmarks::*;
