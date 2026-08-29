@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { J12Logo } from "../components/J12Logo";
+import { ExaminerProfileButton } from "../components/ExaminerProfileButton";
 import { FooterSignature } from "../components/FooterSignature";
 
 interface Case {
@@ -107,8 +108,8 @@ export function CaseListPage({ onSelectCase }: { onSelectCase: (id: string) => v
         <div className="brand">
           <J12Logo size={32} showText={true} />
         </div>
-        <div className="row gap-4">
-          <span className="muted">admin · investigator</span>
+        <div className="row gap-4" style={{ alignItems: "center" }}>
+          <ExaminerProfileButton />
         </div>
       </header>
 

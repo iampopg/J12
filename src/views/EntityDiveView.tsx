@@ -1,176 +1,66 @@
 import { useState, useEffect, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
-import { BookmarkButton } from "../components/BookmarkButton";
 import { EmailDetailModal, EmailModalData } from "../components/EmailDetailModal";
+import {
+  Entity,
+  EntityDetail,
+  EntityEmail,
+  TabType,
+  EntityTier,
+  EntityDiveProps,
+} from "./entity_dive/types";
+import { EntityDirectorySidebar } from "./entity_dive/EntityDirectorySidebar";
+import { EntityProfileHeader } from "./entity_dive/EntityProfileHeader";
+import { EntityStatCards } from "./entity_dive/EntityStatCards";
+import { EntityCommunicationPartners } from "./entity_dive/EntityCommunicationPartners";
+import { EntityMessagesExplorer } from "./entity_dive/EntityMessagesExplorer";
 
-function cleanDisplayName(name: string | null): string {
-  if (!name) return "";
-  let cleaned = name
-    .replace(/@ENRON.*$/g, "")
-    .replace(/IMCEANOTES-[^<]*/g, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/"/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (cleaned.includes("@")) {
-    return cleaned.split("@")[0].trim() || cleaned;
-  }
-  return cleaned;
-}
-
-interface Entity {
-  id: string;
-  email_address: string;
-  display_name: string | null;
-  first_seen: string | null;
-  last_seen: string | null;
-  sent_count: number;
-  received_count: number;
-  role: string;
-  aliases?: string | null;
-}
-
-interface EntityDetail {
-  email: string;
-  display_name: string | null;
-  first_seen: string | null;
-  last_seen: string | null;
-  sent_count: number;
-  received_count: number;
-  deleted_count: number;
-  flagged_count: number;
-  total_count: number;
-  aliases: string[];
-  sent_to: [string, number][];
-  received_from: [string, number][];
-  top_subjects: [string, number][];
-}
-
-interface EntityEmail {
-  id: string;
-  evidence_id: string;
-  from_addr: string;
-  from_display: string | null;
-  to_addrs: string;
-  cc_addrs: string;
-  subject: string | null;
-  date_sent: string | null;
-  date_sent_utc: string;
-  risk_score: number;
-  folder_category: string;
-  is_deleted: boolean;
-  deleted_recovered: boolean;
-  body_text: string | null;
-  body_html?: string | null;
-  headers_raw: string | null;
-}
-
-export function isOrganizationOrService(email: string, displayName?: string | null, role?: string): boolean {
-  if (role === "organization" || role === "automated") return true;
-  if (role === "person") return false;
-
-  const local = (email.split("@")[0] || "").toLowerCase();
-  const domain = (email.split("@")[1] || "").toLowerCase();
-  const dname = (displayName || "").toLowerCase();
-
-  const orgPrefixes = [
-    "noreply", "no-reply", "no_reply", "donotreply", "do-not-reply",
-    "support", "help", "helpdesk", "info", "contact", "marketing", "sales",
-    "billing", "news", "newsletter", "newsdigest", "shop", "store", "orders",
-    "updates", "team", "hello", "hi", "admin", "system", "mailer-daemon",
-    "daemon", "postmaster", "bounce", "security", "notification", "notifications",
-    "alert", "alerts", "alertsp", "pncalerts", "confirm", "confirmation",
-    "receipt", "receipts", "promo", "promotions", "reply", "feedback",
-    "accounts", "auth", "autonotify", "automated", "service", "services",
-    "welcome", "engage", "member", "membership", "digest", "daily", "weekly",
-    "investor", "press", "careers", "jobs", "privacy", "legal", "invoice",
-    "customer", "reps", "xboxreps", "huntingtononline", "online", "premium",
-    "informational", "extravaluechecks", "chase", "bounce-", "bounces", "aws-"
-  ];
-
-  for (const p of orgPrefixes) {
-    if (local === p || local.startsWith(p + "-") || local.startsWith(p + ".") || local.startsWith(p + "_") || local.includes(p)) {
-      return true;
-    }
-  }
-
-  if (
-    domain.includes(".mail.") ||
-    domain.includes(".emails.") ||
-    domain.includes(".e.") ||
-    domain.includes(".engage.") ||
-    domain.includes(".insideapple.") ||
-    domain.includes(".alertsp.") ||
-    domain.includes(".m.") ||
-    domain.endsWith("redditmail.com") ||
-    domain.endsWith("academia-mail.com") ||
-    domain.includes("e-mail.")
-  ) {
-    return true;
-  }
-
-  const orgDnameKeywords = [
-    "team", "support", "updates", "alerts", "notifications", "news", "customer", "security",
-    "renewals", "marketing", "department", "llc", "inc", "corp", "bank", "service", "store",
-    "digest", "accounts", "official", "mailer", "daemon"
-  ];
-  for (const kw of orgDnameKeywords) {
-    if (dname.includes(kw)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-type TabType = "all" | "sent" | "received" | "deleted" | "flagged" | "partners";
-type EntityTier = "people" | "organizations" | "all";
-
-interface Props {
-  caseId: string;
-  evidenceFilter?: string | null;
-  onSelectEmail?: (id: string) => void;
-}
-
-export function EntityDiveView({ caseId, evidenceFilter }: Props) {
+export function EntityDiveView({ caseId, evidenceFilter }: EntityDiveProps) {
   const [entities, setEntities] = useState<Entity[]>([]);
   const [selectedEntity, setSelectedEntity] = useState<EntityDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [diveLoading, setDiveLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [entityTier, setEntityTier] = useState<EntityTier>("people");
+  const [entityTier, setEntityTier] = useState<EntityTier>("key");
   const [sortOption, setSortOption] = useState<"total" | "sent" | "received" | "name">("total");
 
-  // Tab & Filter states
   const [activeTab, setActiveTab] = useState<TabType>("all");
   const [partnerFilter, setPartnerFilter] = useState<string>("");
   const [emailSearch, setEmailSearch] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [hasAttachment, setHasAttachment] = useState(false);
-  const [humanOnly, setHumanOnly] = useState(false);
 
-  // Email messages & Modal state
   const [emails, setEmails] = useState<EntityEmail[]>([]);
   const [emailsLoading, setEmailsLoading] = useState(false);
   const [selectedEmail, setSelectedEmail] = useState<EntityEmail | null>(null);
-  const [fullEmailData, setFullEmailData] = useState<EmailModalData | null>(null);
-  const [showFullModal, setShowFullModal] = useState(false);
+  const [modalEmail, setModalEmail] = useState<EmailModalData | null>(null);
   const [settingTarget, setSettingTarget] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!selectedEmail) {
-      setFullEmailData(null);
+  const handleSelectEmail = async (em: EntityEmail) => {
+    if (selectedEmail?.id === em.id) {
+      setSelectedEmail(null);
       return;
     }
-    invoke<EmailModalData | null>("email_get", { input: { id: selectedEmail.id } })
-      .then((data) => {
-        if (data) setFullEmailData(data);
-      })
-      .catch((e) => console.error("Failed to load full email details:", e));
-  }, [selectedEmail]);
+    if (!em.body_text && !em.body_html) {
+      try {
+        const full = await invoke<any>("email_get", { id: em.id });
+        if (full) {
+          setSelectedEmail({
+            ...em,
+            body_text: full.body_text,
+            body_html: full.body_html,
+            headers_raw: full.headers_raw,
+          });
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to load full email body:", e);
+      }
+    }
+    setSelectedEmail(em);
+  };
 
   useEffect(() => {
     loadEntities();
@@ -179,15 +69,10 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
   const loadEntities = async () => {
     setLoading(true);
     try {
-      let data = await invoke<Entity[]>("entity_list", { 
-        input: { 
-          case_id: caseId,
-          evidence_id: evidenceFilter || undefined
-        } 
-      });
-      if (data.length === 0 && !evidenceFilter) {
+      let data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId, evidence_id: evidenceFilter || undefined } });
+      if (data.length === 0) {
         await invoke<number>("extract_entities", { input: { case_id: caseId } });
-        data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId } });
+        data = await invoke<Entity[]>("entity_list", { input: { case_id: caseId, evidence_id: evidenceFilter || undefined } });
       }
       setEntities(data);
     } catch (e) {
@@ -196,14 +81,6 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
       setLoading(false);
     }
   };
-
-  const peopleCount = useMemo(() => {
-    return entities.filter((e) => !isOrganizationOrService(e.email_address, e.display_name, e.role)).length;
-  }, [entities]);
-
-  const orgCount = useMemo(() => {
-    return entities.filter((e) => isOrganizationOrService(e.email_address, e.display_name, e.role)).length;
-  }, [entities]);
 
   const loadEntityDive = async (email: string) => {
     setDiveLoading(true);
@@ -216,10 +93,10 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
 
     try {
       const data = await invoke<EntityDetail>("entity_dive", {
-        input: { case_id: caseId, email_address: email },
+        input: { case_id: caseId, evidence_id: evidenceFilter || undefined, email_address: email },
       });
       setSelectedEntity(data);
-      loadEmailsForEntity(email, "all", "", "", "", false, "", humanOnly);
+      loadEmailsForEntity(email, "all", "", "", "", false, "");
     } catch (e) {
       console.error(e);
     } finally {
@@ -234,14 +111,14 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
     from: string,
     to: string,
     hasAtt: boolean,
-    query: string,
-    isHumanOnly: boolean = humanOnly
+    query: string
   ) => {
     setEmailsLoading(true);
     try {
       const data = await invoke<EntityEmail[]>("entity_emails", {
         input: {
           case_id: caseId,
+          evidence_id: evidenceFilter || undefined,
           email,
           filter_type: tab === "partners" ? "all" : tab,
           partner_email: partner,
@@ -249,10 +126,9 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
           date_from: from,
           date_to: to,
           has_attachment: hasAtt,
-          human_only: isHumanOnly,
         },
       });
-      setEmails(data || []);
+      setEmails(data);
     } catch (e) {
       console.error(e);
       setEmails([]);
@@ -267,25 +143,24 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
     from: string,
     to: string,
     hasAtt: boolean,
-    query: string,
-    isHumanOnly: boolean = humanOnly
+    query: string
   ) => {
     if (!selectedEntity) return;
-    loadEmailsForEntity(selectedEntity.email, tab, partner, from, to, hasAtt, query, isHumanOnly);
+    loadEmailsForEntity(selectedEntity.email, tab, partner, from, to, hasAtt, query);
   };
 
   const handleTabSelect = (tab: TabType) => {
     setActiveTab(tab);
-    handleFilterChange(tab, partnerFilter, dateFrom, dateTo, hasAttachment, emailSearch, humanOnly);
+    handleFilterChange(tab, partnerFilter, dateFrom, dateTo, hasAttachment, emailSearch);
   };
 
   const handlePartnerSelect = (partnerEmail: string) => {
     if (partnerFilter === partnerEmail) {
       setPartnerFilter("");
-      handleFilterChange(activeTab, "", dateFrom, dateTo, hasAttachment, emailSearch, humanOnly);
+      handleFilterChange(activeTab, "", dateFrom, dateTo, hasAttachment, emailSearch);
     } else {
       setPartnerFilter(partnerEmail);
-      handleFilterChange(activeTab, partnerEmail, dateFrom, dateTo, hasAttachment, emailSearch, humanOnly);
+      handleFilterChange(activeTab, partnerEmail, dateFrom, dateTo, hasAttachment, emailSearch);
     }
   };
 
@@ -321,6 +196,27 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
     }
   };
 
+  // Dynamically detect primary organization domain from case entities
+  const primaryDomain = useMemo(() => {
+    const domainCounts = new Map<string, number>();
+    for (const e of entities) {
+      const parts = e.email_address.split("@");
+      if (parts.length === 2) {
+        const domain = parts[1].toLowerCase();
+        domainCounts.set(domain, (domainCounts.get(domain) || 0) + (e.sent_count + e.received_count));
+      }
+    }
+    let topDomain = "";
+    let topCount = 0;
+    for (const [dom, count] of domainCounts.entries()) {
+      if (count > topCount) {
+        topCount = count;
+        topDomain = dom;
+      }
+    }
+    return topDomain;
+  }, [entities]);
+
   const filteredEntities = useMemo(() => {
     let result = entities.filter((e) => {
       const matchSearch =
@@ -329,11 +225,13 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
         (e.aliases || "").toLowerCase().includes(searchTerm.toLowerCase());
       if (!matchSearch) return false;
 
-      const isOrg = isOrganizationOrService(e.email_address, e.display_name, e.role);
-      if (entityTier === "people") {
-        return !isOrg;
-      } else if (entityTier === "organizations") {
-        return isOrg;
+      const total = e.sent_count + e.received_count;
+      const isAuto = /^(noreply|no-reply|donotreply|notifications|news|info|marketing|alerts|support|hello|shop|order|billing)@/i.test(e.email_address);
+
+      if (entityTier === "key") {
+        return (total >= 5 && !isAuto) || (e.sent_count > 0 && e.received_count > 0) || total >= 50;
+      } else if (entityTier === "internal") {
+        return primaryDomain ? e.email_address.toLowerCase().endsWith(`@${primaryDomain}`) : total >= 10;
       }
       return true;
     });
@@ -371,22 +269,23 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
 
   return (
     <div>
+      {/* Top Header */}
       <div className="row between mb-4">
         <div>
           <h2 style={{ fontSize: 22, fontWeight: 700, color: "var(--text-0)" }}>
-            Entity Profiles & Person Resolution
+            Entity Profiles &amp; Person Resolution
           </h2>
           <p className="muted" style={{ fontSize: 12 }}>
-            Unified correspondents categorized into Individual People vs. Organizations & Automated Services.
+            Unified person profiles merging Exchange accounts, aliases, and corporate addresses into single individuals.
           </p>
         </div>
         <div className="row gap-2">
           <button
             className="btn btn-primary btn-sm"
             onClick={handleReExtract}
-            title="Re-extract, resolve, and classify all entities into people vs organizations"
+            title="Re-extract, resolve, and unify all entities and aliases"
           >
-            ⚡ Re-Extract & Unify
+            ⚡ Re-Extract &amp; Unify
           </button>
           <button className="btn btn-ghost btn-sm" onClick={loadEntities}>
             ↻ Refresh
@@ -394,229 +293,26 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "360px 1fr",
-          gap: 16,
-          alignItems: "start",
-        }}
-      >
-        <div
-          className="card"
-          style={{
-            padding: 14,
-            maxHeight: "82vh",
-            display: "flex",
-            flexDirection: "column",
-            marginBottom: 0,
-          }}
-        >
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1.2fr 0.8fr",
-              gap: 4,
-              background: "var(--bg-3)",
-              padding: 3,
-              borderRadius: "var(--r-sm)",
-              marginBottom: 10,
-            }}
-          >
-            <button
-              type="button"
-              style={{
-                padding: "5px 6px",
-                fontSize: 11,
-                fontWeight: 600,
-                border: "none",
-                borderRadius: "var(--r-xs)",
-                background: entityTier === "people" ? "var(--accent)" : "transparent",
-                color: entityTier === "people" ? "#fff" : "var(--text-2)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
-              }}
-              onClick={() => setEntityTier("people")}
-              title="Individual human persons, personal emails, and direct contacts"
-            >
-              <span>👤 People</span>
-              <span style={{ opacity: 0.8, fontSize: 10 }}>({peopleCount})</span>
-            </button>
-            <button
-              type="button"
-              style={{
-                padding: "5px 6px",
-                fontSize: 11,
-                fontWeight: 600,
-                border: "none",
-                borderRadius: "var(--r-xs)",
-                background: entityTier === "organizations" ? "var(--accent)" : "transparent",
-                color: entityTier === "organizations" ? "#fff" : "var(--text-2)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
-              }}
-              onClick={() => setEntityTier("organizations")}
-              title="Organizations, services, newsletters, and automated bot accounts"
-            >
-              <span>🏢 Org / Services</span>
-              <span style={{ opacity: 0.8, fontSize: 10 }}>({orgCount})</span>
-            </button>
-            <button
-              type="button"
-              style={{
-                padding: "5px 6px",
-                fontSize: 11,
-                fontWeight: 600,
-                border: "none",
-                borderRadius: "var(--r-xs)",
-                background: entityTier === "all" ? "var(--accent)" : "transparent",
-                color: entityTier === "all" ? "#fff" : "var(--text-2)",
-                cursor: "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 4,
-              }}
-              onClick={() => setEntityTier("all")}
-              title="All entities without filtering"
-            >
-              <span>All ({entities.length})</span>
-            </button>
-          </div>
+      <div style={{ display: "grid", gridTemplateColumns: "350px 1fr", gap: 16, alignItems: "start" }}>
+        {/* Left Column: Entity Directory */}
+        <EntityDirectorySidebar
+          entitiesCount={entities.length}
+          filteredEntities={filteredEntities}
+          selectedEmail={selectedEntity?.email}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          entityTier={entityTier}
+          setEntityTier={setEntityTier}
+          sortOption={sortOption}
+          setSortOption={setSortOption}
+          onSelectEntity={loadEntityDive}
+        />
 
-          <div className="mb-2">
-            <input
-              className="input mb-2"
-              style={{ fontSize: 12, padding: "6px 10px" }}
-              placeholder="Search name, email, domain..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-            <select
-              className="select input"
-              style={{ fontSize: 11, padding: "5px 8px" }}
-              value={sortOption}
-              onChange={(e) => setSortOption(e.target.value as any)}
-            >
-              <option value="total">Sort: Total Messages (High → Low)</option>
-              <option value="sent">Sort: Sent Count (High → Low)</option>
-              <option value="received">Sort: Received Count (High → Low)</option>
-              <option value="name">Sort: Name (A → Z)</option>
-            </select>
-          </div>
-
-          <div style={{ fontSize: 11, color: "var(--text-3)", marginBottom: 8, paddingLeft: 4 }}>
-            Showing <strong>{filteredEntities.length}</strong> {entityTier === "people" ? "individual persons" : entityTier === "organizations" ? "organizations & services" : "entities"}
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-              paddingRight: 4,
-            }}
-          >
-            {filteredEntities.map((e) => {
-              const isSelected = selectedEntity?.email === e.email_address;
-              const isOrg = isOrganizationOrService(e.email_address, e.display_name, e.role);
-              const total = e.sent_count + e.received_count;
-              const initial = (e.display_name || e.email_address).charAt(0).toUpperCase();
-
-              return (
-                <div
-                  key={e.id}
-                  className="tr-click"
-                  style={{
-                    padding: "8px 10px",
-                    borderRadius: "var(--r-md)",
-                    background: isSelected ? "var(--accent-subtle)" : "var(--bg-3)",
-                    border: isSelected ? "1px solid var(--accent)" : "1px solid transparent",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    transition: "all 0.15s",
-                  }}
-                  onClick={() => loadEntityDive(e.email_address)}
-                >
-                  <div
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: "50%",
-                      background: isOrg
-                        ? "linear-gradient(135deg, #64748b, #475569)"
-                        : "linear-gradient(135deg, #3b82f6, #6366f1)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: isOrg ? 14 : 13,
-                      color: "#fff",
-                      fontWeight: 700,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {isOrg ? "🏢" : initial}
-                  </div>
-
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontSize: 12,
-                        fontWeight: 600,
-                        color: isSelected ? "var(--accent)" : "var(--text-0)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {cleanDisplayName(e.display_name) || e.email_address}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "var(--text-3)",
-                        fontFamily: "var(--mono)",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {e.email_address}
-                    </div>
-                  </div>
-
-                  <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <span
-                      className="badge"
-                      style={{
-                        background: isSelected ? "var(--accent)" : "var(--bg-4)",
-                        color: isSelected ? "#fff" : "var(--text-1)",
-                        fontSize: 10,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {total.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
+        {/* Right Column: Selected Entity Investigation Hub */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {diveLoading ? (
             <div className="card" style={{ padding: 48, textAlign: "center" }}>
-              <div className="empty">Loading entity profile...</div>
+              <div className="empty">Loading unified person profile...</div>
             </div>
           ) : selectedEntity ? (
             <>
@@ -635,680 +331,72 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
                   {notification}
                 </div>
               )}
-              <div
-                className="card mb-0"
-                style={{
-                  padding: 20,
-                  borderLeft: isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
-                    ? "4px solid #94a3b8"
-                    : "4px solid var(--accent)",
-                  background: "var(--bg-2)",
+
+              <EntityProfileHeader
+                selectedEntity={selectedEntity}
+                onSetAsTarget={handleSetAsTarget}
+                settingTarget={settingTarget}
+              />
+
+              <EntityStatCards
+                selectedEntity={selectedEntity}
+                activeTab={activeTab}
+                onTabSelect={handleTabSelect}
+              />
+
+              <EntityCommunicationPartners
+                selectedEntity={selectedEntity}
+                partnerFilter={partnerFilter}
+                onPartnerSelect={handlePartnerSelect}
+              />
+
+              <EntityMessagesExplorer
+                caseId={caseId}
+                activeTab={activeTab}
+                emails={emails}
+                emailsLoading={emailsLoading}
+                partnerFilter={partnerFilter}
+                onClearPartner={() => handlePartnerSelect("")}
+                hasAttachment={hasAttachment}
+                onToggleAttachment={(checked) => {
+                  setHasAttachment(checked);
+                  handleFilterChange(activeTab, partnerFilter, dateFrom, dateTo, checked, emailSearch);
                 }}
-              >
-                <div className="row between" style={{ alignItems: "flex-start" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                    <div
-                      style={{
-                        width: 56,
-                        height: 56,
-                        borderRadius: "50%",
-                        background: isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
-                          ? "linear-gradient(135deg, #64748b, #475569)"
-                          : "linear-gradient(135deg, #3b82f6, #6366f1)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: isOrganizationOrService(selectedEntity.email, selectedEntity.display_name) ? 26 : 22,
-                        color: "#fff",
-                        fontWeight: 700,
-                        boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
-                      }}
-                    >
-                      {isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
-                        ? "🏢"
-                        : ((selectedEntity.display_name || selectedEntity.email || "P").charAt(0) || "P").toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="row gap-2" style={{ alignItems: "center" }}>
-                        <h3 style={{ fontSize: 20, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
-                          {cleanDisplayName(selectedEntity.display_name) || selectedEntity.email || "Unknown Entity"}
-                        </h3>
-                        <span
-                          className={`badge ${
-                            isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
-                              ? "badge-gray"
-                              : "badge-blue"
-                          }`}
-                          style={{ fontSize: 10 }}
-                        >
-                          {isOrganizationOrService(selectedEntity.email, selectedEntity.display_name)
-                            ? "🏢 ORGANIZATION / SERVICE"
-                            : "👤 INDIVIDUAL PERSON"}
-                        </span>
-                      </div>
-                      <p
-                        style={{
-                          fontSize: 13,
-                          color: "var(--accent)",
-                          fontFamily: "var(--mono)",
-                          margin: "4px 0 0 0",
-                        }}
-                      >
-                        {selectedEntity.email}
-                      </p>
-
-                      {selectedEntity.aliases && selectedEntity.aliases.length > 0 && (
-                        <div className="row gap-1 mb-2" style={{ flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600 }}>
-                            🔗 Unified Aliases:
-                          </span>
-                          {selectedEntity.aliases.map((alias) => (
-                            <span
-                              key={alias}
-                              className="badge"
-                              style={{
-                                fontSize: 10,
-                                fontFamily: "var(--mono)",
-                                background: "var(--bg-4)",
-                                color: "var(--text-2)",
-                              }}
-                            >
-                              {alias}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      <div className="row gap-3" style={{ fontSize: 11, color: "var(--text-3)" }}>
-                        <span>
-                          📅 First Seen:{" "}
-                          <strong>
-                            {selectedEntity.first_seen
-                              ? new Date(selectedEntity.first_seen).toLocaleDateString()
-                              : "—"}
-                          </strong>
-                        </span>
-                        <span>·</span>
-                        <span>
-                          📅 Last Seen:{" "}
-                          <strong>
-                            {selectedEntity.last_seen
-                              ? new Date(selectedEntity.last_seen).toLocaleDateString()
-                              : "—"}
-                          </strong>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="row gap-2">
-                    <button
-                      className="btn btn-primary btn-sm"
-                      onClick={handleSetAsTarget}
-                      disabled={settingTarget}
-                      title="Set this person as the primary target for this case"
-                    >
-                      🎯 {settingTarget ? "Setting..." : "Set as Target Profile"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Category Filter Tabs */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(5, 1fr)",
-                  gap: 8,
+                emailSearch={emailSearch}
+                onSearchChange={(val) => {
+                  setEmailSearch(val);
+                  handleFilterChange(activeTab, partnerFilter, dateFrom, dateTo, hasAttachment, val);
                 }}
-              >
-                <div
-                  className="tr-click"
-                  style={{
-                    padding: "12px 14px",
-                    background: activeTab === "all" ? "var(--accent-subtle)" : "var(--bg-2)",
-                    border: activeTab === "all" ? "1px solid var(--accent)" : "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    textAlign: "center",
-                  }}
-                  onClick={() => handleTabSelect("all")}
-                >
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text-0)" }}>
-                    {selectedEntity.total_count}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600, marginTop: 2 }}>
-                    ALL MESSAGES
-                  </div>
-                </div>
-
-                <div
-                  className="tr-click"
-                  style={{
-                    padding: "12px 14px",
-                    background: activeTab === "sent" ? "rgba(59,130,246,0.15)" : "var(--bg-2)",
-                    border: activeTab === "sent" ? "1px solid #3b82f6" : "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    textAlign: "center",
-                  }}
-                  onClick={() => handleTabSelect("sent")}
-                >
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#3b82f6" }}>
-                    {selectedEntity.sent_count}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600, marginTop: 2 }}>
-                    SENT BY THIS PERSON
-                  </div>
-                </div>
-
-                <div
-                  className="tr-click"
-                  style={{
-                    padding: "12px 14px",
-                    background: activeTab === "received" ? "rgba(34,197,94,0.15)" : "var(--bg-2)",
-                    border: activeTab === "received" ? "1px solid #22c55e" : "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    textAlign: "center",
-                  }}
-                  onClick={() => handleTabSelect("received")}
-                >
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#22c55e" }}>
-                    {selectedEntity.received_count}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600, marginTop: 2 }}>
-                    RECEIVED (TO / CC)
-                  </div>
-                </div>
-
-                <div
-                  className="tr-click"
-                  style={{
-                    padding: "12px 14px",
-                    background: activeTab === "deleted" ? "rgba(239,68,68,0.15)" : "var(--bg-2)",
-                    border: activeTab === "deleted" ? "1px solid #ef4444" : "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    textAlign: "center",
-                  }}
-                  onClick={() => handleTabSelect("deleted")}
-                >
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#ef4444" }}>
-                    {selectedEntity.deleted_count}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600, marginTop: 2 }}>
-                    DELETED / RECOVERED
-                  </div>
-                </div>
-
-                <div
-                  className="tr-click"
-                  style={{
-                    padding: "12px 14px",
-                    background: activeTab === "flagged" ? "rgba(234,179,8,0.15)" : "var(--bg-2)",
-                    border: activeTab === "flagged" ? "1px solid #eab308" : "1px solid var(--border)",
-                    borderRadius: "var(--r-md)",
-                    textAlign: "center",
-                  }}
-                  onClick={() => handleTabSelect("flagged")}
-                >
-                  <div style={{ fontSize: 18, fontWeight: 700, color: "#eab308" }}>
-                    {selectedEntity.flagged_count}
-                  </div>
-                  <div style={{ fontSize: 10, color: "var(--text-3)", fontWeight: 600, marginTop: 2 }}>
-                    FLAGGED / HIGH RISK
-                  </div>
-                </div>
-              </div>
-
-              {/* Communication Partners & Top Subjects Row */}
-              <div className="grid-2 mb-0" style={{ gap: 16 }}>
-                {/* Top Sent To */}
-                <div className="card mb-0" style={{ padding: 16 }}>
-                  <div className="row between mb-2">
-                    <strong style={{ fontSize: 12, color: "var(--text-0)" }}>
-                      📤 Communicated / Sent To (Click to Filter)
-                    </strong>
-                  </div>
-                  {selectedEntity.sent_to.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {selectedEntity.sent_to.map(([email, count]) => {
-                        const isPartnerSelected = partnerFilter === email;
-                        return (
-                          <div
-                            key={email}
-                            className="row between tr-click"
-                            style={{
-                              padding: "6px 8px",
-                              borderRadius: "var(--r-sm)",
-                              background: isPartnerSelected
-                                ? "var(--accent-subtle)"
-                                : "var(--bg-3)",
-                              border: isPartnerSelected
-                                ? "1px solid var(--accent)"
-                                : "1px solid transparent",
-                            }}
-                            onClick={() => handlePartnerSelect(email)}
-                          >
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontFamily: "var(--mono)",
-                                color: isPartnerSelected ? "var(--accent)" : "var(--text-1)",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {email}
-                            </span>
-                            <span className="badge badge-blue">{count}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="muted text-sm">No sent communications</div>
-                  )}
-                </div>
-
-                {/* Top Received From */}
-                <div className="card mb-0" style={{ padding: 16 }}>
-                  <div className="row between mb-2">
-                    <strong style={{ fontSize: 12, color: "var(--text-0)" }}>
-                      📥 Received From (Click to Filter)
-                    </strong>
-                  </div>
-                  {selectedEntity.received_from.length > 0 ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                      {selectedEntity.received_from.map(([email, count]) => {
-                        const isPartnerSelected = partnerFilter === email;
-                        return (
-                          <div
-                            key={email}
-                            className="row between tr-click"
-                            style={{
-                              padding: "6px 8px",
-                              borderRadius: "var(--r-sm)",
-                              background: isPartnerSelected
-                                ? "var(--accent-subtle)"
-                                : "var(--bg-3)",
-                              border: isPartnerSelected
-                                ? "1px solid var(--accent)"
-                                : "1px solid transparent",
-                            }}
-                            onClick={() => handlePartnerSelect(email)}
-                          >
-                            <span
-                              style={{
-                                fontSize: 11,
-                                fontFamily: "var(--mono)",
-                                color: isPartnerSelected ? "var(--accent)" : "var(--text-1)",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {email}
-                            </span>
-                            <span className="badge badge-gray">{count}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div className="muted text-sm">No received communications</div>
-                  )}
-                </div>
-              </div>
-
-              {/* Email Messages Explorer */}
-              <div className="card mb-0" style={{ padding: 16 }}>
-                <div className="row between mb-3">
-                  <div className="row gap-2">
-                    <strong style={{ fontSize: 13, color: "var(--text-0)" }}>
-                      📧 Messages (
-                      {activeTab === "sent"
-                        ? "Sent"
-                        : activeTab === "received"
-                        ? "Received"
-                        : activeTab === "deleted"
-                        ? "Deleted"
-                        : activeTab === "flagged"
-                        ? "Flagged"
-                        : "All"}
-                      : {emails.length})
-                    </strong>
-                    {partnerFilter && (
-                      <span
-                        className="badge badge-blue"
-                        style={{ cursor: "pointer" }}
-                        onClick={() => handlePartnerSelect("")}
-                        title="Click to clear partner filter"
-                      >
-                        Thread with {partnerFilter} ✕
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="row gap-2" style={{ alignItems: "center" }}>
-                    <button
-                      className={`btn btn-sm ${humanOnly ? "btn-primary" : "btn-ghost"}`}
-                      style={{
-                        fontSize: 11,
-                        padding: "3px 10px",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        border: humanOnly ? "1px solid var(--accent)" : "1px solid var(--border)",
-                        background: humanOnly ? "var(--accent)" : "var(--bg-3)",
-                        color: humanOnly ? "#fff" : "var(--text-1)",
-                      }}
-                      onClick={() => {
-                        const nextVal = !humanOnly;
-                        setHumanOnly(nextVal);
-                        handleFilterChange(
-                          activeTab,
-                          partnerFilter,
-                          dateFrom,
-                          dateTo,
-                          hasAttachment,
-                          emailSearch,
-                          nextVal
-                        );
-                      }}
-                      title="Filter out automated notifications, no-reply mailers, OTP codes, and newsletters"
-                    >
-                      <span>👤</span>
-                      <span>{humanOnly ? "Human Only (Active)" : "Filter Automated / No-Reply"}</span>
-                    </button>
-
-                    <label className="row gap-1" style={{ fontSize: 11, color: "var(--text-2)", cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={hasAttachment}
-                        onChange={(e) => {
-                          setHasAttachment(e.target.checked);
-                          handleFilterChange(
-                            activeTab,
-                            partnerFilter,
-                            dateFrom,
-                            dateTo,
-                            e.target.checked,
-                            emailSearch,
-                            humanOnly
-                          );
-                        }}
-                      />
-                      Has Attachments
-                    </label>
-                  </div>
-                </div>
-
-                {/* Filter Controls Bar */}
-                <div className="row gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-                  <input
-                    className="input"
-                    style={{ flex: 1, minWidth: 200, fontSize: 12, padding: "6px 10px" }}
-                    placeholder="Search subject or body text..."
-                    value={emailSearch}
-                    onChange={(e) => {
-                      setEmailSearch(e.target.value);
-                      handleFilterChange(
-                        activeTab,
-                        partnerFilter,
-                        dateFrom,
-                        dateTo,
-                        hasAttachment,
-                        e.target.value
-                      );
-                    }}
-                  />
-                  <div className="row gap-1">
-                    <input
-                      type="date"
-                      className="input"
-                      style={{ width: 140, fontSize: 11, padding: "5px 8px" }}
-                      value={dateFrom}
-                      onChange={(e) => {
-                        setDateFrom(e.target.value);
-                        handleFilterChange(
-                          activeTab,
-                          partnerFilter,
-                          e.target.value,
-                          dateTo,
-                          hasAttachment,
-                          emailSearch
-                        );
-                      }}
-                      title="Date from"
-                    />
-                    <input
-                      type="date"
-                      className="input"
-                      style={{ width: 140, fontSize: 11, padding: "5px 8px" }}
-                      value={dateTo}
-                      onChange={(e) => {
-                        setDateTo(e.target.value);
-                        handleFilterChange(
-                          activeTab,
-                          partnerFilter,
-                          dateFrom,
-                          e.target.value,
-                          hasAttachment,
-                          emailSearch
-                        );
-                      }}
-                      title="Date to"
-                    />
-                  </div>
-                </div>
-
-                {/* Messages List Table */}
-                {emailsLoading ? (
-                  <div className="empty">Loading emails...</div>
-                ) : emails.length === 0 ? (
-                  <div className="empty">No emails match the selected filters</div>
-                ) : (
-                  <div style={{ maxHeight: 380, overflowY: "auto", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "160px 1fr 100px 50px 60px 50px",
-                        padding: "8px 12px",
-                        background: "var(--bg-1)",
-                        borderBottom: "1px solid var(--border)",
-                        fontSize: 10,
-                        fontWeight: 700,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.06em",
-                        color: "var(--text-3)",
-                        gap: 6,
-                        alignItems: "center",
-                      }}
-                    >
-                      <div>From</div>
-                      <div>Subject</div>
-                      <div style={{ textAlign: "right" }}>Date</div>
-                      <div style={{ textAlign: "center" }}>Risk</div>
-                      <div style={{ textAlign: "center" }}>Locker</div>
-                      <div style={{ textAlign: "center" }}>View</div>
-                    </div>
-
-                    {emails.map((em) => {
-                      const isEmailActive = selectedEmail?.id === em.id;
-                      return (
-                        <div
-                          key={em.id}
-                          className="tr-click"
-                          style={{
-                            display: "grid",
-                            gridTemplateColumns: "160px 1fr 100px 50px 60px 50px",
-                            alignItems: "center",
-                            padding: "8px 12px",
-                            borderBottom: "1px solid var(--border)",
-                            background: isEmailActive ? "var(--accent-subtle)" : "transparent",
-                            fontSize: 12,
-                            gap: 6,
-                          }}
-                          onClick={() => setSelectedEmail(isEmailActive ? null : em)}
-                          onDoubleClick={() => {
-                            setSelectedEmail(em);
-                            setShowFullModal(true);
-                          }}
-                          title="Click to preview below, double-click to open full forensic pop-up"
-                        >
-                          <div
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              color: "var(--text-1)",
-                            }}
-                            title={em.from_addr}
-                          >
-                            {cleanDisplayName(em.from_display) || em.from_addr}
-                          </div>
-                          <div
-                            style={{
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                              color: "var(--text-0)",
-                              fontWeight: 500,
-                            }}
-                          >
-                            {em.subject || <span className="muted">(no subject)</span>}
-                            {em.deleted_recovered && (
-                              <span
-                                className="badge badge-red"
-                                style={{ fontSize: 9, marginLeft: 6 }}
-                              >
-                                DELETED
-                              </span>
-                            )}
-                          </div>
-                          <div style={{ textAlign: "right", fontSize: 11, color: "var(--text-3)" }}>
-                            {em.date_sent_utc
-                              ? new Date(em.date_sent_utc).toLocaleDateString()
-                              : "—"}
-                          </div>
-                          <div style={{ textAlign: "center" }}>
-                            <span
-                              className={`badge ${
-                                em.risk_score >= 50
-                                  ? "badge-red"
-                                  : em.risk_score >= 25
-                                  ? "badge-orange"
-                                  : "badge-green"
-                              }`}
-                              style={{ fontSize: 9 }}
-                            >
-                              {em.risk_score}
-                            </span>
-                          </div>
-                          <div
-                            style={{ display: "flex", justifyContent: "center" }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <BookmarkButton
-                              caseId={caseId}
-                              itemId={em.id}
-                              itemType="email"
-                              compact={true}
-                            />
-                          </div>
-                          <div
-                            style={{ display: "flex", justifyContent: "center" }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedEmail(em);
-                              setShowFullModal(true);
-                            }}
-                          >
-                            <button
-                              className="btn btn-ghost btn-sm"
-                              style={{ padding: "2px 5px", fontSize: 11 }}
-                              title="Open full forensic message pop-up"
-                            >
-                              👁️
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Inline Message Preview if Selected */}
-                {selectedEmail && (
-                  <div
-                    style={{
-                      marginTop: 16,
-                      padding: 16,
-                      background: "var(--bg-1)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--r-md)",
-                    }}
-                  >
-                    <div className="row between mb-2" style={{ alignItems: "center" }}>
-                      <strong style={{ fontSize: 14, color: "var(--text-0)", flex: 1, paddingRight: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {selectedEmail.subject || "(no subject)"}
-                      </strong>
-                      <div className="row gap-2" style={{ alignItems: "center", flexShrink: 0 }}>
-                        <button
-                          className="btn btn-primary btn-sm"
-                          style={{ padding: "3px 10px", fontSize: 11, display: "flex", alignItems: "center", gap: 5 }}
-                          onClick={() => setShowFullModal(true)}
-                          title="Open full forensic modal with HTML/Text/Headers tabs and extracted attachments"
-                        >
-                          <span>👁️ Full Pop-up Viewer</span>
-                        </button>
-                        <BookmarkButton
-                          caseId={caseId}
-                          itemId={selectedEmail.id}
-                          itemType="email"
-                          compact={false}
-                        />
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          style={{ padding: "2px 6px", fontSize: 11 }}
-                          onClick={() => setSelectedEmail(null)}
-                        >
-                          ✕ Close
-                        </button>
-                      </div>
-                    </div>
-                    <div className="grid-2 mb-2" style={{ fontSize: 12 }}>
-                      <div>
-                        <span className="muted">From: </span>
-                        <strong>{selectedEmail.from_addr}</strong>
-                      </div>
-                      <div>
-                        <span className="muted">Date: </span>
-                        {selectedEmail.date_sent_utc
-                          ? new Date(selectedEmail.date_sent_utc).toLocaleString()
-                          : "—"}
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 12, marginBottom: 12 }}>
-                      <span className="muted">To: </span>
-                      <span className="mono">{selectedEmail.to_addrs}</span>
-                    </div>
-
-                    {/* Rich Body Viewer (renders HTML or Plain Text or fallback) */}
-                    <div style={{ background: "var(--bg-0)", borderRadius: "var(--r-sm)", border: "1px solid var(--border)", overflow: "hidden" }}>
-                      {((fullEmailData?.body_html || selectedEmail.body_html) || (fullEmailData?.body_text || selectedEmail.body_text)) ? (
-                        <RichEmailBodyViewer
-                          bodyText={fullEmailData?.body_text || selectedEmail.body_text || ""}
-                          bodyHtml={fullEmailData?.body_html || selectedEmail.body_html || null}
-                        />
-                      ) : (
-                        <div className="empty" style={{ padding: "20px 14px", fontSize: 12 }}>
-                          No message body text or HTML payload available in this container.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
+                dateFrom={dateFrom}
+                onDateFromChange={(val) => {
+                  setDateFrom(val);
+                  handleFilterChange(activeTab, partnerFilter, val, dateTo, hasAttachment, emailSearch);
+                }}
+                dateTo={dateTo}
+                onDateToChange={(val) => {
+                  setDateTo(val);
+                  handleFilterChange(activeTab, partnerFilter, dateFrom, val, hasAttachment, emailSearch);
+                }}
+                selectedEmail={selectedEmail}
+                onSelectEmail={handleSelectEmail}
+                onOpenModal={(em) => setModalEmail({
+                  id: em.id,
+                  message_id: em.id,
+                  from_addr: em.from_addr,
+                  from_display: em.from_display,
+                  to_addrs: em.to_addrs,
+                  cc_addrs: em.cc_addrs || "",
+                  subject: em.subject,
+                  date_sent: em.date_sent,
+                  date_sent_utc: em.date_sent_utc,
+                  headers_raw: em.headers_raw,
+                  body_text: em.body_text,
+                  body_html: em.body_html,
+                  folder_name: em.folder_category,
+                  folder_category: em.folder_category,
+                })}
+                onClosePreview={() => setSelectedEmail(null)}
+              />
             </>
           ) : (
             <div className="card empty">Select an entity from the list to explore</div>
@@ -1316,12 +404,11 @@ export function EntityDiveView({ caseId, evidenceFilter }: Props) {
         </div>
       </div>
 
-      {/* Full Forensic Email Modal Popup */}
-      {showFullModal && (fullEmailData || selectedEmail) && (
+      {modalEmail && (
         <EmailDetailModal
-          email={fullEmailData || (selectedEmail as any)}
-          onClose={() => setShowFullModal(false)}
-          titleSuffix="Entity Investigation"
+          email={modalEmail}
+          onClose={() => setModalEmail(null)}
+          titleSuffix="Return to Entity Dive"
         />
       )}
     </div>

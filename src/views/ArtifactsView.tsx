@@ -1,90 +1,30 @@
 import { useState, useEffect, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { RichEmailBodyViewer } from "../components/RichEmailBodyViewer";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { EmailDetailModal } from "../components/EmailDetailModal";
-import { BookmarkButton } from "../components/BookmarkButton";
-import { useScanState } from "../utils/scanState";
+import { useScanState, scanStore } from "../utils/scanState";
+import {
+  TaxonomyDomainSummary,
+  ForensicTaxonomyArtifact,
+  EmailMessage,
+  ArtifactsProps,
+} from "./artifacts/types";
+import { ArtifactsCategoryTree } from "./artifacts/ArtifactsCategoryTree";
+import { ArtifactsFeed } from "./artifacts/ArtifactsFeed";
+import { ArtifactInspectorDrawer } from "./artifacts/ArtifactInspectorDrawer";
 
-export interface TaxonomySubcategorySummary {
-  subcategory_id: string;
-  name: string;
-  count: number;
-}
-
-export interface TaxonomyDomainSummary {
-  domain_id: string;
-  name: string;
-  icon: string;
-  total_count: number;
-  subcategories: TaxonomySubcategorySummary[];
-}
-
-export interface ForensicTaxonomyArtifact {
-  id: string;
-  domain_id: string;
-  subcategory_id: string;
-  title: string;
-  primary_value: string;
-  secondary_value: string | null;
-  details: string;
-  severity: "critical" | "high" | "medium" | "low" | "info";
-  artifact_type: "native" | "recovered" | "derived";
-  confidence?: "high" | "medium" | "low" | null;
-  email_id: string;
-  email_subject: string | null;
-  email_from: string;
-  date_sent_utc: string | null;
-  occurrenceCount?: number;
-}
-
-export interface EmailMessage {
-  id: string;
-  evidence_id: string;
-  case_id: string;
-  message_id: string | null;
-  from_addr: string;
-  from_display: string | null;
-  to_addrs: string;
-  cc_addrs: string;
-  subject: string | null;
-  date_sent: string | null;
-  date_sent_utc: string | null;
-  headers_raw: string | null;
-  body_text: string | null;
-  body_html: string | null;
-  folder_name: string | null;
-  folder_category: string;
-  recovery_status: string;
-  deleted_recovered: boolean;
-  risk_score: number;
-  flags: string;
-}
-
-interface Props {
-  caseId: string;
-  evidenceFilter?: string | null;
-  onSelectEmail?: (emailId: string) => void;
-}
-
-// Module-level caches per caseId to make tab navigation 100% INSTANT with 0 flicker
-const taxonomyCache = new Map<string, TaxonomyDomainSummary[]>();
-const artifactsCache = new Map<string, ForensicTaxonomyArtifact[]>();
-
-export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) {
-  const cacheKey = `${caseId}_${evidenceFilter || "all"}`;
-  const [taxonomy, setTaxonomy] = useState<TaxonomyDomainSummary[]>(() => taxonomyCache.get(cacheKey) || []);
-  const [artifacts, setArtifacts] = useState<ForensicTaxonomyArtifact[]>(() => artifactsCache.get(cacheKey) || []);
+export function ArtifactsView({ caseId, evidenceFilter }: ArtifactsProps) {
+  const [taxonomy, setTaxonomy] = useState<TaxonomyDomainSummary[]>([]);
+  const [artifacts, setArtifacts] = useState<ForensicTaxonomyArtifact[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>("all");
   const [selectedSubcategory, setSelectedSubcategory] = useState<string>("all");
   const [selectedArtifactType, setSelectedArtifactType] = useState<string>("all");
   const [search, setSearch] = useState<string>("");
   const [showEmptyDomains, setShowEmptyDomains] = useState<boolean>(false);
   const [dedupUnique, setDedupUnique] = useState<boolean>(true);
-  const [loading, setLoading] = useState<boolean>(() => !taxonomyCache.has(cacheKey));
-  const [scanState, setScanState, resetScanState] = useScanState();
+  const [loading, setLoading] = useState<boolean>(true);
+  const [scanState] = useScanState();
   const [selectedArtifact, setSelectedArtifact] = useState<ForensicTaxonomyArtifact | null>(null);
   const [previewEmail, setPreviewEmail] = useState<EmailMessage | null>(null);
-  const [_loadingEmail, setLoadingEmail] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   const showToast = (msg: string) => {
@@ -93,61 +33,14 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
   };
 
   useEffect(() => {
-    // Safety auto-reset on initial mount if state is lingering
-    if (scanState.scanning && (!scanState.startedAt || Date.now() - scanState.startedAt > 8000)) {
-      resetScanState();
-    }
-  }, []);
+    loadTaxonomy();
+  }, [caseId, evidenceFilter, showEmptyDomains]);
 
   useEffect(() => {
-    let active = true;
-    const loadAllData = async () => {
-      if (!caseId) return;
-      if (!taxonomyCache.has(cacheKey)) {
-        setLoading(true);
-      }
-      try {
-        const domains = await invoke<TaxonomyDomainSummary[]>("case_artifacts_summary", { 
-          input: { 
-            case_id: caseId,
-            evidence_id: evidenceFilter || undefined,
-            show_all: showEmptyDomains
-          } 
-        });
-        if (active) {
-          setTaxonomy(domains);
-          taxonomyCache.set(cacheKey, domains);
-        }
-
-        const list = await invoke<ForensicTaxonomyArtifact[]>("case_artifacts_list", {
-          input: {
-            case_id: caseId,
-            evidence_id: evidenceFilter || undefined,
-            domain: selectedDomain,
-            subcategory: selectedSubcategory,
-            artifact_type: selectedArtifactType,
-            search
-          }
-        });
-        if (active) {
-          setArtifacts(list);
-          if (selectedDomain === "all" && selectedSubcategory === "all" && selectedArtifactType === "all" && !search) {
-            artifactsCache.set(cacheKey, list);
-          }
-        }
-      } catch (e) {
-        console.error("Failed to load taxonomy and artifacts:", e);
-      } finally {
-        if (active) setLoading(false);
-      }
-    };
-
-    loadAllData();
-    return () => { active = false; };
-  }, [caseId, evidenceFilter, cacheKey, showEmptyDomains, selectedDomain, selectedSubcategory, selectedArtifactType, search]);
+    loadArtifacts();
+  }, [caseId, evidenceFilter, selectedDomain, selectedSubcategory, selectedArtifactType]);
 
   const loadTaxonomy = async () => {
-    if (!caseId) return;
     try {
       const domains = await invoke<TaxonomyDomainSummary[]>("case_artifacts_summary", { 
         input: { 
@@ -157,17 +50,13 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
         } 
       });
       setTaxonomy(domains);
-      taxonomyCache.set(cacheKey, domains);
     } catch (e) {
       console.error("Failed to load taxonomy:", e);
     }
   };
 
   const loadArtifacts = async () => {
-    if (!caseId) return;
-    if (!artifactsCache.has(cacheKey)) {
-      setLoading(true);
-    }
+    setLoading(true);
     try {
       const list = await invoke<ForensicTaxonomyArtifact[]>("case_artifacts_list", {
         input: {
@@ -180,9 +69,6 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
         }
       });
       setArtifacts(list);
-      if (selectedDomain === "all" && selectedSubcategory === "all" && selectedArtifactType === "all" && !search) {
-        artifactsCache.set(cacheKey, list);
-      }
     } catch (e) {
       console.error("Failed to load artifacts:", e);
     } finally {
@@ -209,49 +95,46 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
   }, [artifacts, dedupUnique]);
 
   const handleRescan = async () => {
-    let curProgress = 15;
-    setScanState({
+    scanStore.setState({
       scanning: true,
-      progress: curProgress,
-      stage: "Reading emails and headers from database...",
+      progress: 2,
+      stage: "Initializing parallel forensic taxonomy scanner...",
     });
-    
-    const progressInterval = setInterval(() => {
-      curProgress = Math.min(curProgress + 10, 92);
-      setScanState({
-        progress: curProgress,
-      });
-    }, 200);
+
+    const onProgress = new Channel<any>();
+    onProgress.onmessage = (msg: any) => {
+      if (msg) {
+        scanStore.setState({
+          scanning: msg.scanning !== false,
+          progress: typeof msg.percent === "number" ? msg.percent : 0,
+          stage: msg.stage || "Scanning message corpora...",
+        });
+      }
+    };
 
     try {
-      taxonomyCache.delete(caseId);
-      artifactsCache.delete(caseId);
-      setTimeout(() => setScanState({ stage: "Classifying financial, banking, crypto, credentials, and app accounts..." }), 300);
-      setTimeout(() => setScanState({ stage: "Extracting attachment signatures and forensic IOCs..." }), 800);
-      
-      const count = await invoke<number>("rescan_case_artifacts", { input: { case_id: caseId } });
-      clearInterval(progressInterval);
-      setScanState({
+      const count = await invoke<number>("rescan_case_artifacts", { 
+        input: { case_id: caseId },
+        onEvent: onProgress
+      });
+      scanStore.setState({
         progress: 100,
         stage: `Completed! Indexed ${count} forensic artifacts.`,
       });
       showToast(`✓ Scanned and indexed ${count} artifacts`);
       await Promise.all([loadTaxonomy(), loadArtifacts()]);
     } catch (e: any) {
-      clearInterval(progressInterval);
-      console.error(e);
-      showToast(`❌ ${e.message || e}`);
+      console.error("Error scanning artifacts:", e);
+      showToast(`❌ Error scanning artifacts: ${e}`);
     } finally {
-      clearInterval(progressInterval);
       setTimeout(() => {
-        resetScanState();
-      }, 1000);
+        scanStore.setState({
+          scanning: false,
+          progress: 0,
+          stage: "",
+        });
+      }, 1200);
     }
-  };
-
-  const handleSearchSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    loadArtifacts();
   };
 
   const copyToClipboard = (text: string) => {
@@ -261,7 +144,6 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
 
   const openEmailModal = async (emailId: string) => {
     if (!emailId) return;
-    setLoadingEmail(true);
     try {
       const em = await invoke<EmailMessage | null>("email_get", { input: { id: emailId } });
       if (em) {
@@ -272,14 +154,19 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
     } catch (e) {
       console.error("Failed to fetch email:", e);
       showToast("❌ Error loading email");
-    } finally {
-      setLoadingEmail(false);
     }
   };
 
-  // Only display domains with count > 0 unless showEmptyDomains is active
-  const visibleTaxonomy = taxonomy.filter(d => showEmptyDomains || d.total_count > 0);
-  const totalAllArtifacts = visibleTaxonomy.reduce((acc, d) => acc + d.total_count, 0);
+  const visibleTaxonomy = useMemo(() => {
+    return taxonomy
+      .filter(d => showEmptyDomains || d.total_count > 0)
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }, [taxonomy, showEmptyDomains]);
+
+  const totalAllArtifacts = useMemo(() => {
+    return visibleTaxonomy.reduce((acc, d) => acc + d.total_count, 0);
+  }, [visibleTaxonomy]);
 
   const exportArtifactsCSV = () => {
     if (artifacts.length === 0) return;
@@ -309,36 +196,8 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
     showToast("📥 Exported Forensic Artifacts Dossier (CSV)");
   };
 
-  const getSeverityBadge = (sev: string) => {
-    switch (sev) {
-      case "critical": return <span className="badge badge-red">CRITICAL</span>;
-      case "high": return <span className="badge badge-orange">HIGH</span>;
-      case "medium": return <span className="badge badge-blue">MEDIUM</span>;
-      default: return <span className="badge badge-gray">INFO</span>;
-    }
-  };
-
-  const getTypeBadge = (t: string) => {
-    switch (t) {
-      case "recovered": return <span className="badge" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444" }}>🗑️ RECOVERED</span>;
-      case "derived": return <span className="badge" style={{ background: "rgba(168, 85, 247, 0.15)", color: "#c084fc" }}>🧠 DERIVED</span>;
-      default: return <span className="badge" style={{ background: "rgba(56, 189, 248, 0.15)", color: "#38bdf8" }}>📄 NATIVE</span>;
-    }
-  };
-
-  const getConfidenceBadge = (c?: string | null) => {
-    const conf = c || "high";
-    if (conf === "high") {
-      return <span className="badge" style={{ background: "rgba(34, 197, 94, 0.15)", color: "#22c55e", fontSize: 10 }}>✓ VALIDATED</span>;
-    } else if (conf === "medium") {
-      return <span className="badge" style={{ background: "rgba(234, 179, 8, 0.15)", color: "#eab308", fontSize: 10 }}>⚡ PATTERN</span>;
-    }
-    return <span className="badge" style={{ background: "rgba(148, 163, 184, 0.15)", color: "#94a3b8", fontSize: 10 }}>HEURISTIC</span>;
-  };
-
   return (
     <div>
-      {/* Toast Notification */}
       {toastMessage && (
         <div 
           className="card"
@@ -386,26 +245,16 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
         </div>
       </div>
 
-      {/* Scanning Progress Bar with Percentage and Stage Text */}
+      {/* Scanning Progress Bar */}
       {scanState.scanning && (
         <div className="card mb-4" style={{ padding: "14px 18px", background: "var(--bg-2)", border: "1px solid var(--accent)", boxShadow: "0 4px 20px rgba(0,0,0,0.25)" }}>
           <div className="row between mb-2">
             <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text-0)" }}>
               ⚡ {scanState.stage || "Scanning and classifying forensic artifacts..."}
             </span>
-            <div className="row gap-2" style={{ alignItems: "center" }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)" }}>
-                {scanState.progress}%
-              </span>
-              <button 
-                className="btn btn-ghost btn-sm" 
-                style={{ padding: "1px 6px", fontSize: 10, height: 20 }}
-                onClick={resetScanState}
-                title="Dismiss progress bar"
-              >
-                ✕
-              </button>
-            </div>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "var(--accent)" }}>
+              {scanState.progress}%
+            </span>
           </div>
           <div style={{ width: "100%", height: 8, background: "var(--bg-0)", borderRadius: 4, overflow: "hidden" }}>
             <div
@@ -421,155 +270,25 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
         </div>
       )}
 
-      {/* Main Two-Column Taxonomy Workspace */}
+      {/* Main Two-Column Workspace */}
       <div style={{ display: "grid", gridTemplateColumns: "220px minmax(0, 1fr)", gap: 14, minWidth: 0, width: "100%" }}>
-        
-        {/* Left Column: Artifact Taxonomy Category Tree */}
-        <div className="card" style={{ padding: 10, maxHeight: "calc(100vh - 160px)", overflowY: "auto", minWidth: 0 }}>
-          <div className="row between mb-2" style={{ padding: "4px 6px" }}>
-            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.8px", color: "var(--text-3)" }}>
-              AVAILABLE ARTIFACTS ({visibleTaxonomy.length})
-            </span>
-            <button 
-              className="btn btn-ghost btn-sm"
-              style={{ fontSize: 10, padding: "1px 6px", height: "auto" }}
-              onClick={() => setShowEmptyDomains(!showEmptyDomains)}
-              title={showEmptyDomains ? "Hide empty categories" : "Show all categories including 0"}
-            >
-              {showEmptyDomains ? "Hide 0s" : "Show All"}
-            </button>
-          </div>
+        {/* Left Category Tree */}
+        <ArtifactsCategoryTree
+          visibleTaxonomy={visibleTaxonomy}
+          totalAllArtifacts={totalAllArtifacts}
+          selectedDomain={selectedDomain}
+          selectedSubcategory={selectedSubcategory}
+          showEmptyDomains={showEmptyDomains}
+          setShowEmptyDomains={setShowEmptyDomains}
+          onSelectDomain={(d) => { setSelectedDomain(d); setSelectedSubcategory("all"); }}
+          onSelectSubcategory={setSelectedSubcategory}
+        />
 
-          {/* All Artifacts Root */}
-          <div 
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "7px 8px",
-              borderRadius: "var(--r-sm)",
-              cursor: "pointer",
-              marginBottom: 6,
-              background: selectedDomain === "all" ? "var(--accent)" : "transparent",
-              color: selectedDomain === "all" ? "#000" : "var(--text-0)",
-              fontWeight: selectedDomain === "all" ? 700 : 500,
-              fontSize: 12,
-            }}
-            onClick={() => { setSelectedDomain("all"); setSelectedSubcategory("all"); }}
-          >
-            <div className="row gap-1" style={{ alignItems: "center", overflow: "hidden" }}>
-              <span>📁</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>All Artifacts</span>
-            </div>
-            <span 
-              className="badge" 
-              style={{ 
-                background: selectedDomain === "all" ? "#000" : "var(--bg-3)", 
-                color: selectedDomain === "all" ? "#fff" : "var(--text-1)",
-                fontSize: 10 
-              }}
-            >
-              {totalAllArtifacts}
-            </span>
-          </div>
-
-          {/* Domain List */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            {loading && taxonomy.length === 0 ? (
-              <div className="muted text-xs p-3 text-center" style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                <div className="spinner" style={{ width: 14, height: 14, border: "2px solid var(--border)", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                <span>Loading taxonomy...</span>
-              </div>
-            ) : visibleTaxonomy.length === 0 ? (
-              <div className="muted text-xs p-3 text-center">No forensic artifacts detected in this case yet.</div>
-            ) : (
-              visibleTaxonomy.map((dom) => {
-                const isDomainSelected = selectedDomain === dom.domain_id;
-                return (
-                  <div key={dom.domain_id} style={{ display: "flex", flexDirection: "column" }}>
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        padding: "6px 8px",
-                        borderRadius: "var(--r-sm)",
-                        cursor: "pointer",
-                        background: isDomainSelected && selectedSubcategory === "all" ? "var(--bg-3)" : "transparent",
-                        color: isDomainSelected ? "var(--accent)" : "var(--text-1)",
-                        fontWeight: isDomainSelected ? 700 : 500,
-                        fontSize: 12,
-                        borderLeft: isDomainSelected ? "3px solid var(--accent)" : "3px solid transparent",
-                      }}
-                      onClick={() => {
-                        setSelectedDomain(dom.domain_id);
-                        setSelectedSubcategory("all");
-                      }}
-                    >
-                      <div className="row gap-1" style={{ alignItems: "center", overflow: "hidden", minWidth: 0 }}>
-                        <span>{dom.icon}</span>
-                        <span style={{ textOverflow: "ellipsis", whiteSpace: "nowrap", overflow: "hidden" }}>{dom.name}</span>
-                      </div>
-                      <span 
-                        style={{ 
-                          fontSize: 10.5, 
-                          fontFamily: "var(--mono)",
-                          color: isDomainSelected ? "var(--accent)" : "var(--text-3)",
-                          fontWeight: 600,
-                          flexShrink: 0
-                        }}
-                      >
-                        {dom.total_count}
-                      </span>
-                    </div>
-
-                    {/* Subcategories (if domain active) */}
-                    {isDomainSelected && dom.subcategories.filter(s => showEmptyDomains || s.count > 0).length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", paddingLeft: 18, marginTop: 2, marginBottom: 4, gap: 2 }}>
-                        {dom.subcategories.filter(s => showEmptyDomains || s.count > 0).map((sub) => {
-                          const isSubSelected = selectedSubcategory === sub.subcategory_id;
-                          return (
-                            <div
-                              key={sub.subcategory_id}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                                padding: "3px 6px",
-                                borderRadius: "var(--r-sm)",
-                                cursor: "pointer",
-                                fontSize: 11,
-                                color: isSubSelected ? "var(--accent)" : "var(--text-2)",
-                                background: isSubSelected ? "rgba(56, 189, 248, 0.1)" : "transparent",
-                                fontWeight: isSubSelected ? 700 : 400,
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedSubcategory(sub.subcategory_id);
-                              }}
-                            >
-                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>↳ {sub.name}</span>
-                              <span style={{ fontSize: 9.5, fontFamily: "var(--mono)", color: "var(--text-3)", flexShrink: 0 }}>
-                                {sub.count}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-
-        {/* Right Column: Artifacts Explorer & Live Inspector */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-          
+        {/* Right Column: Feed & Inspector */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0, overflow: "hidden" }}>
           {/* Filter Bar */}
           <div className="card" style={{ padding: "10px 14px", minWidth: 0 }}>
-            <form onSubmit={handleSearchSubmit} className="row between gap-2" style={{ flexWrap: "wrap", minWidth: 0 }}>
+            <form onSubmit={(e) => { e.preventDefault(); loadArtifacts(); }} className="row between gap-2" style={{ flexWrap: "wrap", minWidth: 0 }}>
               <div className="row gap-2" style={{ flex: 1, minWidth: 200 }}>
                 <input
                   className="input"
@@ -590,14 +309,12 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
                 )}
               </div>
 
-              {/* Artifact Type Filter & Deduplication */}
               <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap" }}>
                 <button
                   type="button"
                   className={`btn btn-sm ${dedupUnique ? "btn-primary" : "btn-ghost"}`}
                   style={{ fontSize: 11, fontWeight: 600, padding: "5px 10px" }}
                   onClick={() => setDedupUnique(!dedupUnique)}
-                  title="Collapse identical artifacts and display unique findings with occurrence counts"
                 >
                   ⚡ {dedupUnique ? `Unique (${displayedArtifacts.length})` : `All Raw (${artifacts.length})`}
                 </button>
@@ -618,240 +335,37 @@ export function ArtifactsView({ caseId, evidenceFilter, onSelectEmail }: Props) 
             </form>
           </div>
 
-          {/* Main Grid: Feed & Inspector */}
           <div style={{ display: "grid", gridTemplateColumns: selectedArtifact ? "minmax(0, 1fr) 330px" : "1fr", gap: 14, minWidth: 0 }}>
-            
-            {/* Artifacts Feed */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-              {loading ? (
-                <div className="empty" style={{ padding: 40 }}>Classifying and indexing forensic taxonomy artifacts...</div>
-              ) : displayedArtifacts.length === 0 ? (
-                <div className="card empty" style={{ padding: 40 }}>
-                  No artifacts found for the selected taxonomy domain or query.
-                </div>
-              ) : (
-                displayedArtifacts.map((a) => {
-                  const isSelected = selectedArtifact?.id === a.id;
-                  return (
-                    <div 
-                      key={a.id}
-                      className="card"
-                      style={{
-                        padding: "10px 14px",
-                        margin: 0,
-                        cursor: "pointer",
-                        borderLeft: a.severity === "critical" ? "4px solid var(--danger)" : a.severity === "high" ? "4px solid var(--warning)" : a.severity === "medium" ? "4px solid var(--accent)" : "4px solid var(--border)",
-                        background: isSelected ? "var(--bg-3)" : "var(--bg-2)",
-                        transition: "all 0.15s ease",
-                        minWidth: 0,
-                        position: "relative",
-                      }}
-                      onClick={() => setSelectedArtifact(a)}
-                    >
-                      <div className="row between mb-2" style={{ flexWrap: "wrap", gap: 6, alignItems: "center" }}>
-                        <div className="row gap-2" style={{ alignItems: "center", flexWrap: "wrap", minWidth: 0 }}>
-                          <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-0)" }}>{a.title}</span>
-                          {getSeverityBadge(a.severity)}
-                          {getTypeBadge(a.artifact_type)}
-                          {getConfidenceBadge(a.confidence)}
-                          {a.occurrenceCount && a.occurrenceCount > 1 && (
-                            <span className="badge badge-blue" style={{ fontSize: 9.5 }}>
-                              x{a.occurrenceCount}
-                            </span>
-                          )}
-                        </div>
-                        <div className="row gap-2" style={{ alignItems: "center", flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
-                          <span style={{ fontSize: 10.5, color: "var(--text-3)", fontFamily: "var(--mono)" }}>
-                            {a.date_sent_utc ? new Date(a.date_sent_utc).toLocaleDateString() : ""}
-                          </span>
-                          <BookmarkButton
-                            caseId={caseId}
-                            itemId={a.id}
-                            itemType="artifact"
-                            compact={true}
-                            align="right"
-                          />
-                        </div>
-                      </div>
+            <ArtifactsFeed
+              caseId={caseId}
+              displayedArtifacts={displayedArtifacts}
+              selectedArtifact={selectedArtifact}
+              loading={loading}
+              onSelectArtifact={setSelectedArtifact}
+              onCopyToClipboard={copyToClipboard}
+              onOpenEmailModal={openEmailModal}
+            />
 
-                      {/* Highlighted Extracted Value Box */}
-                      <div 
-                        style={{
-                          background: "rgba(15, 23, 42, 0.9)",
-                          border: "1px solid var(--border)",
-                          borderRadius: "var(--r-sm)",
-                          padding: "7px 10px",
-                          fontFamily: "var(--mono)",
-                          fontSize: 12,
-                          color: a.domain_id === "credentials" ? "#f43f5e" : a.domain_id === "financial" ? "#22c55e" : a.domain_id === "crypto" ? "#eab308" : a.domain_id === "contraband" ? "#ef4444" : a.domain_id === "contacts_identities" ? "#a855f7" : a.domain_id === "urls_links" ? "#06b6d4" : "#38bdf8",
-                          marginBottom: 6,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          minWidth: 0,
-                        }}
-                      >
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-                          {a.primary_value}
-                        </span>
-                        <button 
-                          className="btn btn-ghost btn-sm" 
-                          style={{ padding: "1px 6px", fontSize: 10, height: "auto", flexShrink: 0 }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            copyToClipboard(a.primary_value);
-                          }}
-                          title="Copy extracted value"
-                        >
-                          📋 Copy
-                        </button>
-                      </div>
-
-                      {/* Context & Source Row */}
-                      <div className="row between" style={{ fontSize: 11, color: "var(--text-3)", minWidth: 0, flexWrap: "wrap", gap: 6 }}>
-                        <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 200px", minWidth: 0 }}>
-                          Source: <strong style={{ color: "var(--text-2)" }}>{a.email_from}</strong>
-                          {a.email_subject && ` · Subject: ${a.email_subject}`}
-                        </div>
-                        {a.email_id && (
-                          <button 
-                            className="btn btn-ghost btn-sm" 
-                            style={{ padding: "1px 6px", fontSize: 10, height: "auto", flexShrink: 0 }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              openEmailModal(a.email_id);
-                            }}
-                          >
-                            ✉️ View Email
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-            {/* Live Inspector Drawer */}
             {selectedArtifact && (
-              <div className="card" style={{ position: "sticky", top: 16, height: "fit-content", padding: 16, minWidth: 0 }}>
-                <div className="row between mb-3" style={{ alignItems: "center" }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 700, color: "var(--text-0)", margin: 0 }}>
-                    Artifact Forensic Dossier
-                  </h3>
-                  <div className="row gap-2" style={{ alignItems: "center" }}>
-                    <BookmarkButton
-                      caseId={caseId}
-                      itemId={selectedArtifact.id}
-                      itemType="artifact"
-                      compact={false}
-                      align="right"
-                    />
-                    <button className="btn btn-ghost btn-sm" onClick={() => setSelectedArtifact(null)}>✕</button>
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: 12 }}>
-                  <div className="label">TAXONOMY CLASSIFICATION</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--text-0)" }}>
-                    {selectedArtifact.title}
-                  </div>
-                  <div style={{ fontSize: 11, fontFamily: "var(--mono)", color: "var(--text-3)", marginTop: 2 }}>
-                    Domain: <strong>{selectedArtifact.domain_id}</strong> / {selectedArtifact.subcategory_id}
-                  </div>
-                </div>
-
-                <div style={{ marginBottom: 12 }}>
-                  <div className="label">EXTRACTED PRIMARY VALUE</div>
-                  <div 
-                    style={{
-                      background: "var(--bg-3)",
-                      border: "1px solid var(--accent)",
-                      borderRadius: "var(--r-sm)",
-                      padding: "10px 12px",
-                      fontFamily: "var(--mono)",
-                      fontSize: 12.5,
-                      color: "#4ade80",
-                      fontWeight: 700,
-                      wordBreak: "break-all"
-                    }}
-                  >
-                    {selectedArtifact.primary_value}
-                  </div>
-                  <button 
-                    className="btn btn-ghost btn-sm" 
-                    style={{ width: "100%", marginTop: 6, fontSize: 11 }}
-                    onClick={() => copyToClipboard(selectedArtifact.primary_value)}
-                  >
-                    📋 Copy Value
-                  </button>
-                </div>
-
-                {selectedArtifact.secondary_value && (
-                  <div style={{ marginBottom: 12 }}>
-                    <div className="label">SECONDARY METADATA / PROVENANCE</div>
-                    <div style={{ fontSize: 11, fontFamily: "var(--mono)", color: "var(--text-1)", wordBreak: "break-all" }}>
-                      {selectedArtifact.secondary_value}
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ marginBottom: 12 }}>
-                  <div className="label">EVIDENCE CONTEXT PREVIEW</div>
-                  <div 
-                    style={{
-                      background: "var(--bg-1)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "var(--r-sm)",
-                      padding: "10px 12px",
-                      fontSize: 11.5,
-                      color: "var(--text-1)",
-                      maxHeight: 160,
-                      overflowY: "auto",
-                      lineHeight: 1.4
-                    }}
-                  >
-                    {selectedArtifact.details || "No preview snippet available."}
-                  </div>
-                </div>
-
-                {selectedArtifact.email_id ? (
-                  <>
-                    <div style={{ marginBottom: 16 }}>
-                      <div className="label">ORIGINATING EMAIL</div>
-                      <div style={{ fontSize: 12, color: "var(--text-1)", marginBottom: 4 }}>
-                        <strong>Subject:</strong> {selectedArtifact.email_subject || "(No Subject)"}
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--text-3)", fontFamily: "var(--mono)", marginBottom: 4 }}>
-                        <strong>From:</strong> {selectedArtifact.email_from}
-                      </div>
-                      <div style={{ fontSize: 11, color: "var(--text-3)" }}>
-                        <strong>Date:</strong> {selectedArtifact.date_sent_utc || "Unknown"}
-                      </div>
-                    </div>
-
-                    <button 
-                      className="btn btn-primary btn-sm" 
-                      style={{ width: "100%" }}
-                      onClick={() => openEmailModal(selectedArtifact.email_id)}
-                    >
-                      ✉️ Open Email in Forensic Viewer
-                    </button>
-                  </>
-                ) : null}
-              </div>
-            )}
-            {previewEmail && (
-              <EmailDetailModal
-                email={previewEmail}
-                onClose={() => setPreviewEmail(null)}
-                titleSuffix="Return to Artifacts"
+              <ArtifactInspectorDrawer
+                caseId={caseId}
+                selectedArtifact={selectedArtifact}
+                onClose={() => setSelectedArtifact(null)}
+                onCopyToClipboard={copyToClipboard}
+                onOpenEmailModal={openEmailModal}
               />
             )}
           </div>
         </div>
       </div>
+
+      {previewEmail && (
+        <EmailDetailModal
+          email={previewEmail}
+          onClose={() => setPreviewEmail(null)}
+          titleSuffix="Return to Artifacts"
+        />
+      )}
     </div>
   );
 }

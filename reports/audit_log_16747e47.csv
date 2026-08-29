@@ -1,0 +1,2 @@
+Timestamp,Action,Actor,Tool,Version,Detail,Hash
+2026-08-24T12:51:01.030972+00:00,ingested,admin,email-forensic,0.1.0,Uploaded enron_sample.mbox (6249408 bytes),4a32ed50e131b5e884abd5dee2e4a633815eb688dc112f11f9895b67a297b40b

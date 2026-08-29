@@ -1,12 +1,14 @@
 {
   "identifier": "default",
   "description": "Default permissions for Email Forensic",
-  "windows": ["main"],
+  "windows": ["main", "*"],
   "permissions": [
     "core:default",
     "core:event:default",
     "core:event:allow-listen",
     "core:event:allow-emit",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit-to",
     "fs:default",
     "fs:allow-read-file",
     "fs:allow-write-file",
@@ -16,7 +18,6 @@
     "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-ask",
-    "dialog:allow-confirm",
-    "shell:default"
+    "dialog:allow-confirm"
   ]
 }

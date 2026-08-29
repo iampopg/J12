@@ -1,77 +1,45 @@
 # Dependencies
 node_modules/
-.pnpm-store/
+frontend/node_modules/
 
-# Build outputs & Bundles
+# Build outputs
 dist/
+frontend/dist/
 target/
 src-tauri/target/
-src-tauri/Cargo.lock
+src-tauri/bundle/
+backup/
 
-# IDE & Editor files
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*.sublime-workspace
-*.sublime-project
+*~
 
-# OS specific files
+# OS
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
+.env.local
 
 # Logs
 *.log
-*.log*
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Environment & Secrets & Credentials
-.env
-.env.*
-*.env
-*.env.*
-*.credentials
-credentials.json
-secrets.json
-*.key
-*.pem
-*.cert
-*.pfx
-*.p12
-
-# Database & Storage
-*.db
-*.sqlite
-*.sqlite3
-*.db-journal
-*.db-wal
-*.db-shm
-data/
-storage/
-
-# Evidence, Cases & Mailbox Preservations
-evidence/
-evidence_store/
-cases/
-cases_store/
-test_data/
-test-evidence/
-*.mbox
-*.eml
-*.pst
-*.ost
-*.msg
-*.emlx
-
-# Generated reports & exports
-reports/
-exports/
+# Temporary files
+tmp/
 temp/
-scratch/
+*.tmp
+
+# Tauri
+src-tauri/Cargo.lock

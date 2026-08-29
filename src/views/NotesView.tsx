@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useExaminerProfile } from "../auth";
 
 export interface CaseNote {
   id: string;
@@ -35,7 +36,8 @@ export function NotesView({ caseId, onNotesCountChange }: { caseId: string; onNo
   const [formContent, setFormContent] = useState("");
   const [formCategory, setFormCategory] = useState("general");
   const [formPinned, setFormPinned] = useState(false);
-  const [formAuthor, setFormAuthor] = useState("Lead Investigator");
+  const { profile } = useExaminerProfile();
+  const [formAuthor, setFormAuthor] = useState(profile.fullName || "Lead Investigator");
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -64,6 +66,7 @@ export function NotesView({ caseId, onNotesCountChange }: { caseId: string; onNo
     setFormContent("");
     setFormCategory("general");
     setFormPinned(false);
+    setFormAuthor(profile.fullName || "Lead Investigator");
     setShowModal(true);
   };
 

@@ -38,6 +38,8 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
   const [color, setColor] = useState("#3b82f6");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -60,16 +62,52 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
     }
   }, [bookmark]);
 
-  // Close on outside click
+  // Calculate fixed popup position when opened
+  const toggleOpen = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const popoverWidth = 280;
+      const popoverHeight = 310;
+      
+      let left = align === "left" ? rect.left : rect.right - popoverWidth;
+      // Keep within viewport horizontal bounds
+      if (left < 10) left = 10;
+      if (left + popoverWidth > window.innerWidth - 10) {
+        left = window.innerWidth - popoverWidth - 10;
+      }
+
+      let top = rect.bottom + 6;
+      // If overflowing bottom of screen, flip upwards
+      if (top + popoverHeight > window.innerHeight - 10) {
+        top = Math.max(10, rect.top - popoverHeight - 6);
+      }
+
+      setPopoverPos({ top, left });
+    }
+    setOpen(o => !o);
+  };
+
+  // Close on outside click or escape
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      if (
+        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
+        buttonRef.current && !buttonRef.current.contains(e.target as Node)
+      ) {
         setOpen(false);
       }
     };
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("keydown", keyHandler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("keydown", keyHandler);
+    };
   }, [open]);
 
   const save = async () => {
@@ -105,21 +143,25 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
   const isBookmarked = Boolean(bookmark);
 
   return (
-    <div style={{ position: "relative", display: "inline-block", zIndex: open ? 1000 : undefined }}>
+    <div style={{ display: "inline-flex", alignItems: "center" }}>
       <button
+        ref={buttonRef}
+        type="button"
         className={`btn btn-sm ${isBookmarked ? "" : "btn-ghost"}`}
         style={{
-          padding: compact ? "2px 5px" : "3px 8px",
-          fontSize: 12,
-          background: isBookmarked ? bookmark!.color + "22" : undefined,
-          border: isBookmarked ? `1px solid ${bookmark!.color}55` : undefined,
+          padding: compact ? "2px 6px" : "3px 8px",
+          fontSize: 11.5,
+          fontWeight: 600,
+          background: isBookmarked ? bookmark!.color + "25" : undefined,
+          border: isBookmarked ? `1px solid ${bookmark!.color}66` : undefined,
           color: isBookmarked ? bookmark!.color : undefined,
           borderRadius: "var(--r-sm)",
           gap: 4,
           display: "flex",
           alignItems: "center",
+          flexShrink: 0,
         }}
-        onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        onClick={toggleOpen}
         title={isBookmarked ? `Tagged: ${bookmark!.label}` : "Add to Evidence Locker"}
       >
         <span style={{ fontSize: 13 }}>{isBookmarked ? "🔖" : "🏷️"}</span>
@@ -132,23 +174,32 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
         <div
           ref={popoverRef}
           style={{
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            right: align === "right" ? 0 : "auto",
-            left: align === "left" ? 0 : "auto",
-            zIndex: 99999,
+            position: "fixed",
+            top: popoverPos.top,
+            left: popoverPos.left,
+            zIndex: 999999,
             background: "var(--bg-1)",
             border: "1px solid var(--border)",
             borderRadius: "var(--r-md)",
-            boxShadow: "0 12px 32px rgba(0,0,0,0.6)",
-            width: 270,
-            maxWidth: "calc(100vw - 40px)",
+            boxShadow: "0 16px 40px rgba(0,0,0,0.75)",
+            width: 280,
+            maxWidth: "calc(100vw - 20px)",
             padding: 14,
+            animation: "fadeIn 0.12s ease-out",
           }}
           onClick={e => e.stopPropagation()}
         >
-          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-0)", marginBottom: 10 }}>
-            🔖 Evidence Locker Tag
+          <div className="row between mb-2" style={{ alignItems: "center" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--text-0)" }}>
+              🔖 Evidence Locker Tag
+            </span>
+            <button
+              className="btn btn-ghost btn-sm"
+              style={{ padding: "1px 6px", fontSize: 10 }}
+              onClick={() => setOpen(false)}
+            >
+              ✕
+            </button>
           </div>
 
           {/* Preset labels */}
@@ -156,9 +207,10 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
             {PRESET_LABELS.map(p => (
               <button
                 key={p.label}
+                type="button"
                 onClick={() => { setLabel(p.label); setColor(p.color); }}
                 style={{
-                  padding: "2px 8px",
+                  padding: "3px 8px",
                   borderRadius: 999,
                   fontSize: 11,
                   background: label === p.label ? p.color + "33" : "var(--bg-2)",
@@ -166,6 +218,7 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
                   color: label === p.label ? p.color : "var(--text-1)",
                   cursor: "pointer",
                   fontWeight: label === p.label ? 700 : 400,
+                  transition: "all 0.15s ease",
                 }}
               >
                 {p.label}
@@ -174,13 +227,16 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
           </div>
 
           {/* Custom label */}
-          <input
-            className="input input-sm"
-            placeholder="Custom label…"
-            value={label}
-            onChange={e => setLabel(e.target.value)}
-            style={{ width: "100%", marginBottom: 8, fontSize: 12 }}
-          />
+          <div style={{ marginBottom: 8 }}>
+            <div className="label" style={{ fontSize: 9.5, marginBottom: 3 }}>TAG LABEL</div>
+            <input
+              className="input input-sm"
+              placeholder="Tag label (e.g. Hot Evidence)..."
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              style={{ width: "100%", fontSize: 12, padding: "5px 8px" }}
+            />
+          </div>
 
           {/* Color picker */}
           <div className="row gap-2 mb-2" style={{ alignItems: "center" }}>
@@ -194,41 +250,49 @@ export function BookmarkButton({ caseId, itemId, itemType, compact = false, alig
                   background: c, cursor: "pointer",
                   border: color === c ? "2px solid white" : "2px solid transparent",
                   boxShadow: color === c ? `0 0 0 2px ${c}` : "none",
+                  transition: "transform 0.1s ease",
                 }}
               />
             ))}
           </div>
 
           {/* Note */}
-          <textarea
-            className="input"
-            placeholder="Add a note (optional)…"
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            rows={2}
-            style={{ width: "100%", fontSize: 12, resize: "vertical", marginBottom: 10 }}
-          />
+          <div style={{ marginBottom: 10 }}>
+            <div className="label" style={{ fontSize: 9.5, marginBottom: 3 }}>EVIDENCE NOTE (OPTIONAL)</div>
+            <textarea
+              className="input"
+              placeholder="Add investigator notes on why this is tagged..."
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              rows={2}
+              style={{ width: "100%", fontSize: 11.5, resize: "vertical" }}
+            />
+          </div>
 
           <div className="row gap-2">
             <button
+              type="button"
               className="btn btn-primary btn-sm"
-              style={{ flex: 1 }}
+              style={{ flex: 1, fontSize: 11.5 }}
               disabled={saving || !label.trim()}
               onClick={save}
             >
-              {saving ? "Saving…" : isBookmarked ? "Update Tag" : "🔖 Tag It"}
+              {saving ? "Saving…" : isBookmarked ? "Update Tag" : "🔖 Tag Evidence"}
             </button>
             {isBookmarked && (
               <button
+                type="button"
                 className="btn btn-ghost btn-sm"
-                style={{ color: "var(--danger)" }}
+                style={{ color: "var(--danger)", fontSize: 11.5 }}
                 disabled={saving}
                 onClick={remove}
               >
-                Remove
+                Untag
               </button>
             )}
-            <button className="btn btn-ghost btn-sm" onClick={() => setOpen(false)}>Cancel</button>
+            <button type="button" className="btn btn-ghost btn-sm" style={{ fontSize: 11.5 }} onClick={() => setOpen(false)}>
+              Cancel
+            </button>
           </div>
         </div>
       )}

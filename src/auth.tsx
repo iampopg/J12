@@ -1,156 +1,118 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from "react";
 
-export interface User {
+export interface ExaminerProfile {
   id: string;
-  username: string;
-  fullName?: string;
-  agency?: string;
-  email?: string;
-  role: string;
+  fullName: string;
+  title: string;
+  agency: string;
+  badgeNumber: string;
+  email: string;
+  certifications: string;
+  signatureNotes?: string;
+  avatarSeed?: string;
 }
 
-export interface StoredAccount extends User {
-  passwordHash: string;
-  createdAt: string;
-}
+export const DEFAULT_EXAMINER: ExaminerProfile = {
+  id: "examiner-default",
+  fullName: "Lead Forensic Examiner",
+  title: "Senior Digital Forensics Investigator",
+  agency: "Digital Forensics & Incident Response Lab",
+  badgeNumber: "DFIR-2026",
+  email: "examiner@forensic.lab",
+  certifications: "GCFA, EnCE, CCE",
+  signatureNotes: "Certified Digital Evidence Handling & ISO 27037 Compliance",
+};
 
-interface AuthState {
-  user: User | null;
-  login: (username: string, password: string) => Promise<boolean>;
-  register: (data: { username: string; password: string; fullName: string; agency: string; email?: string }) => Promise<{ success: boolean; message?: string }>;
+interface ExaminerContextType {
+  profile: ExaminerProfile;
+  updateProfile: (updates: Partial<ExaminerProfile>) => void;
+  resetProfile: () => void;
+  // Compatibility helpers
+  user: {
+    id: string;
+    username: string;
+    fullName: string;
+    agency: string;
+    email: string;
+    role: string;
+  };
+  login: (u: string, p: string) => Promise<boolean>;
+  register: (data: any) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
 }
 
-const DEFAULT_ACCOUNTS: StoredAccount[] = [
-  {
-    id: "admin-1",
-    username: "admin",
-    fullName: "Lead Forensic Examiner",
-    agency: "Digital Forensics & Incident Response",
-    email: "admin@forensic.local",
-    role: "admin",
-    passwordHash: "admin123",
-    createdAt: new Date().toISOString(),
+const ExaminerContext = createContext<ExaminerContextType>({
+  profile: DEFAULT_EXAMINER,
+  updateProfile: () => {},
+  resetProfile: () => {},
+  user: {
+    id: DEFAULT_EXAMINER.id,
+    username: "examiner",
+    fullName: DEFAULT_EXAMINER.fullName,
+    agency: DEFAULT_EXAMINER.agency,
+    email: DEFAULT_EXAMINER.email,
+    role: "Lead Examiner",
   },
-];
-
-const AuthContext = createContext<AuthState>({
-  user: null,
-  login: async () => false,
-  register: async () => ({ success: false }),
+  login: async () => true,
+  register: async () => ({ success: true }),
   logout: () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem("j12_current_user");
-    if (saved) {
-      try { return JSON.parse(saved); } catch { return null; }
+  const [profile, setProfile] = useState<ExaminerProfile>(() => {
+    try {
+      const saved = localStorage.getItem("j12_examiner_profile");
+      if (saved) {
+        return { ...DEFAULT_EXAMINER, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn("Failed to load examiner profile:", e);
     }
-    return null;
+    return DEFAULT_EXAMINER;
   });
 
-  const getAccounts = (): StoredAccount[] => {
-    const raw = localStorage.getItem("j12_accounts");
-    if (!raw) {
-      localStorage.setItem("j12_accounts", JSON.stringify(DEFAULT_ACCOUNTS));
-      return DEFAULT_ACCOUNTS;
-    }
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return DEFAULT_ACCOUNTS;
-    }
+  useEffect(() => {
+    localStorage.setItem("j12_examiner_profile", JSON.stringify(profile));
+  }, [profile]);
+
+  const updateProfile = (updates: Partial<ExaminerProfile>) => {
+    setProfile((prev) => {
+      const next = { ...prev, ...updates };
+      localStorage.setItem("j12_examiner_profile", JSON.stringify(next));
+      return next;
+    });
   };
 
-  const login = async (username: string, password: string): Promise<boolean> => {
-    const cleanUser = username.trim().toLowerCase();
-    const cleanPass = password.trim();
-
-    const accounts = getAccounts();
-    const match = accounts.find(
-      (a) => a.username.toLowerCase() === cleanUser && a.passwordHash === cleanPass
-    );
-
-    if (match) {
-      const authUser: User = {
-        id: match.id,
-        username: match.username,
-        fullName: match.fullName || match.username,
-        agency: match.agency,
-        email: match.email,
-        role: match.role,
-      };
-      setUser(authUser);
-      localStorage.setItem("j12_current_user", JSON.stringify(authUser));
-      return true;
-    }
-
-    return false;
+  const resetProfile = () => {
+    setProfile(DEFAULT_EXAMINER);
+    localStorage.setItem("j12_examiner_profile", JSON.stringify(DEFAULT_EXAMINER));
   };
 
-  const register = async (data: {
-    username: string;
-    password: string;
-    fullName: string;
-    agency: string;
-    email?: string;
-  }): Promise<{ success: boolean; message?: string }> => {
-    const cleanUser = data.username.trim();
-    const cleanPass = data.password.trim();
-
-    if (!cleanUser || cleanUser.length < 3) {
-      return { success: false, message: "Username must be at least 3 characters." };
-    }
-    if (!cleanPass || cleanPass.length < 4) {
-      return { success: false, message: "Password must be at least 4 characters." };
-    }
-
-    const accounts = getAccounts();
-    if (accounts.some((a) => a.username.toLowerCase() === cleanUser.toLowerCase())) {
-      return { success: false, message: "Username is already registered. Please sign in or use another username." };
-    }
-
-    const newAccount: StoredAccount = {
-      id: "usr-" + Date.now(),
-      username: cleanUser,
-      fullName: data.fullName.trim() || cleanUser,
-      agency: data.agency.trim() || "Independent Digital Forensic Lab",
-      email: data.email?.trim() || "",
-      role: "examiner",
-      passwordHash: cleanPass,
-      createdAt: new Date().toISOString(),
-    };
-
-    const updated = [...accounts, newAccount];
-    localStorage.setItem("j12_accounts", JSON.stringify(updated));
-
-    const authUser: User = {
-      id: newAccount.id,
-      username: newAccount.username,
-      fullName: newAccount.fullName,
-      agency: newAccount.agency,
-      email: newAccount.email,
-      role: newAccount.role,
-    };
-    setUser(authUser);
-    localStorage.setItem("j12_current_user", JSON.stringify(authUser));
-
-    return { success: true };
+  const user = {
+    id: profile.id,
+    username: profile.badgeNumber || "examiner",
+    fullName: profile.fullName,
+    agency: profile.agency,
+    email: profile.email,
+    role: profile.title || "Lead Examiner",
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem("j12_current_user");
-  };
+  const login = async () => true;
+  const register = async () => ({ success: true });
+  const logout = () => {};
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout }}>
+    <ExaminerContext.Provider value={{ profile, updateProfile, resetProfile, user, login, register, logout }}>
       {children}
-    </AuthContext.Provider>
+    </ExaminerContext.Provider>
   );
 }
 
+export function useExaminerProfile() {
+  return useContext(ExaminerContext);
+}
+
+// Backward-compatible hook alias for existing components
 export function useAuth() {
-  return useContext(AuthContext);
+  return useContext(ExaminerContext);
 }

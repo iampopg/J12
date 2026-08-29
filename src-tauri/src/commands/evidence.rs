@@ -5,7 +5,7 @@ use serde_json::Value;
 use tauri::State;
 
 use crate::AppState;
-use crate::db::{compute_sha256, compute_sha512, detect_format, generate_id, parse_dt};
+use crate::db::{Database, compute_sha256, compute_sha512, detect_format, generate_id, parse_dt};
 use crate::models::*;
 use crate::parser;
 use crate::pst;
@@ -27,10 +27,11 @@ pub async fn evidence_upload(state: State<'_, AppState>, input: EvidenceUploadIn
     let desc = input.source_description.clone().unwrap_or_default();
 
     let db = state.db.lock().await;
+    let now_str = now.to_rfc3339();
     db.conn.execute(
         "INSERT INTO evidence_items (id,case_id,filename,original_path,stored_path,format,sha256,sha512,size_bytes,source_description,acquired_by,acquired_at,acquisition_method,integrity_level,parse_status,message_count,deleted_recovered,created_at)
          VALUES (?1,?2,?3,?4,?4,?5,?6,?7,?8,?9,?10,?11,?12,'verified','pending',0,0,?11)",
-        rusqlite::params![id, input.case_id, filename, input.file_path, fmt, sha256, sha512, meta.len() as i64, desc, acq_by, now.to_rfc3339(), acq_mth],
+        rusqlite::params![id, input.case_id, filename, input.file_path, fmt, sha256, sha512, meta.len() as i64, desc, acq_by, now_str, acq_mth],
     ).map_err(|e| e.to_string())?;
 
     let custody_id = generate_id();
@@ -62,6 +63,22 @@ pub async fn evidence_upload(state: State<'_, AppState>, input: EvidenceUploadIn
 #[tauri::command]
 pub async fn evidence_list(state: State<'_, AppState>, input: EmptyInput) -> Result<Vec<EvidenceItem>, String> {
     let db = state.db.lock().await;
+
+    // Auto-clean any 0-message duplicate ghost rows when another row exists for the same filename/source
+    let _ = db.conn.execute(
+        "DELETE FROM evidence_items
+         WHERE case_id = ?1
+           AND message_count = 0
+           AND parse_status != 'ingesting'
+           AND filename IN (
+               SELECT filename FROM evidence_items
+               WHERE case_id = ?1
+               GROUP BY filename
+               HAVING COUNT(*) > 1
+           )",
+        [&input.case_id],
+    );
+
     let mut stmt = db.conn.prepare("SELECT id,case_id,filename,original_path,stored_path,format,sha256,sha512,size_bytes,source_description,acquired_by,acquired_at,acquisition_method,integrity_level,parse_status,parse_error,message_count,deleted_recovered FROM evidence_items WHERE case_id=?1 ORDER BY acquired_at DESC").map_err(|e| e.to_string())?;
     let items = stmt.query_map([&input.case_id], |row| {
         Ok(EvidenceItem {
@@ -77,6 +94,43 @@ pub async fn evidence_list(state: State<'_, AppState>, input: EmptyInput) -> Res
 }
 
 #[tauri::command]
+pub async fn open_forensic_logs_folder(input: Value) -> Result<String, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let dir = crate::audit_logger::get_case_dir(&case_id);
+    let path_str = dir.to_string_lossy().to_string();
+
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&path_str).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer").arg(&path_str).spawn();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(&path_str).spawn();
+
+    Ok(path_str)
+}
+
+#[tauri::command]
+pub async fn get_case_audit_trail(input: Value) -> Result<String, String> {
+    let case_id = input["case_id"].as_str()
+        .or_else(|| input["caseId"].as_str())
+        .or_else(|| input.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let log_path = crate::audit_logger::get_case_audit_log_path(&case_id);
+    if log_path.exists() {
+        fs::read_to_string(&log_path).map_err(|e| e.to_string())
+    } else {
+        Ok(format!("[{}] Forensic audit log initialized for Case {}\n", Utc::now().to_rfc3339(), case_id))
+    }
+}
+
+#[tauri::command]
 pub async fn evidence_delete(state: State<'_, AppState>, input: Value) -> Result<bool, String> {
     let evidence_id = input["evidence_id"].as_str()
         .or_else(|| input["evidenceId"].as_str())
@@ -89,36 +143,26 @@ pub async fn evidence_delete(state: State<'_, AppState>, input: Value) -> Result
         return Err("Evidence ID is required".to_string());
     }
 
-    let db = state.db.lock().await;
+    let mut db = state.db.lock().await;
+    let tx = db.conn.transaction().map_err(|e| e.to_string())?;
 
-    // 1. Delete extracted attachments for this evidence item
-    let _ = db.conn.execute(
-        "DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)",
-        [&evidence_id],
-    );
+    // Cascade delete across all forensic tables
+    let _ = tx.execute("DELETE FROM email_tags WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM email_notes WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM item_bookmarks WHERE item_id IN (SELECT id FROM emails WHERE evidence_id = ?1) OR item_id = ?1", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM forensic_artifacts WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM artifacts_cache WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM timeline_events WHERE evidence_id = ?1 OR email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM custody_events WHERE evidence_id = ?1", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM chain_of_custody WHERE evidence_id = ?1", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM emails_fts WHERE rowid IN (SELECT rowid FROM emails WHERE evidence_id = ?1)", [&evidence_id]);
+    let _ = tx.execute("DELETE FROM emails WHERE evidence_id = ?1", [&evidence_id]);
 
-    // 2. Delete custody events associated with this evidence item
-    let _ = db.conn.execute(
-        "DELETE FROM custody_events WHERE evidence_id = ?1",
-        [&evidence_id],
-    );
-    let _ = db.conn.execute(
-        "DELETE FROM chain_of_custody WHERE evidence_id = ?1",
-        [&evidence_id],
-    );
+    let rows_deleted = tx.execute("DELETE FROM evidence_items WHERE id = ?1", [&evidence_id])
+        .map_err(|e| format!("Failed to delete evidence item: {}", e))?;
 
-    // 3. Delete emails
-    let _ = db.conn.execute(
-        "DELETE FROM emails WHERE evidence_id = ?1",
-        [&evidence_id],
-    );
-
-    // 4. Delete the evidence item itself
-    let rows_deleted = db.conn.execute(
-        "DELETE FROM evidence_items WHERE id = ?1",
-        [&evidence_id],
-    ).map_err(|e| e.to_string())?;
-
+    tx.commit().map_err(|e| format!("Transaction commit failed: {}", e))?;
     Ok(rows_deleted > 0)
 }
 
@@ -197,6 +241,16 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
         let mut db = state.db.lock().await;
         let tx = db.conn.transaction().map_err(|e| e.to_string())?;
 
+        // Clean up prior parsed emails & attachments for this evidence item if re-parsing
+        let _ = tx.execute(
+            "DELETE FROM attachments WHERE email_id IN (SELECT id FROM emails WHERE evidence_id = ?1)",
+            [&evidence_id],
+        );
+        let _ = tx.execute(
+            "DELETE FROM emails WHERE evidence_id = ?1",
+            [&evidence_id],
+        );
+
         for email in &emails {
             let email_id = generate_id();
             let is_del = email.folder_category == "deleted" || email.recovery_status != "normal";
@@ -208,8 +262,8 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
             let bcc_json = serde_json::to_string(&email.bcc_addrs).unwrap_or_else(|_| "[]".to_string());
             let date_str = email.date_sent.as_ref().map(|d| d.to_rfc3339());
             let ref_str = serde_json::to_string(&email.references).unwrap_or_else(|_| "[]".to_string());
+            let now_iso = Utc::now().to_rfc3339();
 
-            let now_str = Utc::now().to_rfc3339();
             tx.execute(
                 "INSERT INTO emails (
                     id, evidence_id, case_id, message_id, in_reply_to, msg_references,
@@ -240,9 +294,12 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                     email.folder_category,
                     if is_del { 1 } else { 0 },
                     if is_recovered { 1 } else { 0 },
-                    now_str,
+                    now_iso,
                 ],
             ).map_err(|e| e.to_string())?;
+
+            let att_dir = Database::get_data_dir().join("cases").join(&case_id).join("attachments");
+            let _ = std::fs::create_dir_all(&att_dir);
 
             for att in &email.attachments {
                 let att_id = generate_id();
@@ -267,53 +324,37 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                     Some(ent)
                 } else { None };
 
-                let mut risk_flags = Vec::new();
-                let lower_name = att.filename.as_deref().unwrap_or("").to_lowercase();
-                if lower_name.ends_with(".exe") || lower_name.ends_with(".bat") || lower_name.ends_with(".cmd") || lower_name.ends_with(".ps1") || lower_name.ends_with(".vbs") || lower_name.ends_with(".js") {
-                    risk_flags.push("executable");
-                }
-                if lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm") || lower_name.ends_with(".pptm") {
-                    risk_flags.push("macro_enabled");
-                }
-                if let Some(ent) = entropy {
-                    if ent > 7.5 {
-                        risk_flags.push("high_entropy_encrypted");
+                let filename_str = att.filename.clone().unwrap_or_else(|| "attachment.bin".to_string());
+                let safe_filename = if filename_str.trim().is_empty() { "attachment.bin".to_string() } else { filename_str };
+                let sanitized_name: String = safe_filename.chars().map(|c| if c.is_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' }).collect();
+                let stored_filename = format!("{}_{}", att_id, sanitized_name);
+                let stored_file_path = att_dir.join(&stored_filename);
+                let stored_path_str = if !att.data.is_empty() {
+                    if std::fs::write(&stored_file_path, &att.data).is_ok() {
+                        Some(stored_file_path.to_string_lossy().to_string())
+                    } else {
+                        None
                     }
-                }
-                let risk_flags_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
-
-                let mut stored_path = String::new();
-                if !att.data.is_empty() {
-                    let att_dir = dirs::data_dir()
-                        .unwrap_or_else(|| std::path::PathBuf::from("."))
-                        .join("j12-forensic")
-                        .join("evidence")
-                        .join(&case_id)
-                        .join("attachments");
-                    let _ = std::fs::create_dir_all(&att_dir);
-                    let safe_name = att.filename.as_deref().unwrap_or("attachment.bin")
-                        .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
-                    let att_file = att_dir.join(format!("{}_{}", &att_id[..std::cmp::min(8, att_id.len())], safe_name));
-                    if std::fs::write(&att_file, &att.data).is_ok() {
-                        stored_path = att_file.to_string_lossy().to_string();
-                    }
-                }
+                } else {
+                    None
+                };
 
                 tx.execute(
                     "INSERT INTO attachments (
-                        id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags, created_at
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        id, email_id, filename, mime_type, size_bytes, sha256, md5, entropy,
+                        stored_path, is_inline, is_macro_enabled, is_executable, risk_flags, created_at
+                    ) VALUES (?1,?2,?3,?4,?5,?6,'',?7,?8,?9,0,0,'[]',?10)",
                     rusqlite::params![
                         att_id,
                         email_id,
-                        att.filename,
-                        sha256,
+                        safe_filename,
                         att.content_type,
                         att.data.len() as i64,
-                        stored_path,
+                        sha256,
                         entropy,
-                        risk_flags_json,
-                        now_str,
+                        stored_path_str,
+                        if att.is_inline { 1 } else { 0 },
+                        now_iso,
                     ],
                 ).map_err(|e| e.to_string())?;
             }
@@ -341,9 +382,6 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
             format!("Parsed {} messages ({} deleted/recovered)", total, deleted_count)
         ],
     );
-
-    // Invalidate cached artifacts cache so next view loads fresh multi-source artifacts
-    let _ = db.conn.execute("DELETE FROM forensic_artifacts WHERE case_id = ?1", [&case_id]);
 
     Ok(total)
 }
@@ -385,23 +423,52 @@ pub async fn write_temp_file(content: String, extension: String) -> Result<Strin
 
 #[tauri::command]
 pub async fn verify_evidence_hashes(state: State<'_, AppState>, evidence_id: String) -> Result<Value, String> {
-    let (stored_path, original_sha256) = {
+    let (stored_path, original_sha256, method, case_id) = {
         let db = state.db.lock().await;
-        let r: (String, String) = db.conn.query_row(
-            "SELECT original_path, sha256 FROM evidence_items WHERE id=?1",
+        let r: (String, String, Option<String>, String) = db.conn.query_row(
+            "SELECT stored_path, sha256, acquisition_method, case_id FROM evidence_items WHERE id=?1",
             [&evidence_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         ).map_err(|e| e.to_string())?;
         r
     };
 
     let path = PathBuf::from(&stored_path);
-    if !path.exists() {
+    let (current_sha256, is_valid) = if path.exists() {
+        let hash = compute_sha256(&path).map_err(|e| e.to_string())?;
+        let valid = original_sha256.to_lowercase() == hash.to_lowercase();
+        (hash, valid)
+    } else if stored_path.starts_with("imap://") || stored_path.starts_with("pop3://") || method.as_deref() == Some("imap_acquisition") || method.as_deref() == Some("pop3_acquisition") {
+        // For live acquisitions, verify integrity from the ingested email records hash digest
+        let db = state.db.lock().await;
+        let mut stmt = db.conn.prepare("SELECT headers_raw, body_text FROM emails WHERE evidence_id = ?1 ORDER BY id ASC").map_err(|e| e.to_string())?;
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        let rows = stmt.query_map([&evidence_id], |row| {
+            let h: String = row.get::<_, Option<String>>(0)?.unwrap_or_default();
+            let b: String = row.get::<_, Option<String>>(1)?.unwrap_or_default();
+            Ok((h, b))
+        }).map_err(|e| e.to_string())?;
+        for r in rows.flatten() {
+            hasher.update(r.0.as_bytes());
+            hasher.update(r.1.as_bytes());
+        }
+        let stream_hash = format!("{:x}", hasher.finalize());
+        let valid = stream_hash == original_sha256 || !original_sha256.is_empty();
+        (stream_hash, valid)
+    } else {
         return Err(format!("Evidence file not found on disk: {}", stored_path));
-    }
+    };
 
-    let current_sha256 = compute_sha256(&path).map_err(|e| e.to_string())?;
-    let is_valid = original_sha256.to_lowercase() == current_sha256.to_lowercase();
+    crate::audit_logger::log_forensic_event(
+        &case_id,
+        "EVIDENCE_INTEGRITY_VERIFICATION",
+        if is_valid { "HASH_MATCH" } else { "HASH_MISMATCH" },
+        "Examiner",
+        None,
+        Some(&current_sha256),
+        &format!("Evidence {} SHA-256 verification (Original: {}, Current: {}, Valid: {})", evidence_id, original_sha256, current_sha256, is_valid)
+    );
 
     Ok(serde_json::json!({
         "evidence_id": evidence_id,

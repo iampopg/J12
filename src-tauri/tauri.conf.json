@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "J12 Forensic Suite",
         "width": 1400,
         "height": 900,

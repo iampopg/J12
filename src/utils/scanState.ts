@@ -4,7 +4,6 @@ export interface ScanState {
   scanning: boolean;
   progress: number;
   stage: string;
-  startedAt?: number;
 }
 
 let state: ScanState = {
@@ -13,36 +12,12 @@ let state: ScanState = {
   stage: "",
 };
 
-let autoResetTimer: any = null;
-
 const listeners = new Set<() => void>();
 
 export const scanStore = {
   getState: (): ScanState => state,
   setState: (updates: Partial<ScanState>) => {
-    state = { 
-      ...state, 
-      ...updates,
-      startedAt: updates.scanning ? (state.startedAt || Date.now()) : undefined,
-    };
-    
-    // Auto-expire scanning after 20 seconds to prevent UI lockup
-    if (autoResetTimer) clearTimeout(autoResetTimer);
-    if (state.scanning) {
-      autoResetTimer = setTimeout(() => {
-        scanStore.reset();
-      }, 20000);
-    }
-
-    listeners.forEach((fn) => fn());
-  },
-  reset: () => {
-    if (autoResetTimer) clearTimeout(autoResetTimer);
-    state = {
-      scanning: false,
-      progress: 0,
-      stage: "",
-    };
+    state = { ...state, ...updates };
     listeners.forEach((fn) => fn());
   },
   subscribe: (listener: () => void) => {
@@ -66,5 +41,5 @@ export function useScanState() {
     scanStore.setState(updates);
   };
 
-  return [scanState, updateScanState, scanStore.reset] as const;
+  return [scanState, updateScanState] as const;
 }

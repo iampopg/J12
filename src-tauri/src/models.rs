@@ -62,10 +62,6 @@ pub struct EmailMessage {
     pub deleted_recovered: bool,
     pub risk_score: u8,
     pub flags: String,
-    #[serde(default)]
-    pub attachment_count: u32,
-    #[serde(default)]
-    pub image_count: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -151,6 +147,7 @@ pub struct CaseCreateInput {
     pub target_organization: Option<String>,
     pub investigation_type: Option<String>,
     pub working_dir: Option<String>,
+    pub owner_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -162,6 +159,7 @@ pub struct CaseUpdateInput {
     pub target_email: Option<String>,
     pub target_name: Option<String>,
     pub target_organization: Option<String>,
+    pub owner_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -177,6 +175,7 @@ pub struct EmailListInput {
     pub limit: Option<u32>,
     pub offset: Option<u32>,
     pub from_filter: Option<String>,
+    pub evidence_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -205,11 +204,13 @@ pub struct Entity {
 pub struct EntityInput {
     pub case_id: String,
     pub email_address: String,
+    pub evidence_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct EmptyInput {
     pub case_id: String,
+    pub evidence_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

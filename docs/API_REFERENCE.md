@@ -26,7 +26,116 @@
 |---------|-------|--------|-------------|
 | `email_list` | `EmailListInput` | `EmailMessage[]` | List emails with filters |
 | `email_get` | `EmptyInput` | `EmailMessage?` | Get email by ID |
-| `search` | `SearchInput` | `EmailMessage[]` | Advanced search |
+| `search` | `SearchInput` | `EmailMessage[]` | Basic search (LIKE) |
+| `fts_search` | `FtsSearchInput` | `FtsSearchResponse` | **FTS5 full-text search** |
+
+### FTS5 Full-Text Search
+
+**Command:** `fts_search`
+
+**Input:**
+```typescript
+interface FtsSearchInput {
+  case_id: string;
+  query: string;
+  limit?: number;
+  offset?: number;
+  evidence_id?: string;
+}
+```
+
+**Output:**
+```typescript
+interface FtsSearchResponse {
+  total_hits: number;
+  execution_ms: number;
+  query_parsed: string;
+  items: FtsSearchResultItem[];
+}
+
+interface FtsSearchResultItem {
+  id: string;
+  evidence_id: string;
+  case_id: string;
+  message_id: string | null;
+  from_addr: string;
+  from_display: string | null;
+  to_addrs: string;
+  cc_addrs: string;
+  subject: string | null;
+  date_sent: string | null;
+  date_sent_utc: string | null;
+  folder_category: string;
+  is_deleted: boolean;
+  deleted_recovered: boolean;
+  risk_score: number;
+  flags: string | null;
+  snippet: string | null;  // Highlighted match snippet
+  match_rank: number;      // BM25 relevance score
+}
+```
+
+**Query Syntax:**
+| Syntax | Example | Description |
+|--------|---------|-------------|
+| Plain words | `wire transfer` | All words (implicit AND) |
+| AND | `fraud AND wire` | Both words |
+| OR | `wire OR offshore` | Either word |
+| NOT | `wire NOT domestic` | Exclude word |
+| Phrase | `"strictly confidential"` | Exact phrase |
+| Wildcard | `crypt*` | Prefix match |
+| Proximity | `NEAR("wire" "transfer", 5)` | Words within 5 words |
+| Stemming | `transfer` | Matches transfers, transferring |
+
+### Attachments
+
+| Command | Input | Output | Description |
+|---------|-------|--------|-------------|
+| `email_attachments` | `emailId: String` | `Attachment[]` | Get attachments for email |
+| `case_attachments_list` | `AttachmentListInput` | `CaseAttachmentItem[]` | List case attachments |
+| `case_attachments_summary` | `caseId: String` | `AttachmentCategoryCounts` | Attachment counts by category |
+| `get_attachment_preview` | `attachmentId: String` | `string?` | Get base64 preview |
+| `open_attachment_in_system` | `attachmentId: String` | `string` | Open in OS viewer |
+| `reveal_in_finder` | `attachmentId: String` | `string` | Reveal in file manager |
+| `export_attachment` | `attachmentId: String` | `string` | Export to Downloads |
+| `extract_attachment_text` | `attachmentId: String` | `string` | **Extract text from document** |
+| `batch_extract_case_attachments` | `caseId: String` | `number` | **Batch extract all attachments** |
+
+### Document Extraction & OCR
+
+| Command | Input | Output | Description |
+|---------|-------|--------|-------------|
+| `extract_attachment_text` | `attachmentId: String` | `string` | Extract text from PDF/DOCX/XLSX/PPTX |
+| `batch_extract_case_attachments` | `caseId: String` | `number` | Extract text from all case attachments |
+| `ocr_attachment_image` | `attachmentId: String` | `string` | OCR image to text |
+
+**Supported Formats:**
+- **PDF:** Object streams, text chunks, bookmarks
+- **Word (.docx):** Paragraphs, tables, headers
+- **Excel (.xlsx):** Cell values, shared strings
+- **PowerPoint (.pptx):** Slide text, presenter notes
+- **Images:** PNG, JPG, TIFF, BMP, WEBP (via macOS Vision or Tesseract)
+- **Text:** TXT, CSV, RTF, HTML, XML, JSON
+
+### IMAP Acquisition
+
+| Command | Input | Output | Description |
+|---------|-------|--------|-------------|
+| `imap_list_mailboxes` | `ImapConfigInput` | `ImapMailbox[]` | List IMAP folders |
+| `imap_fetch_emails` | `ImapFetchInput` | `ImapAcquisitionResult` | Fetch emails via IMAP |
+| `imap_cancel_acquisition` | - | `void` | Cancel active IMAP fetch |
+| `imap_test_connection` | `ImapConfigInput` | `bool` | Test IMAP connection |
+
+**Authentication:**
+- **Password:** Traditional LOGIN authentication
+- **OAuth2:** SASL XOAUTH2 (RFC 7628) for Google Workspace and Microsoft 365
+
+### POP3 Acquisition
+
+| Command | Input | Output | Description |
+|---------|-------|--------|-------------|
+| `pop3_test_connection` | `Pop3ConfigInput` | `bool` | Test POP3 connection |
+| `pop3_fetch_emails` | `Pop3FetchInput` | `Pop3AcquisitionResult` | Fetch emails via POP3 |
 
 ### Analysis
 
