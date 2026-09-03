@@ -118,7 +118,7 @@ pub fn calculate_risk_score(
     spoof_findings: &[SpoofingFinding],
     attachment_analysis: &[AttachmentAnalysis],
 ) -> u8 {
-    let mut score: u8 = 0;
+    let mut score: u32 = 0;
     
     if auth_results.spf.result == "fail" {
         score += 15;
@@ -140,7 +140,7 @@ pub fn calculate_risk_score(
     }
     
     for att in attachment_analysis {
-        score += att.risk_score / 4;
+        score += (att.risk_score as u32) / 4;
     }
     
     for anomaly in &header_analysis.routing_anomalies {
@@ -153,5 +153,5 @@ pub fn calculate_risk_score(
         }
     }
     
-    score.min(100)
+    score.min(100) as u8
 }

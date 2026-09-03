@@ -250,6 +250,7 @@ fn scan_single_email(
         re,
         eid,
         from_addr,
+        _from_disp.as_deref(),
         subj_opt,
         date_opt,
         &full_text,

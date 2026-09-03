@@ -28,10 +28,7 @@ export function ImapAcquisition({ caseId, onComplete }: Props) {
 
   const getSaved = () => {
     try {
-      const data = JSON.parse(localStorage.getItem(`imap_creds_${caseId}`) || "{}");
-      delete data.password;
-      delete data.accessToken;
-      return data;
+      return JSON.parse(localStorage.getItem(`imap_creds_${caseId}`) || "{}");
     } catch { return {}; }
   };
   const saved = getSaved();
@@ -39,11 +36,12 @@ export function ImapAcquisition({ caseId, onComplete }: Props) {
   const [protocol, setProtocol] = useState<"imap" | "pop3">(saved.protocol || "imap");
   const [authType, setAuthType] = useState<"password" | "oauth2">(saved.authType || "password");
   const [oauthProvider, setOauthProvider] = useState<"google" | "microsoft">("google");
-  const [accessToken, setAccessToken] = useState<string>("");
+  const [accessToken, setAccessToken] = useState<string>(saved.accessToken || "");
   const [deviceFlow, setDeviceFlow] = useState<{ user_code: string; verification_uri: string; device_code: string } | null>(null);
   const [username, setUsername] = useState(saved.username || "");
-  const [password, setPassword] = useState("");
+  const [password, setPassword] = useState(saved.password || "");
   const [showPassword, setShowPassword] = useState(false);
+  const [savePassword, setSavePassword] = useState(saved.savePassword !== false);
   const [server, setServer] = useState(saved.server || "imap.gmail.com");
   const [port, setPort] = useState(saved.port || "993");
   const [useSsl, setUseSsl] = useState(saved.useSsl !== undefined ? saved.useSsl : true);
@@ -58,13 +56,19 @@ export function ImapAcquisition({ caseId, onComplete }: Props) {
 
   useEffect(() => {
     localStorage.setItem(`imap_creds_${caseId}`, JSON.stringify({
-      protocol, authType, username, server, port, useSsl, mailboxScope, mailboxes
+      protocol,
+      authType,
+      username,
+      password: savePassword ? password : "",
+      accessToken: savePassword ? accessToken : "",
+      savePassword,
+      server,
+      port,
+      useSsl,
+      mailboxScope,
+      mailboxes
     }));
-  }, [caseId, protocol, authType, username, server, port, useSsl, mailboxScope, mailboxes]);
-
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs, localLogs]);
+  }, [caseId, protocol, authType, username, password, accessToken, savePassword, server, port, useSsl, mailboxScope, mailboxes]);
 
   const handleProtocolChange = (newProtocol: "imap" | "pop3") => {
     setProtocol(newProtocol);
@@ -114,32 +118,22 @@ export function ImapAcquisition({ caseId, onComplete }: Props) {
   const handleStartDeviceAuth = async () => {
     addLocalLog(`Starting OAuth 2.0 Device Flow for ${oauthProvider.toUpperCase()}...`);
     try {
-      const flow = await invoke<any>("imap_device_flow_start", {
-        input: { provider: oauthProvider }
-      });
+      const flow = await invoke<any>("imap_device_flow_start", { input: { provider: oauthProvider } });
       if (flow?.user_code) {
         setDeviceFlow(flow);
         addLocalLog(`👉 Open browser: ${flow.verification_uri} | Enter code: ${flow.user_code}`);
         pollForToken(flow.device_code);
       }
-    } catch (e: any) {
-      addLocalLog(`❌ OAuth Error: ${e}`);
-    }
+    } catch (e: any) { addLocalLog(`❌ OAuth Error: ${e}`); }
   };
 
   const pollForToken = (deviceCode: string) => {
     let attempts = 0;
     const interval = setInterval(async () => {
       attempts++;
-      if (attempts > 60) {
-        clearInterval(interval);
-        addLocalLog("⚠️ OAuth authentication timed out.");
-        return;
-      }
+      if (attempts > 60) { clearInterval(interval); addLocalLog("⚠️ OAuth authentication timed out."); return; }
       try {
-        const res = await invoke<any>("imap_device_flow_poll", {
-          input: { provider: oauthProvider, device_code: deviceCode }
-        });
+        const res = await invoke<any>("imap_device_flow_poll", { input: { provider: oauthProvider, device_code: deviceCode } });
         if (res?.access_token) {
           clearInterval(interval);
           setAccessToken(res.access_token);
@@ -353,9 +347,18 @@ export function ImapAcquisition({ caseId, onComplete }: Props) {
               required
               autoComplete="new-password"
             />
-            <div style={{ fontSize: 10, color: "var(--text-3)", marginTop: 3, display: "flex", alignItems: "center", gap: 4 }}>
-              <span>🛡️</span>
-              <span>In-memory only. Passwords are never saved to disk or logs.</span>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+              <label style={{ fontSize: 11, color: "var(--text-2)", display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={savePassword}
+                  onChange={e => setSavePassword(e.target.checked)}
+                />
+                Remember password for this case
+              </label>
+              {password && savePassword && (
+                <span style={{ fontSize: 10, color: "#10b981" }}>✓ Saved locally</span>
+              )}
             </div>
           </div>
         </div>

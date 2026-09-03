@@ -339,22 +339,27 @@ pub async fn parse_evidence(state: State<'_, AppState>, evidence_id: String) -> 
                     None
                 };
 
+                let mut risk_flags = Vec::new();
+                let lower = safe_filename.to_lowercase();
+                let is_exe = lower.ends_with(".exe") || lower.ends_with(".bat") || lower.ends_with(".ps1");
+                let is_macro = lower.ends_with(".docm") || lower.ends_with(".xlsm");
+                if is_exe { risk_flags.push("executable"); }
+                if is_macro { risk_flags.push("macro_enabled"); }
+                if let Some(ent) = entropy { if ent > 7.5 { risk_flags.push("high_entropy_encrypted"); } }
+                let risk_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
+
                 tx.execute(
                     "INSERT INTO attachments (
                         id, email_id, filename, mime_type, size_bytes, sha256, md5, entropy,
                         stored_path, is_inline, is_macro_enabled, is_executable, risk_flags, created_at
-                    ) VALUES (?1,?2,?3,?4,?5,?6,'',?7,?8,?9,0,0,'[]',?10)",
+                    ) VALUES (?1,?2,?3,?4,?5,?6,'',?7,?8,?9,?10,?11,?12,?13)",
                     rusqlite::params![
-                        att_id,
-                        email_id,
-                        safe_filename,
-                        att.content_type,
-                        att.data.len() as i64,
-                        sha256,
-                        entropy,
-                        stored_path_str,
+                        att_id, email_id, safe_filename, att.content_type,
+                        att.data.len() as i64, sha256, entropy, stored_path_str,
                         if att.is_inline { 1 } else { 0 },
-                        now_iso,
+                        if is_macro { 1 } else { 0 },
+                        if is_exe { 1 } else { 0 },
+                        risk_json, now_iso,
                     ],
                 ).map_err(|e| e.to_string())?;
             }

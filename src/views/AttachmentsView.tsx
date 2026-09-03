@@ -231,15 +231,6 @@ export function AttachmentsView({ caseId, evidenceFilter }: AttachmentsProps) {
           </p>
         </div>
         <div className="row gap-2">
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            style={{ fontWeight: 700, fontSize: 11.5 }}
-            onClick={handleBatchExtract}
-            disabled={batchExtracting}
-          >
-            {batchExtracting ? "⚡ Extracting All..." : "⚡ Batch OCR / Parse All"}
-          </button>
           <div className="row" style={{ background: "var(--bg-2)", borderRadius: "var(--r-sm)", padding: 2, border: "1px solid var(--border)" }}>
             <button
               className={`btn btn-sm ${viewMode === "table" ? "btn-primary" : "btn-ghost"}`}

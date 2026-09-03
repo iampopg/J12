@@ -42,6 +42,7 @@ export interface Dashboard {
   spam_count: number;
   other_count: number;
   high_risk_emails: number;
+  top_correspondents?: Array<{ email: string; sent: number; received: number }>;
 }
 
 export type View =

@@ -7,12 +7,11 @@ pub fn parse_multipart(body: &str, boundary: &str) -> (Option<String>, Option<St
     let mut attachments = Vec::new();
     
     let delimiter = format!("--{}", boundary);
-    
     let parts: Vec<&str> = body.split(&delimiter).collect();
     
     for part in &parts {
         let part = part.trim_start_matches("\r\n").trim_start_matches("\n");
-        if part.is_empty() || part == "--" {
+        if part.is_empty() || part.starts_with("--") {
             continue;
         }
         
@@ -23,23 +22,36 @@ pub fn parse_multipart(body: &str, boundary: &str) -> (Option<String>, Option<St
         } else {
             continue;
         };
+
+        // Unfold folded header lines
+        let mut unfolded: Vec<String> = Vec::new();
+        for line in header_section.lines() {
+            if (line.starts_with(' ') || line.starts_with('\t')) && !unfolded.is_empty() {
+                let last = unfolded.last_mut().unwrap();
+                last.push(' ');
+                last.push_str(line.trim());
+            } else if !line.trim().is_empty() {
+                unfolded.push(line.trim().to_string());
+            }
+        }
         
         let mut part_content_type = String::new();
+        let mut raw_content_type = String::new();
         let mut part_encoding = String::new();
         let mut part_filename = None;
         let mut part_name = None;
         let mut is_inline = false;
         
-        for line in header_section.lines() {
+        for line in &unfolded {
             if let Some((key, value)) = line.split_once(':') {
                 let key = key.trim().to_lowercase();
                 let value = value.trim();
                 match key.as_str() {
                     "content-type" => {
+                        raw_content_type = value.to_string();
                         part_content_type = value.split(';').next().unwrap_or(value).trim().to_lowercase();
-                        if let Some(idx) = value.find("name=") {
-                            let name_rest = &value[idx + 5..];
-                            part_name = Some(name_rest.trim_matches('"').trim().to_string());
+                        if let Some(n) = extract_param_value(value, "name").or_else(|| extract_param_value(value, "name*")) {
+                            part_name = Some(decode_mime_word(&clean_rfc2231_param(&n)));
                         }
                     }
                     "content-transfer-encoding" => part_encoding = value.to_lowercase(),
@@ -48,9 +60,8 @@ pub fn parse_multipart(body: &str, boundary: &str) -> (Option<String>, Option<St
                         if disp_lower.contains("inline") {
                             is_inline = true;
                         }
-                        if let Some(idx) = value.find("filename=") {
-                            let fname_rest = &value[idx + 9..];
-                            part_filename = Some(fname_rest.trim_matches('"').trim_matches('\'').trim().to_string());
+                        if let Some(f) = extract_param_value(value, "filename").or_else(|| extract_param_value(value, "filename*")) {
+                            part_filename = Some(decode_mime_word(&clean_rfc2231_param(&f)));
                         }
                     }
                     _ => {}
@@ -67,17 +78,21 @@ pub fn parse_multipart(body: &str, boundary: &str) -> (Option<String>, Option<St
         };
         
         if part_content_type.starts_with("multipart/") {
-            if let Some(inner_boundary) = extract_boundary(&part_content_type) {
-                let (t, h, a) = parse_multipart(body_content, &inner_boundary);
+            let inner_boundary = extract_boundary(&raw_content_type)
+                .or_else(|| extract_boundary(&part_content_type));
+            if let Some(inner) = inner_boundary {
+                let (t, h, a) = parse_multipart(body_content, &inner);
                 if let Some(t) = t { text_parts.push(t); }
                 if let Some(h) = h { html_parts.push(h); }
                 attachments.extend(a);
             }
-        } else if part_content_type.starts_with("text/plain") {
+        } else if part_content_type.starts_with("text/plain") && part_filename.is_none() && part_name.is_none() && !is_inline {
             text_parts.push(String::from_utf8_lossy(&decoded).to_string());
-        } else if part_content_type.starts_with("text/html") {
+        } else if part_content_type.starts_with("text/html") && part_filename.is_none() && part_name.is_none() && !is_inline {
             html_parts.push(String::from_utf8_lossy(&decoded).to_string());
-        } else if part_content_type.starts_with("image/") || part_content_type.starts_with("application/") {
+        } else if part_content_type.starts_with("image/") || part_content_type.starts_with("application/") 
+               || part_content_type.starts_with("audio/") || part_content_type.starts_with("video/")
+               || part_content_type.starts_with("message/") || part_filename.is_some() || part_name.is_some() {
             let filename = part_filename.or(part_name).or_else(|| {
                 let ext = match part_content_type.as_str() {
                     "image/jpeg" | "image/jpg" => "jpg",
@@ -218,13 +233,58 @@ pub fn decode_single_mime_word(s: &str) -> String {
     }
 }
 
-pub fn extract_boundary(content_type: &str) -> Option<String> {
-    if let Some(idx) = content_type.find("boundary=") {
-        let rest = &content_type[idx + 9..];
-        let boundary = rest.trim_matches('"').trim_matches('\'').trim();
-        if !boundary.is_empty() {
-            return Some(boundary.to_string());
+pub fn extract_param_value(header: &str, param_name: &str) -> Option<String> {
+    let lower = header.to_lowercase();
+    let needle = format!("{}=", param_name.to_lowercase());
+    if let Some(idx) = lower.find(&needle) {
+        let rest = &header[idx + needle.len()..];
+        let trimmed = rest.trim_start();
+        if trimmed.starts_with('"') {
+            if let Some(end) = trimmed[1..].find('"') {
+                return Some(trimmed[1..=end].to_string());
+            }
+        } else if trimmed.starts_with('\'') {
+            if let Some(end) = trimmed[1..].find('\'') {
+                return Some(trimmed[1..=end].to_string());
+            }
+        } else {
+            let val = trimmed.split(|c: char| c == ';' || c == '\r' || c == '\n' || c.is_whitespace()).next().unwrap_or("").trim();
+            if !val.is_empty() {
+                return Some(val.to_string());
+            }
         }
     }
     None
+}
+
+pub fn extract_boundary(content_type: &str) -> Option<String> {
+    extract_param_value(content_type, "boundary")
+}
+
+pub fn clean_rfc2231_param(s: &str) -> String {
+    let s = s.trim();
+    if let Some(idx) = s.find("''") {
+        let encoded = &s[idx + 2..];
+        percent_decode_str(encoded)
+    } else {
+        s.to_string()
+    }
+}
+
+fn percent_decode_str(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(h1), Some(h2)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                out.push((h1 << 4) | h2);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).to_string()
 }

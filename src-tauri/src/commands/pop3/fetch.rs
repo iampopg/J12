@@ -204,17 +204,65 @@ pub async fn pop3_fetch_emails(
                     {
                         let mut db = db_mutex.blocking_lock();
 
-                        let is_duplicate = if !parsed.message_id.trim().is_empty() {
+                        let existing_email_id: Option<String> = if !parsed.message_id.trim().is_empty() {
                             db.conn.query_row(
-                                "SELECT 1 FROM emails WHERE case_id = ?1 AND message_id = ?2",
+                                "SELECT id FROM emails WHERE case_id = ?1 AND message_id = ?2",
                                 rusqlite::params![&case_id, &parsed.message_id],
-                                |_| Ok(true)
-                            ).unwrap_or(false)
+                                |r| r.get(0)
+                            ).ok()
                         } else {
-                            false
+                            None
                         };
 
-                        if is_duplicate {
+                        if let Some(existing_id) = existing_email_id {
+                            if !parsed.attachments.is_empty() {
+                                let att_count: i64 = db.conn.query_row(
+                                    "SELECT COUNT(*) FROM attachments WHERE email_id = ?1",
+                                    [&existing_id],
+                                    |r| r.get(0)
+                                ).unwrap_or(0);
+                                if att_count == 0 {
+                                    for att in &parsed.attachments {
+                                        let att_id = generate_id();
+                                        let sha256 = {
+                                            let mut hasher = Sha256::new();
+                                            hasher.update(&att.data);
+                                            format!("{:x}", hasher.finalize())
+                                        };
+                                        let entropy = if !att.data.is_empty() {
+                                            let mut counts = [0u64; 256];
+                                            for &b in &att.data { counts[b as usize] += 1; }
+                                            let len = att.data.len() as f64;
+                                            let mut ent = 0.0f64;
+                                            for &c in &counts { if c > 0 { let p = c as f64 / len; ent -= p * p.log2(); } }
+                                            ent
+                                        } else { 0.0 };
+
+                                        let mut risk_flags = Vec::new();
+                                        let lower_name = att.filename.as_deref().unwrap_or("").to_lowercase();
+                                        let is_exe = lower_name.ends_with(".exe") || lower_name.ends_with(".bat") || lower_name.ends_with(".ps1");
+                                        let is_macro = lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm");
+                                        if is_exe { risk_flags.push("executable"); }
+                                        if is_macro { risk_flags.push("macro_enabled"); }
+                                        if entropy > 7.5 { risk_flags.push("high_entropy_encrypted"); }
+                                        let risk_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
+
+                                        let mut stored_path = String::new();
+                                        if !att.data.is_empty() {
+                                            let att_dir = crate::db::Database::get_data_dir().join("cases").join(&case_id).join("attachments");
+                                            let _ = std::fs::create_dir_all(&att_dir);
+                                            let safe_name = att.filename.as_deref().unwrap_or("attachment.bin").replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+                                            let att_file = att_dir.join(format!("{}_{}", &att_id[..8], safe_name));
+                                            if std::fs::write(&att_file, &att.data).is_ok() { stored_path = att_file.to_string_lossy().to_string(); }
+                                        }
+
+                                        if let Err(e) = db.conn.execute("INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, md5, mime_type, size_bytes, stored_path, entropy, is_inline, is_macro_enabled, is_executable, risk_flags, created_at) VALUES (?1,?2,?3,?4,'',?5,?6,?7,?8,?9,?10,?11,?12,?13)", rusqlite::params![att_id, existing_id, att.filename, sha256, att.content_type, att.data.len() as i64, stored_path, entropy, if att.is_inline { 1 } else { 0 }, if is_macro { 1 } else { 0 }, if is_exe { 1 } else { 0 }, risk_json, item_now]) {
+                                            eprintln!("[POP3 ATTACHMENT ERROR] Failed inserting backfill attachment {}: {}", att_id, e);
+                                        }
+                                    }
+                                }
+                            }
+
                             duplicates_skipped += 1;
                             emit_pop3_event(&app, &on_event, json!({
                                 "status": "duplicate_skipped",
@@ -224,7 +272,7 @@ pub async fn pop3_fetch_emails(
                                 "overall_seq": seq,
                                 "overall_total": fetch_count,
                                 "duplicates_skipped": duplicates_skipped,
-                                "log": format!("⏭ Skipped duplicate: \"{}\" ({}/{})", parsed.subject.as_deref().unwrap_or("(No Subject)"), seq, fetch_count)
+                                "log": format!("⏭ Synced duplicate: \"{}\" ({}/{})", parsed.subject.as_deref().unwrap_or("(No Subject)"), seq, fetch_count)
                             }));
                             continue;
                         }
@@ -312,23 +360,22 @@ pub async fn pop3_fetch_emails(
                                 }
                             }
 
-                            let _ = db.conn.execute(
-                                "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags, is_inline, created_at)
-                                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                            let is_exe = risk_flags.contains(&"executable");
+                            let is_macro = risk_flags.contains(&"macro_enabled");
+                            if let Err(e) = db.conn.execute(
+                                "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, md5, mime_type, size_bytes, stored_path, entropy, is_inline, is_macro_enabled, is_executable, risk_flags, created_at)
+                                 VALUES (?1,?2,?3,?4,'',?5,?6,?7,?8,?9,?10,?11,?12,?13)",
                                 rusqlite::params![
-                                    att_id,
-                                    email_id,
-                                    att.filename,
-                                    sha256,
-                                    att.content_type,
-                                    att.data.len() as i64,
-                                    stored_path,
-                                    entropy,
-                                    risk_flags_json,
+                                    att_id, email_id, att.filename, sha256, att.content_type,
+                                    att.data.len() as i64, stored_path, entropy,
                                     if att.is_inline { 1 } else { 0 },
-                                    item_now
+                                    if is_macro { 1 } else { 0 },
+                                    if is_exe { 1 } else { 0 },
+                                    risk_flags_json, item_now
                                 ],
-                            );
+                            ) {
+                                eprintln!("[POP3 ATTACHMENT ERROR] Failed inserting attachment {}: {}", att_id, e);
+                            }
                         }
 
                         downloaded += 1;

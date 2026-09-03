@@ -165,8 +165,16 @@ pub async fn ai_chat(input: serde_json::Value) -> Result<String, String> {
     let api_key = input["api_key"].as_str().unwrap_or("");
     let model = input["model"].as_str().unwrap_or("llama3.2");
     let endpoint = input["endpoint"].as_str().unwrap_or("http://localhost:11434");
-    let prompt = input["prompt"].as_str().unwrap_or("");
-    
+    let raw_prompt = input["prompt"].as_str().unwrap_or("");
+    let (prompt_sanitized, has_injection, redacted_count) = super::guard::prepare_ai_prompt(raw_prompt, provider);
+    if has_injection {
+        eprintln!("[AI SECURITY WARNING] Heuristic prompt injection detected in prompt for provider: {}", provider);
+    }
+    if redacted_count > 0 {
+        eprintln!("[AI PRIVACY GUARD] Redacted {} PII items before external transmission to: {}", redacted_count, provider);
+    }
+    let prompt = prompt_sanitized.as_str();
+
     let client = reqwest::Client::new();
     let system_prompt = "You are a forensic investigation assistant helping investigators analyze email evidence. Always cite evidence references when making claims. Be concise and factual.";
     

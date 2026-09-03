@@ -130,6 +130,8 @@ b2JqCg==
         let emails = parse_eml(f.path()).unwrap();
         assert_eq!(emails.len(), 1);
         assert!(emails[0].body_text.is_some());
+        assert_eq!(emails[0].attachments.len(), 1);
+        assert_eq!(emails[0].attachments[0].filename, Some("doc.pdf".to_string()));
     }
 
     #[test]

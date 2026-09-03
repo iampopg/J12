@@ -8,6 +8,29 @@
 [![Tauri](https://img.shields.io/badge/Tauri-2.0-blue.svg)](https://tauri.app)
 [![Rust](https://img.shields.io/badge/Rust-1.70+-orange.svg)](https://www.rust-lang.org)
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev)
+[![YouTube Guide](https://img.shields.io/badge/YouTube-Video%20Guide-FF0000?style=flat&logo=youtube&logoColor=white)](https://youtu.be/aDJ2EOdxdNY)
+
+## 📺 Video Walkthrough & Demo Guide
+
+Watch the complete hands-on walkthrough showing how to investigate email evidence from case setup to court-ready verification:
+
+[![Watch How to Use J12 Forensic](https://img.youtube.com/vi/aDJ2EOdxdNY/maxresdefault.jpg)](https://youtu.be/aDJ2EOdxdNY)
+
+▶️ **[Watch "How to Use J12 Forensic" on YouTube](https://youtu.be/aDJ2EOdxdNY)**
+
+**What's covered in the video:**
+- **0:00** — Introduction to J12 Forensic Platform
+- **0:15** — Case Creation & Directory Settings
+- **0:45** — Case Dashboard & Primary Target Dossier
+- **1:25** — Evidence Ingestion Hub (File Import, Live IMAP & OAuth 2.0)
+- **2:05** — Forensic Artifact Taxonomy Hub (Credentials, Crypto, Banking, Phone Numbers)
+- **2:50** — Evidence Attachments Gallery & Email Detail Viewer
+- **3:35** — Tagging Evidence & Adding Investigator Notes
+- **4:20** — Email Messages & Advanced Search (Boolean & Piping)
+- **4:45** — Communication Network Graph & Organic Force Mapping
+- **5:15** — Entity Profiles & Person Resolution (Inspecting `swhite@enron.com` & 733 Recovered Deleted Emails)
+- **5:50** — Incident Timeline & Activity Chronology
+- **6:05** — Case Management, Chain of Custody & Evidence Integrity Verification
 
 ## Overview
 

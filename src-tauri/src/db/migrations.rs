@@ -32,7 +32,11 @@ pub fn run_migrations_and_triggers(conn: &Connection) {
     conn.execute("ALTER TABLE email_notes ADD COLUMN content TEXT", []).ok();
     conn.execute("UPDATE email_notes SET note = content WHERE note IS NULL AND content IS NOT NULL", []).ok();
 
-    // Migration: ensure attachments has extracted_text, ocr_status, created_at
+    // Migration: ensure attachments has all required forensic columns
+    conn.execute("ALTER TABLE attachments ADD COLUMN is_inline INTEGER DEFAULT 0", []).ok();
+    conn.execute("ALTER TABLE attachments ADD COLUMN md5 TEXT", []).ok();
+    conn.execute("ALTER TABLE attachments ADD COLUMN is_macro_enabled INTEGER DEFAULT 0", []).ok();
+    conn.execute("ALTER TABLE attachments ADD COLUMN is_executable INTEGER DEFAULT 0", []).ok();
     conn.execute("ALTER TABLE attachments ADD COLUMN extracted_text TEXT", []).ok();
     conn.execute("ALTER TABLE attachments ADD COLUMN ocr_status TEXT DEFAULT 'pending'", []).ok();
     conn.execute("ALTER TABLE attachments ADD COLUMN created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))", []).ok();

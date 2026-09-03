@@ -9,6 +9,7 @@ pub mod security;
 pub mod graph;
 pub mod intelligence;
 pub mod reports;
+pub mod guard;
 
 pub use types::*;
 pub use client::*;
@@ -21,3 +22,4 @@ pub use security::*;
 pub use graph::*;
 pub use intelligence::*;
 pub use reports::*;
+pub use guard::*;

@@ -235,12 +235,12 @@ export function ArtifactsView({ caseId, evidenceFilter }: ArtifactsProps) {
           </button>
           <button 
             className="btn btn-primary btn-sm" 
-            onClick={handleRescan} 
+            onClick={() => { loadTaxonomy(); loadArtifacts(); }} 
             disabled={scanState.scanning}
             style={{ fontWeight: 600 }}
-            title="Scan case emails and extract forensic taxonomy artifacts"
+            title="Refresh forensic artifacts"
           >
-            {scanState.scanning ? "⚡ Scanning..." : "⚡ Scan / Rescan Artifacts"}
+            ↻ Refresh
           </button>
         </div>
       </div>

@@ -43,3 +43,5 @@ temp/
 
 # Tauri
 src-tauri/Cargo.lock
+
+.kilo/

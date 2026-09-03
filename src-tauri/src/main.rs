@@ -115,6 +115,7 @@ fn main() {
             ai::fetch_kiloai_models,
             ai::fetch_openrouter_models,
             ai::ai_chat,
+            ai::ai_guard_inspect,
             ai::ai_get_case_statistics,
             ai::ai_search_emails,
             ai::ai_get_email,

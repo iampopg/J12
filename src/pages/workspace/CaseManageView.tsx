@@ -50,6 +50,15 @@ export function CaseManageView({
     setDeleting(true);
     try {
       await invoke("case_delete", { input: { case_id: caseId } });
+      try {
+        Object.keys(localStorage).forEach((key) => {
+          if (key.includes(caseId)) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (storageErr) {
+        console.warn("Failed to purge localStorage for deleted case:", storageErr);
+      }
       onBack();
     } catch (e) {
       console.error("Failed to delete case:", e);

@@ -6,66 +6,27 @@ use super::signatures::CompiledRegexes;
 /// Resolves ITU-T Country Dial Code to Country Name and Flag Emoji
 pub fn lookup_country(dial_prefix: &str) -> (&'static str, &'static str) {
     match dial_prefix {
-        "1" => ("United States / Canada", "🇺🇸/🇨🇦"),
-        "44" => ("United Kingdom", "🇬🇧"),
-        "49" => ("Germany", "🇩🇪"),
-        "33" => ("France", "🇫🇷"),
-        "39" => ("Italy", "🇮🇹"),
-        "34" => ("Spain", "🇪🇸"),
-        "31" => ("Netherlands", "🇳🇱"),
-        "41" => ("Switzerland", "🇨🇭"),
-        "46" => ("Sweden", "🇸🇪"),
-        "47" => ("Norway", "🇳🇴"),
-        "45" => ("Denmark", "🇩🇰"),
-        "358" => ("Finland", "🇫🇮"),
-        "353" => ("Ireland", "🇮🇪"),
-        "48" => ("Poland", "🇵🇱"),
-        "43" => ("Austria", "🇦🇹"),
-        "32" => ("Belgium", "🇧🇪"),
-        "351" => ("Portugal", "🇵🇹"),
-        "30" => ("Greece", "🇬🇷"),
-        "90" => ("Turkey", "🇹🇷"),
-        "7" => ("Russia / Kazakhstan", "🇷🇺/🇰🇿"),
-        "971" => ("United Arab Emirates", "🇦🇪"),
-        "966" => ("Saudi Arabia", "🇸🇦"),
-        "972" => ("Israel", "🇮🇱"),
-        "974" => ("Qatar", "🇶🇦"),
-        "965" => ("Kuwait", "🇰🇼"),
-        "968" => ("Oman", "🇴🇲"),
-        "973" => ("Bahrain", "🇧🇭"),
-        "962" => ("Jordan", "🇯🇴"),
-        "961" => ("Lebanon", "🇱🇧"),
-        "91" => ("India", "🇮🇳"),
-        "92" => ("Pakistan", "🇵🇰"),
-        "880" => ("Bangladesh", "🇧🇩"),
-        "94" => ("Sri Lanka", "🇱🇰"),
-        "86" => ("China", "🇨🇳"),
-        "852" => ("Hong Kong", "🇭🇰"),
-        "886" => ("Taiwan", "🇹🇼"),
-        "81" => ("Japan", "🇯🇵"),
-        "82" => ("South Korea", "🇰🇷"),
-        "65" => ("Singapore", "🇸🇬"),
-        "60" => ("Malaysia", "🇲🇾"),
-        "62" => ("Indonesia", "🇮🇩"),
-        "66" => ("Thailand", "🇹🇭"),
-        "84" => ("Vietnam", "🇻🇳"),
-        "63" => ("Philippines", "🇵🇭"),
-        "61" => ("Australia", "🇦🇺"),
-        "64" => ("New Zealand", "🇳🇿"),
-        "234" => ("Nigeria", "🇳🇬"),
-        "27" => ("South Africa", "🇿🇦"),
-        "20" => ("Egypt", "🇪🇬"),
-        "254" => ("Kenya", "🇰🇪"),
-        "233" => ("Ghana", "🇬🇭"),
-        "212" => ("Morocco", "🇲🇦"),
-        "55" => ("Brazil", "🇧🇷"),
-        "52" => ("Mexico", "🇲🇽"),
-        "54" => ("Argentina", "🇦🇷"),
-        "56" => ("Chile", "🇨🇱"),
-        "57" => ("Colombia", "🇨🇴"),
-        "58" => ("Venezuela", "🇻🇪"),
-        "51" => ("Peru", "🇵🇪"),
-        _ => ("International Line", "🌐"),
+        "1" => ("United States / Canada", "🇺🇸/🇨🇦"), "44" => ("United Kingdom", "🇬🇧"),
+        "49" => ("Germany", "🇩🇪"), "33" => ("France", "🇫🇷"), "39" => ("Italy", "🇮🇹"),
+        "34" => ("Spain", "🇪🇸"), "31" => ("Netherlands", "🇳🇱"), "41" => ("Switzerland", "🇨🇭"),
+        "46" => ("Sweden", "🇸🇪"), "47" => ("Norway", "🇳🇴"), "45" => ("Denmark", "🇩🇰"),
+        "358" => ("Finland", "🇫🇮"), "353" => ("Ireland", "🇮🇪"), "48" => ("Poland", "🇵🇱"),
+        "43" => ("Austria", "🇦🇹"), "32" => ("Belgium", "🇧🇪"), "351" => ("Portugal", "🇵🇹"),
+        "30" => ("Greece", "🇬🇷"), "90" => ("Turkey", "🇹🇷"), "7" => ("Russia / Kazakhstan", "🇷🇺/🇰🇿"),
+        "971" => ("United Arab Emirates", "🇦🇪"), "966" => ("Saudi Arabia", "🇸🇦"),
+        "972" => ("Israel", "🇮🇱"), "974" => ("Qatar", "🇶🇦"), "965" => ("Kuwait", "🇰🇼"),
+        "968" => ("Oman", "🇴🇲"), "973" => ("Bahrain", "🇧🇭"), "962" => ("Jordan", "🇯🇴"),
+        "961" => ("Lebanon", "🇱🇧"), "91" => ("India", "🇮🇳"), "92" => ("Pakistan", "🇵🇰"),
+        "880" => ("Bangladesh", "🇧🇩"), "94" => ("Sri Lanka", "🇱🇰"), "86" => ("China", "🇨🇳"),
+        "852" => ("Hong Kong", "🇭🇰"), "886" => ("Taiwan", "🇹🇼"), "81" => ("Japan", "🇯🇵"),
+        "82" => ("South Korea", "🇰🇷"), "65" => ("Singapore", "🇸🇬"), "60" => ("Malaysia", "🇲🇾"),
+        "62" => ("Indonesia", "🇮🇩"), "66" => ("Thailand", "🇹🇭"), "84" => ("Vietnam", "🇻🇳"),
+        "63" => ("Philippines", "🇵🇭"), "61" => ("Australia", "🇦🇺"), "64" => ("New Zealand", "🇳🇿"),
+        "234" => ("Nigeria", "🇳🇬"), "27" => ("South Africa", "🇿🇦"), "20" => ("Egypt", "🇪🇬"),
+        "254" => ("Kenya", "🇰🇪"), "233" => ("Ghana", "🇬🇭"), "212" => ("Morocco", "🇲🇦"),
+        "55" => ("Brazil", "🇧🇷"), "52" => ("Mexico", "🇲🇽"), "54" => ("Argentina", "🇦🇷"),
+        "56" => ("Chile", "🇨🇱"), "57" => ("Colombia", "🇨🇴"), "58" => ("Venezuela", "🇻🇪"),
+        "51" => ("Peru", "🇵🇪"), _ => ("International Line", "🌐"),
     }
 }
 
@@ -122,14 +83,12 @@ pub fn lookup_raw_prefix(digits: &str) -> Option<(&'static str, &'static str, St
 pub fn is_valid_phone_candidate(raw: &str, digits: &str, dial_code: Option<&str>, has_explicit_label: bool) -> bool {
     let d_len = digits.len();
 
-    // Contextual labeled phones (e.g. "Tel: 555-1234") need >= 7 digits
-    // Raw unlabelled text matches MUST have between 9 and 15 digits (ITU-T E.164)
     let min_len = if has_explicit_label { 7 } else { 9 };
     if d_len < min_len || d_len > 15 {
         return false;
     }
 
-    // Reject all identical repeating digits (e.g. 0000000000, 1111111111)
+    // Reject all identical repeating digits (e.g. 0000000000)
     if digits.chars().all(|c| c == digits.chars().next().unwrap_or('0')) {
         return false;
     }
@@ -139,16 +98,36 @@ pub fn is_valid_phone_candidate(raw: &str, digits: &str, dial_code: Option<&str>
         return false;
     }
 
+    // Reject numbers with decimal points (e.g. +847715.590137096, 12345.678901)
+    if raw.contains('.') {
+        if raw.starts_with('+') {
+            return false;
+        }
+        let dot_parts: Vec<&str> = raw.split('.').collect();
+        if dot_parts.len() == 2 {
+            let frac = dot_parts[1].trim();
+            if frac.len() >= 4 {
+                return false;
+            }
+        }
+        for part in dot_parts {
+            let part_digits = part.chars().filter(|c| c.is_ascii_digit()).count();
+            if part_digits > 4 {
+                return false;
+            }
+        }
+    }
+
     // Reject ISO dates & timestamps (e.g. 2024-08-29, 2026/08/29, 5112-05)
     if !has_explicit_label {
         if (raw.starts_with("19") || raw.starts_with("20") || raw.starts_with("+19") || raw.starts_with("+20")) && (raw.contains('-') || raw.contains('/')) && d_len <= 8 {
             return false;
         }
         if raw.contains(':') && raw.chars().filter(|&c| c == ':').count() >= 2 {
-            return false; // HH:MM:SS timestamp
+            return false;
         }
         if raw.contains('.') && raw.chars().filter(|&c| c == '.').count() == 3 {
-            return false; // IPv4 address
+            return false;
         }
         if (raw.contains('-') || raw.contains('.')) && d_len <= 8 {
             return false;
@@ -159,37 +138,17 @@ pub fn is_valid_phone_candidate(raw: &str, digits: &str, dial_code: Option<&str>
     if let Some(dc) = dial_code {
         match dc {
             "1" => {
-                // NANP (US/Canada): Exactly 10 digits after +1 (11 digits total). Area code cannot start with 0 or 1.
                 if d_len != 11 { return false; }
                 let area_first = digits.chars().nth(1).unwrap_or('0');
                 if area_first == '0' || area_first == '1' { return false; }
             }
-            "44" => {
-                // UK: 9 to 10 digits after +44 (11 to 12 digits total)
-                if d_len < 11 || d_len > 12 { return false; }
-            }
-            "234" => {
-                // Nigeria: Exactly 10 digits after +234 (13 digits total)
-                if d_len != 13 { return false; }
-            }
-            "971" => {
-                // UAE: 8 to 9 digits after +971 (11 to 12 digits total)
-                if d_len < 11 || d_len > 12 { return false; }
-            }
-            "49" => {
-                // Germany: 10 to 12 digits after +49 (12 to 14 digits total)
-                if d_len < 12 || d_len > 14 { return false; }
-            }
-            "33" => {
-                // France: 9 digits after +33 (11 digits total)
-                if d_len != 11 { return false; }
-            }
-            "91" => {
-                // India: 10 digits after +91 (12 digits total)
-                if d_len != 12 { return false; }
-            }
+            "44" => { if d_len < 11 || d_len > 12 { return false; } }
+            "234" => { if d_len != 13 { return false; } }
+            "971" => { if d_len < 11 || d_len > 12 { return false; } }
+            "49" => { if d_len < 12 || d_len > 14 { return false; } }
+            "33" => { if d_len != 11 { return false; } }
+            "91" => { if d_len != 12 { return false; } }
             _ => {
-                // For any other country, the subscriber number after country code must be >= 7 digits
                 let dc_len = dc.len();
                 if d_len <= dc_len + 6 { return false; }
             }
@@ -199,18 +158,50 @@ pub fn is_valid_phone_candidate(raw: &str, digits: &str, dial_code: Option<&str>
     true
 }
 
-/// Main Scanner for Phone Numbers, Signatures, and vCard Contact Cards
+/// Main Scanner for Phone Numbers, Signatures, Email Contacts, and vCards
 pub fn scan_phone_numbers_and_contacts(
     artifacts: &mut Vec<ForensicTaxonomyArtifact>,
     seen: &mut HashSet<String>,
     re: &CompiledRegexes,
     eid: &str,
     from_addr: &str,
+    from_disp: Option<&str>,
     subj_opt: &Option<String>,
     date_opt: &Option<String>,
     full_text: &str,
     full_text_lower: &str,
 ) {
+    // 0. Email Account Contacts & Correspondents
+    let clean_from = from_addr.trim();
+    if !clean_from.is_empty() && clean_from.contains('@') {
+        let key = format!("contact_email:{}", clean_from.to_lowercase());
+        if seen.insert(key) {
+            let disp = from_disp.unwrap_or("").trim();
+            let label = if !disp.is_empty() && disp != clean_from {
+                format!("👤 {} ({})", disp, clean_from)
+            } else {
+                format!("👤 Contact: {}", clean_from)
+            };
+
+            artifacts.push(ForensicTaxonomyArtifact {
+                id: generate_id(),
+                domain_id: "phone_contacts".to_string(),
+                subcategory_id: "email_contacts".to_string(),
+                title: label,
+                primary_value: clean_from.to_string(),
+                secondary_value: if !disp.is_empty() { Some(disp.to_string()) } else { None },
+                details: format!("Account Correspondent: {} <{}>", disp, clean_from),
+                severity: "info".to_string(),
+                artifact_type: "native".to_string(),
+                confidence: Some("high".to_string()),
+                email_id: eid.to_string(),
+                email_subject: subj_opt.clone(),
+                email_from: from_addr.to_string(),
+                date_sent_utc: date_opt.clone(),
+            });
+        }
+    }
+
     // 1. vCard (.vcf) Contact Card Parsing (RFC 6350)
     if full_text.contains("BEGIN:VCARD") {
         for cap in re.vcard_block.captures_iter(full_text) {
@@ -464,7 +455,11 @@ mod tests {
         assert!(is_valid_phone_candidate("+971 50 123 4567", "971501234567", Some("971"), false));
         assert!(is_valid_phone_candidate("Direct: 555-0199", "5550199", None, true));
 
-        // False positives to reject (Internal numbers, short codes, dates)
+        // False positives to reject (Internal numbers, short codes, dates, tracking floats)
+        assert!(!is_valid_phone_candidate("+847715.590137096", "847715590137096", Some("84"), false));
+        assert!(!is_valid_phone_candidate("+852453.916601740", "852453916601740", Some("852"), false));
+        assert!(!is_valid_phone_candidate("+824502.921953660", "824502921953660", Some("82"), false));
+        assert!(!is_valid_phone_candidate("+764978.140215089", "764978140215089", Some("7"), false));
         assert!(!is_valid_phone_candidate("+5112-05", "511205", Some("51"), false));
         assert!(!is_valid_phone_candidate("+443016", "443016", Some("44"), false));
         assert!(!is_valid_phone_candidate("+387247", "387247", Some("387"), false));

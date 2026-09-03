@@ -85,10 +85,14 @@ pub fn init_tables_and_indexes(conn: &Connection) {
             email_id TEXT NOT NULL REFERENCES emails(id),
             filename TEXT,
             sha256 TEXT NOT NULL,
+            md5 TEXT,
             mime_type TEXT,
             size_bytes INTEGER NOT NULL,
             stored_path TEXT,
             entropy REAL,
+            is_inline INTEGER DEFAULT 0,
+            is_macro_enabled INTEGER DEFAULT 0,
+            is_executable INTEGER DEFAULT 0,
             risk_flags TEXT DEFAULT '[]',
             extracted_text TEXT,
             ocr_status TEXT DEFAULT 'pending',
@@ -366,6 +370,10 @@ pub fn init_tables_and_indexes(conn: &Connection) {
     let _ = conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_messages_session ON ai_messages(session_id)", []);
 
     // Migrations for existing databases
+    let _ = conn.execute("ALTER TABLE attachments ADD COLUMN is_inline INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE attachments ADD COLUMN md5 TEXT", []);
+    let _ = conn.execute("ALTER TABLE attachments ADD COLUMN is_macro_enabled INTEGER DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE attachments ADD COLUMN is_executable INTEGER DEFAULT 0", []);
     let _ = conn.execute("ALTER TABLE attachments ADD COLUMN extracted_text TEXT", []);
     let _ = conn.execute("ALTER TABLE attachments ADD COLUMN ocr_status TEXT DEFAULT 'pending'", []);
 

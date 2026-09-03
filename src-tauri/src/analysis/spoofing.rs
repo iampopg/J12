@@ -13,58 +13,69 @@ pub fn detect_spoofing(
     
     // 1. Display name spoofing
     if let Some(display) = from_display {
-        let display_lower = display.to_lowercase();
-        if let Some(spoofed_email) = extract_email_from_display_name(&display_lower) {
-            let spoofed_domain = extract_domain(&spoofed_email);
-            if spoofed_domain != from_domain {
-                findings.push(SpoofingFinding {
-                    finding_type: "display_name_spoofing".to_string(),
-                    severity: "high".to_string(),
-                    confidence: "high".to_string(),
-                    title: "Display name contains different email domain".to_string(),
-                    description: format!(
-                        "Display name '{}' contains email '{}' but actual sender is '{}'",
-                        display, spoofed_email, from_addr
-                    ),
-                    indicator: format!("{} vs {}", spoofed_domain, from_domain),
-                });
-            }
-        }
-        
-        let brands = [
-            ("paypal", "paypal.com"),
-            ("apple", "apple.com"),
-            ("microsoft", "microsoft.com"),
-            ("google", "google.com"),
-            ("amazon", "amazon.com"),
-            ("netflix", "netflix.com"),
-            ("wells fargo", "wellsfargo.com"),
-            ("chase", "chase.com"),
-            ("bank of america", "bankofamerica.com"),
-            ("citibank", "citi.com"),
-        ];
-        
-        for (brand, canonical_domain) in &brands {
-            let brand_clean = brand.replace([' ', '-', '_'], "");
-            let domain_clean = from_domain.replace(['-', '_'], "");
-            
-            if display_lower.contains(brand) {
-                let is_legit_brand_domain = from_domain.ends_with(canonical_domain) 
-                    || from_domain == *canonical_domain
-                    || domain_clean.contains(&brand_clean);
+        let display_trimmed = display.trim();
+        // Ignore display names that are JSON arrays or raw message IDs
+        let is_raw_id = display_trimmed.starts_with('[') || display_trimmed.starts_with('{') 
+            || (display_trimmed.contains('@') && !display_trimmed.contains(' '))
+            || display_trimmed.contains("000000000000");
 
-                if !is_legit_brand_domain {
+        if !is_raw_id {
+            let display_lower = display_trimmed.to_lowercase();
+            if let Some(spoofed_email) = extract_email_from_display_name(&display_lower) {
+                let spoofed_domain = extract_domain(&spoofed_email);
+                if spoofed_domain != from_domain && !from_domain.is_empty() && !spoofed_domain.is_empty() {
                     findings.push(SpoofingFinding {
-                        finding_type: "brand_impersonation".to_string(),
-                        severity: "critical".to_string(),
+                        finding_type: "display_name_spoofing".to_string(),
+                        severity: "high".to_string(),
                         confidence: "high".to_string(),
-                        title: format!("Possible {} brand impersonation", brand),
+                        title: "Display name contains different email domain".to_string(),
                         description: format!(
-                            "Display name '{}' contains brand '{}' but sender domain is '{}'",
-                            display, brand, from_domain
+                            "Display name '{}' contains email '{}' but actual sender is '{}'",
+                            display, spoofed_email, from_addr
                         ),
-                        indicator: format!("{} in display name, not in domain {}", brand, from_domain),
+                        indicator: format!("{} vs {}", spoofed_domain, from_domain),
                     });
+                }
+            }
+            
+            let brands: [(&str, &[&str]); 10] = [
+                ("paypal", &["paypal.com", "paypal.co.uk"]),
+                ("apple", &["apple.com", "icloud.com", "me.com", "mac.com"]),
+                ("microsoft", &["microsoft.com", "outlook.com", "hotmail.com", "live.com", "msn.com"]),
+                ("google", &["google.com", "gmail.com", "googlemail.com"]),
+                ("amazon", &["amazon.com", "amazon.co.uk", "amazon.de", "amazonaws.com"]),
+                ("netflix", &["netflix.com"]),
+                ("wells fargo", &["wellsfargo.com"]),
+                ("chase", &["chase.com", "jpmorgan.com", "jpmorganchase.com"]),
+                ("bank of america", &["bankofamerica.com", "bofa.com"]),
+                ("citibank", &["citi.com", "citibank.com"]),
+            ];
+            
+            for (brand, canonical_domains) in &brands {
+                let brand_clean = brand.replace([' ', '-', '_'], "");
+                let domain_clean = from_domain.replace(['-', '_'], "");
+                
+                // Match whole word or bounded brand name in display name
+                let has_brand = display_lower.split(|c: char| !c.is_alphanumeric()).any(|w| w == *brand);
+                
+                if has_brand {
+                    let is_legit_brand_domain = canonical_domains.iter().any(|&cd| {
+                        from_domain.ends_with(cd) || from_domain == cd || domain_clean.contains(&brand_clean)
+                    });
+
+                    if !is_legit_brand_domain && !from_domain.is_empty() {
+                        findings.push(SpoofingFinding {
+                            finding_type: "brand_impersonation".to_string(),
+                            severity: "critical".to_string(),
+                            confidence: "high".to_string(),
+                            title: format!("Possible {} brand impersonation", brand),
+                            description: format!(
+                                "Display name '{}' contains brand '{}' but sender domain is '{}'",
+                                display, brand, from_domain
+                            ),
+                            indicator: format!("{} in display name, not in domain {}", brand, from_domain),
+                        });
+                    }
                 }
             }
         }

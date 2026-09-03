@@ -145,6 +145,15 @@ export function CaseWorkspace({ caseId, onBack }: { caseId: string; onBack: () =
     setDeletingCase(true);
     try {
       await invoke<boolean>("case_delete", { input: { case_id: caseId } });
+      try {
+        Object.keys(localStorage).forEach((key) => {
+          if (key.includes(caseId)) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (storageErr) {
+        console.warn("Failed to purge localStorage for deleted case:", storageErr);
+      }
       onBack();
     } catch (e) {
       console.error("Failed to delete case:", e);

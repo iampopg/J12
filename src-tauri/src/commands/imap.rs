@@ -105,7 +105,7 @@ pub async fn imap_fetch_emails(
     let mailbox_opt = input["mailbox"].as_str()
         .or_else(|| input["input"]["mailbox"].as_str())
         .map(|s| s.to_string());
-    let target_mb = mailbox_opt.as_deref().unwrap_or("ALL");
+    let target_mb = mailbox_opt.unwrap_or_else(|| "ALL".to_string());
 
     let max_messages = input["max_messages"].as_u64()
         .or_else(|| input["maxMessages"].as_u64())
@@ -190,25 +190,28 @@ pub async fn imap_fetch_emails(
         &format!("Started live IMAP streaming for account: {} from server {}:{} (Scope: {})", username, server, port, target_mb)
     );
 
-    let mut ingested_count: u32 = 0;
-    let mut total_bytes_downloaded: usize = 0;
-    let mut duplicates_skipped: u32 = 0;
     let app_handle_clone = app.clone();
     let cancel_flag = state.cancel_imap.clone();
     let on_event_clone = on_event.clone();
-    let db_mutex = &state.db;
+    let case_id_clone = case_id.clone();
+    let evidence_id_clone = evidence_id.clone();
 
-    // Stream and incrementally save each email
-    let result = {
-        let app_handle_inner = app_handle_clone.clone();
-        let on_event_inner = on_event_clone.clone();
-        imap_acquisition::fetch_emails_streaming(
+    // Stream and incrementally save each email on a dedicated blocking worker thread
+    let (result, ingested_count, total_bytes_downloaded, duplicates_skipped) = tokio::task::spawn_blocking(move || {
+        let mut db = crate::db::Database::new();
+        let mut ingested_count: u32 = 0;
+        let mut total_bytes_downloaded: usize = 0;
+        let mut duplicates_skipped: u32 = 0;
+        let app_inner = app_handle_clone.clone();
+        let event_inner = on_event_clone.clone();
+
+        let stream_res = imap_acquisition::fetch_emails_streaming(
             &config,
-            Some(target_mb),
+            Some(&target_mb),
             max_messages,
             &cancel_flag,
             |folder, count, f_idx, total_f, overall_total| {
-                emit_imap_event(&app_handle_inner, &on_event_inner, json!({
+                emit_imap_event(&app_inner, &event_inner, json!({
                     "status": "folder_discovered",
                     "folder": folder,
                     "folder_count": count,
@@ -232,161 +235,72 @@ pub async fn imap_fetch_emails(
                     let is_del = msg.folder_category == "trash";
                     let item_now = Utc::now().to_rfc3339();
 
-                    // Micro-transaction with scoped lock (released immediately after insert)
-                    {
-                        let mut db = db_mutex.blocking_lock();
+                    let existing_email_id: Option<String> = if !parsed.message_id.trim().is_empty() {
+                        db.conn.query_row(
+                            "SELECT id FROM emails WHERE case_id = ?1 AND message_id = ?2",
+                            rusqlite::params![&case_id_clone, &parsed.message_id],
+                            |r| r.get(0)
+                        ).ok()
+                    } else {
+                        None
+                    };
 
-                        // Deduplication check
-                        let is_duplicate = if !parsed.message_id.trim().is_empty() {
-                            db.conn.query_row(
-                                "SELECT 1 FROM emails WHERE case_id = ?1 AND message_id = ?2",
-                                rusqlite::params![&case_id, &parsed.message_id],
-                                |_| Ok(true)
-                            ).unwrap_or(false)
-                        } else {
-                            false
-                        };
-
-                        if is_duplicate {
-                            duplicates_skipped += 1;
-                            emit_imap_event(&app_handle_clone, &on_event_clone, json!({
-                                "status": "duplicate_skipped",
-                                "folder": msg.folder_name,
-                                "msg_seq": msg.seq_id,
-                                "folder_total": msg.folder_total,
-                                "overall_seq": msg.overall_seq,
-                                "overall_total": msg.overall_total,
-                                "duplicates_skipped": duplicates_skipped,
-                                "log": format!("⏭ Skipped duplicate: \"{}\" ({}/{})", parsed.subject.as_deref().unwrap_or("(No Subject)"), msg.seq_id, msg.folder_total)
-                            }));
-                            return Ok(());
+                    if let Some(existing_id) = existing_email_id {
+                        if !parsed.attachments.is_empty() {
+                            let att_count: i64 = db.conn.query_row(
+                                "SELECT COUNT(*) FROM attachments WHERE email_id = ?1",
+                                [&existing_id],
+                                |r| r.get(0)
+                            ).unwrap_or(0);
+                            if att_count == 0 {
+                                save_email_attachments(&db.conn, &existing_id, &case_id_clone, &parsed.attachments, &item_now);
+                            }
                         }
 
-                        if let Err(e) = db.conn.execute(
-                            "INSERT OR REPLACE INTO emails (
-                                id, evidence_id, case_id, message_id, in_reply_to, msg_references,
-                                from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, reply_to,
-                                subject, date_sent, date_sent_utc, headers_raw, body_text, body_html,
-                                folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags, created_at
-                            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 0, 0, '[]', ?22)",
-                            rusqlite::params![
-                                email_id,
-                                evidence_id,
-                                case_id,
-                                parsed.message_id,
-                                parsed.in_reply_to,
-                                ref_str,
-                                parsed.from_addr,
-                                parsed.from_display,
-                                to_str,
-                                cc_str,
-                                bcc_str,
-                                parsed.reply_to,
-                                parsed.subject,
-                                date_str,
-                                date_str,
-                                parsed.headers_raw,
-                                parsed.body_text,
-                                parsed.body_html,
-                                msg.folder_name,
-                                msg.folder_category,
-                                if is_del { 1 } else { 0 },
-                                item_now,
-                            ],
-                        ) {
-                            eprintln!("Failed to insert email: {}", e);
-                        }
+                        duplicates_skipped += 1;
+                        emit_imap_event(&app_inner, &event_inner, json!({
+                            "status": "duplicate_skipped",
+                            "folder": msg.folder_name,
+                            "msg_seq": msg.seq_id,
+                            "folder_total": msg.folder_total,
+                            "overall_seq": msg.overall_seq,
+                            "overall_total": msg.overall_total,
+                            "duplicates_skipped": duplicates_skipped,
+                            "log": format!("⏭ Synced duplicate: \"{}\" ({}/{})", parsed.subject.as_deref().unwrap_or("(No Subject)"), msg.seq_id, msg.folder_total)
+                        }));
+                        return Ok(());
+                    }
 
-                        // Save attachments with full forensic metadata & disk extraction
-                        for att in &parsed.attachments {
-                            let att_id = generate_id();
-                            let sha256 = {
-                                let mut hasher = Sha256::new();
-                                hasher.update(&att.data);
-                                format!("{:x}", hasher.finalize())
-                            };
+                    let _ = db.conn.execute(
+                        "INSERT OR REPLACE INTO emails (
+                            id, evidence_id, case_id, message_id, in_reply_to, msg_references,
+                            from_addr, from_display, to_addrs, cc_addrs, bcc_addrs, reply_to,
+                            subject, date_sent, date_sent_utc, headers_raw, body_text, body_html,
+                            folder_name, folder_category, is_deleted, deleted_recovered, risk_score, flags, created_at
+                        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, 0, 0, '[]', ?22)",
+                        rusqlite::params![
+                            email_id, evidence_id_clone, case_id_clone, parsed.message_id, parsed.in_reply_to, ref_str,
+                            parsed.from_addr, parsed.from_display, to_str, cc_str, bcc_str, parsed.reply_to,
+                            parsed.subject, date_str, date_str, parsed.headers_raw, parsed.body_text, parsed.body_html,
+                            msg.folder_name, msg.folder_category, if is_del { 1 } else { 0 }, item_now,
+                        ],
+                    );
 
-                            let entropy = if !att.data.is_empty() {
-                                let mut counts = [0u64; 256];
-                                for &b in &att.data { counts[b as usize] += 1; }
-                                let len = att.data.len() as f64;
-                                let mut ent = 0.0f64;
-                                for &c in &counts {
-                                    if c > 0 {
-                                        let p = c as f64 / len;
-                                        ent -= p * p.log2();
-                                    }
-                                }
-                                ent
-                            } else { 0.0 };
-
-                            let mut risk_flags = Vec::new();
-                            let lower_name = att.filename.as_deref().unwrap_or("").to_lowercase();
-                            if lower_name.ends_with(".exe") || lower_name.ends_with(".bat") || lower_name.ends_with(".cmd") || lower_name.ends_with(".ps1") || lower_name.ends_with(".vbs") || lower_name.ends_with(".js") {
-                                risk_flags.push("executable");
-                            }
-                            if lower_name.ends_with(".docm") || lower_name.ends_with(".xlsm") || lower_name.ends_with(".pptm") {
-                                risk_flags.push("macro_enabled");
-                            }
-                            if entropy > 7.5 {
-                                risk_flags.push("high_entropy_encrypted");
-                            }
-                            let risk_flags_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
-
-                            let mut stored_path = String::new();
-                            if !att.data.is_empty() {
-                                let att_dir = crate::db::Database::get_data_dir()
-                                    .join("cases")
-                                    .join(&case_id)
-                                    .join("attachments");
-                                let _ = std::fs::create_dir_all(&att_dir);
-                                let safe_name = att.filename.as_deref().unwrap_or("attachment.bin")
-                                    .replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
-                                let att_file = att_dir.join(format!("{}_{}", &att_id[..8], safe_name));
-                                if std::fs::write(&att_file, &att.data).is_ok() {
-                                    stored_path = att_file.to_string_lossy().to_string();
-                                }
-                            }
-
-                            let _ = db.conn.execute(
-                                "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, mime_type, size_bytes, stored_path, entropy, risk_flags, is_inline, created_at)
-                                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-                                rusqlite::params![
-                                    att_id,
-                                    email_id,
-                                    att.filename,
-                                    sha256,
-                                    att.content_type,
-                                    att.data.len() as i64,
-                                    stored_path,
-                                    entropy,
-                                    risk_flags_json,
-                                    if att.is_inline { 1 } else { 0 },
-                                    item_now
-                                ],
-                            );
-                        }
+                    save_email_attachments(&db.conn, &email_id, &case_id_clone, &parsed.attachments, &item_now);
 
                         ingested_count += 1;
-
-                        // Periodic live sync to database every 25 messages
                         if ingested_count % 25 == 0 {
                             let _ = db.conn.execute(
                                 "UPDATE evidence_items SET message_count = ?1, size_bytes = ?2 WHERE id = ?3",
-                                rusqlite::params![ingested_count, total_bytes_downloaded as i64, &evidence_id],
+                                rusqlite::params![ingested_count, total_bytes_downloaded as i64, &evidence_id_clone],
                             );
                         }
-                    }
 
                     let subj_display = parsed.subject.unwrap_or_else(|| "(No Subject)".to_string());
                     let from_display = parsed.from_addr.clone();
-                    let att_note = if !parsed.attachments.is_empty() {
-                        format!(" (📎 {} attachments)", parsed.attachments.len())
-                    } else {
-                        String::new()
-                    };
+                    let att_note = if !parsed.attachments.is_empty() { format!(" (📎 {} attachments)", parsed.attachments.len()) } else { String::new() };
 
-                    emit_imap_event(&app_handle_clone, &on_event_clone, json!({
+                    emit_imap_event(&app_inner, &event_inner, json!({
                         "status": "ingested",
                         "folder": msg.folder_name,
                         "msg_seq": msg.seq_id,
@@ -402,12 +316,14 @@ pub async fn imap_fetch_emails(
                         "log": format!("📥 Ingested #{}/{} [{}]: \"{}\" from {}{}", msg.seq_id, msg.folder_total, msg.folder_name, subj_display, from_display, att_note)
                     }));
                 }
-
                 Ok(())
             },
-        )?
-    };
+        );
 
+        (stream_res, ingested_count, total_bytes_downloaded, duplicates_skipped)
+    }).await.map_err(|e| e.to_string())?;
+
+    let result = result?;
     let was_cancelled = state.cancel_imap.load(std::sync::atomic::Ordering::Relaxed);
     let final_status = if was_cancelled { "cancelled" } else { "done" };
 
@@ -467,4 +383,63 @@ pub async fn imap_fetch_emails(
         "folders_acquired": result.folders_acquired,
         "was_cancelled": was_cancelled
     }))
+}
+
+fn save_email_attachments(conn: &rusqlite::Connection, email_id: &str, case_id: &str, attachments: &[crate::parser::types::RawAttachment], item_now: &str) {
+    for att in attachments {
+        let att_id = crate::db::generate_id();
+        let sha256 = {
+            let mut hasher = Sha256::new();
+            hasher.update(&att.data);
+            format!("{:x}", hasher.finalize())
+        };
+        let entropy = if !att.data.is_empty() {
+            let mut counts = [0u64; 256];
+            for &b in &att.data { counts[b as usize] += 1; }
+            let len = att.data.len() as f64;
+            let mut ent = 0.0f64;
+            for &c in &counts { if c > 0 { let p = c as f64 / len; ent -= p * p.log2(); } }
+            ent
+        } else { 0.0 };
+
+        let mut risk_flags = Vec::new();
+        let lower = att.filename.as_deref().unwrap_or("").to_lowercase();
+        let is_exe = lower.ends_with(".exe") || lower.ends_with(".bat") || lower.ends_with(".ps1");
+        let is_macro = lower.ends_with(".docm") || lower.ends_with(".xlsm");
+        if is_exe { risk_flags.push("executable"); }
+        if is_macro { risk_flags.push("macro_enabled"); }
+        if entropy > 7.5 { risk_flags.push("high_entropy_encrypted"); }
+        let risk_json = serde_json::to_string(&risk_flags).unwrap_or_else(|_| "[]".to_string());
+
+        let mut stored_path = String::new();
+        if !att.data.is_empty() {
+            let att_dir = crate::db::Database::get_data_dir().join("cases").join(case_id).join("attachments");
+            let _ = std::fs::create_dir_all(&att_dir);
+            let safe_name = att.filename.as_deref().unwrap_or("attachment.bin").replace(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_', "_");
+            let att_file = att_dir.join(format!("{}_{}", &att_id[..8], safe_name));
+            if std::fs::write(&att_file, &att.data).is_ok() { stored_path = att_file.to_string_lossy().to_string(); }
+        }
+
+        if let Err(e) = conn.execute(
+            "INSERT OR REPLACE INTO attachments (id, email_id, filename, sha256, md5, mime_type, size_bytes, stored_path, entropy, is_inline, is_macro_enabled, is_executable, risk_flags, created_at)
+             VALUES (?1,?2,?3,?4,'',?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            rusqlite::params![
+                att_id,
+                email_id,
+                att.filename,
+                sha256,
+                att.content_type,
+                att.data.len() as i64,
+                stored_path,
+                entropy,
+                if att.is_inline { 1 } else { 0 },
+                if is_macro { 1 } else { 0 },
+                if is_exe { 1 } else { 0 },
+                risk_json,
+                item_now
+            ],
+        ) {
+            eprintln!("[ATTACHMENT ERROR] Failed inserting attachment {}: {}", att_id, e);
+        }
+    }
 }

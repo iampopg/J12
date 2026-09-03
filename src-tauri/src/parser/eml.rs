@@ -57,127 +57,119 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
     // Build JSON headers
     let mut headers_map: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
     
-    // Parse headers - handle folded headers properly
-    let mut current_header_key = String::new();
-    let mut current_header_value = String::new();
-    
+    // Unfold all header lines first
+    let mut unfolded_headers: Vec<(String, String)> = Vec::new();
+    let mut cur_key = String::new();
+    let mut cur_val = String::new();
+
     for line in header_section.lines() {
         if line.starts_with(' ') || line.starts_with('\t') {
-            // Folded header - append to current
-            current_header_value.push(' ');
-            current_header_value.push_str(line.trim());
-            continue;
-        }
-        
-        // Save previous header
-        if !current_header_key.is_empty() {
-            let key_lower = current_header_key.to_lowercase();
-            headers_map.entry(key_lower.clone()).or_insert_with(Vec::new).push(current_header_value.clone());
-            
-            // Process known headers
-            match key_lower.as_str() {
-                "message-id" => message_id = current_header_value.trim().trim_matches(|c| c == '<' || c == '>').to_string(),
-                "from" => {
-                    if from_addr.is_empty() {
-                        from_addr = extract_email(&current_header_value);
-                        from_display = extract_display_name(&current_header_value).map(|n| decode_mime_word(&n));
-                    }
-                }
-                "x-from" => {
-                    if from_display.is_none() {
-                        let name = clean_exchange_name(&current_header_value);
-                        if !name.is_empty() { from_display = Some(decode_mime_word(&name)); }
-                    }
-                }
-                "to" => {
-                    for (email, name) in extract_address_list_with_names(&current_header_value) {
-                        if !to_addrs.contains(&email) {
-                            to_addrs.push(email);
-                            if let Some(n) = name {
-                                to_display_names.push(decode_mime_word(&n));
-                            }
-                        }
-                    }
-                }
-                "x-to" => {
-                    x_to_header = Some(current_header_value.clone());
-                    for (email, name) in extract_address_list_with_names(&current_header_value) {
-                        if !to_addrs.contains(&email) { to_addrs.push(email); }
-                        if let Some(n) = name {
-                            let decoded = decode_mime_word(&n);
-                            if !to_display_names.contains(&decoded) { to_display_names.push(decoded); }
-                        }
-                    }
-                }
-                "cc" => {
-                    for (email, name) in extract_address_list_with_names(&current_header_value) {
-                        if !cc_addrs.contains(&email) {
-                            cc_addrs.push(email);
-                            if let Some(n) = name {
-                                cc_display_names.push(decode_mime_word(&n));
-                            }
-                        }
-                    }
-                }
-                "xcc" => {
-                    x_cc_header = Some(current_header_value.clone());
-                    for (email, name) in extract_address_list_with_names(&current_header_value) {
-                        if !cc_addrs.contains(&email) { cc_addrs.push(email); }
-                        if let Some(n) = name {
-                            let decoded = decode_mime_word(&n);
-                            if !cc_display_names.contains(&decoded) { cc_display_names.push(decoded); }
-                        }
-                    }
-                }
-                "bcc" => bcc_addrs = extract_address_list(&current_header_value),
-                "subject" => {
-                    subject_raw = Some(current_header_value.clone());
-                    subject = Some(decode_mime_word(&current_header_value));
-                }
-                "date" => date_sent = parse_date(&current_header_value),
-                "content-type" => content_type = current_header_value.clone(),
-                "content-transfer-encoding" => content_transfer_encoding = current_header_value.trim().to_lowercase(),
-                "x-folder" => folder_raw = Some(current_header_value.clone()),
-                "received" => received_chain.push(current_header_value.clone()),
-                "return-path" => return_path = Some(current_header_value.clone()),
-                "reply-to" => reply_to = Some(extract_email(&current_header_value)),
-                "x-mailer" => x_mailer = Some(current_header_value.clone()),
-                "x-originating-ip" => {
-                    let ip = extract_ip(&current_header_value);
-                    if !ip.is_empty() { x_originating_ip = Some(ip); }
-                }
-                "importance" => importance = Some(current_header_value.clone()),
-                "x-priority" => importance = Some(current_header_value.clone()),
-                "in-reply-to" => in_reply_to = Some(current_header_value.trim().trim_matches(|c| c == '<' || c == '>').to_string()),
-                "references" => {
-                    for word in current_header_value.split_whitespace() {
-                        let clean = word.trim_matches(|c| c == '<' || c == '>');
-                        if !clean.is_empty() && !references.contains(&clean.to_string()) {
-                            references.push(clean.to_string());
-                        }
-                    }
-                }
-                _ => {}
+            if !cur_val.is_empty() {
+                cur_val.push(' ');
+            }
+            cur_val.push_str(line.trim());
+        } else {
+            if !cur_key.is_empty() {
+                unfolded_headers.push((cur_key.clone(), cur_val.clone()));
+            }
+            cur_val.clear();
+            if let Some((k, v)) = line.split_once(':') {
+                cur_key = k.trim().to_string();
+                cur_val = v.trim().to_string();
+            } else {
+                cur_key.clear();
             }
         }
-        
-        // Start new header
-        current_header_value.clear();
-        if let Some((key, value)) = line.split_once(':') {
-            current_header_key = key.trim().to_string();
-            current_header_value = value.trim().to_string();
-        } else {
-            current_header_key.clear();
-        }
     }
-    
-    // Don't forget the last header
-    if !current_header_key.is_empty() {
-        let key_lower = current_header_key.to_lowercase();
-        headers_map.entry(key_lower.clone()).or_insert_with(Vec::new).push(current_header_value.clone());
+    if !cur_key.is_empty() {
+        unfolded_headers.push((cur_key, cur_val));
+    }
+
+    for (k, v) in unfolded_headers {
+        let key_lower = k.to_lowercase();
+        headers_map.entry(key_lower.clone()).or_insert_with(Vec::new).push(v.clone());
+
         match key_lower.as_str() {
-            "received" => received_chain.push(current_header_value.clone()),
-            "return-path" => return_path = Some(current_header_value.clone()),
+            "message-id" => message_id = v.trim().trim_matches(|c| c == '<' || c == '>').to_string(),
+            "from" => {
+                if from_addr.is_empty() {
+                    from_addr = extract_email(&v);
+                    from_display = extract_display_name(&v).map(|n| decode_mime_word(&n));
+                }
+            }
+            "x-from" => {
+                if from_display.is_none() {
+                    let name = clean_exchange_name(&v);
+                    if !name.is_empty() { from_display = Some(decode_mime_word(&name)); }
+                }
+            }
+            "to" => {
+                for (email, name) in extract_address_list_with_names(&v) {
+                    if !to_addrs.contains(&email) {
+                        to_addrs.push(email);
+                        if let Some(n) = name {
+                            to_display_names.push(decode_mime_word(&n));
+                        }
+                    }
+                }
+            }
+            "x-to" => {
+                x_to_header = Some(v.clone());
+                for (email, name) in extract_address_list_with_names(&v) {
+                    if !to_addrs.contains(&email) { to_addrs.push(email); }
+                    if let Some(n) = name {
+                        let decoded = decode_mime_word(&n);
+                        if !to_display_names.contains(&decoded) { to_display_names.push(decoded); }
+                    }
+                }
+            }
+            "cc" => {
+                for (email, name) in extract_address_list_with_names(&v) {
+                    if !cc_addrs.contains(&email) {
+                        cc_addrs.push(email);
+                        if let Some(n) = name {
+                            cc_display_names.push(decode_mime_word(&n));
+                        }
+                    }
+                }
+            }
+            "xcc" => {
+                x_cc_header = Some(v.clone());
+                for (email, name) in extract_address_list_with_names(&v) {
+                    if !cc_addrs.contains(&email) { cc_addrs.push(email); }
+                    if let Some(n) = name {
+                        let decoded = decode_mime_word(&n);
+                        if !cc_display_names.contains(&decoded) { cc_display_names.push(decoded); }
+                    }
+                }
+            }
+            "bcc" => bcc_addrs = extract_address_list(&v),
+            "subject" => {
+                subject_raw = Some(v.clone());
+                subject = Some(decode_mime_word(&v));
+            }
+            "date" => date_sent = parse_date(&v),
+            "content-type" => content_type = v.clone(),
+            "content-transfer-encoding" => content_transfer_encoding = v.trim().to_lowercase(),
+            "x-folder" => folder_raw = Some(v.clone()),
+            "received" => received_chain.push(v.clone()),
+            "return-path" => return_path = Some(v.clone()),
+            "reply-to" => reply_to = Some(extract_email(&v)),
+            "x-mailer" => x_mailer = Some(v.clone()),
+            "x-originating-ip" => {
+                let ip = extract_ip(&v);
+                if !ip.is_empty() { x_originating_ip = Some(ip); }
+            }
+            "importance" | "x-priority" => importance = Some(v.clone()),
+            "in-reply-to" => in_reply_to = Some(v.trim().trim_matches(|c| c == '<' || c == '>').to_string()),
+            "references" => {
+                for word in v.split_whitespace() {
+                    let clean = word.trim_matches(|c| c == '<' || c == '>');
+                    if !clean.is_empty() && !references.contains(&clean.to_string()) {
+                        references.push(clean.to_string());
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -194,10 +186,18 @@ pub fn parse_rfc5322(content: &str, offset: u64, size: u64) -> Result<RawEmail, 
     
     let headers_json = serde_json::to_string(&headers_map).unwrap_or_else(|_| "{}".to_string());
     
-    let (body_text, body_html, attachments) = if content_type.starts_with("multipart/") {
+    let (body_text, body_html, attachments) = if content_type.to_lowercase().contains("multipart/") {
         let boundary = extract_boundary(&content_type);
         if let Some(boundary) = boundary {
             parse_multipart(body, &boundary)
+        } else {
+            (Some(body.to_string()), None, vec![])
+        }
+    } else if content_type.is_empty() && body.trim_start().starts_with("--") {
+        let first_boundary_line = body.lines().find(|l| l.starts_with("--") && !l.starts_with("---")).unwrap_or("");
+        let boundary = first_boundary_line.trim_start_matches("--").trim();
+        if !boundary.is_empty() {
+            parse_multipart(body, boundary)
         } else {
             (Some(body.to_string()), None, vec![])
         }
